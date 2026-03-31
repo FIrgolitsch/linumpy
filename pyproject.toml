@@ -218,6 +218,13 @@ allowed-confusables = ["–", "×", "σ", "ℹ"]
 # CUDA library detection uses os.path for system-level path traversal
 "scripts/linum_diagnose_pipeline.py" = ["E501", "PTH"]
 
+[tool.ruff.lint.isort]
+# _thread_config sets OMP_NUM_THREADS & friends and MUST be imported
+# before numpy/scipy/SimpleITK or the env vars have no effect.
+known-first-party = ["linumpy"]
+sections.thread-config = ["linumpy._thread_config"]
+section-order = ["future", "thread-config", "standard-library", "third-party", "first-party", "local-folder"]
+
 [tool.ruff.format]
 # Use default (black-compatible) formatting
 
