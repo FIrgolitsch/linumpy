@@ -1084,10 +1084,20 @@ def detect_interface_z(vol: np.ndarray,
     vol_f = np.log(vol + 1e-6) if use_log else vol.astype(np.float32)
 
     pad_width = int(np.round(sigma_z * 4))
-    vol_padded = np.pad(vol_f, ((0, 0), (0, 0), (pad_width, 0)), mode='wrap')
+    vol_padded = np.pad(vol_f, ((0, 0), (0, 0), (pad_width, 0)), mode='edge')
     vol_padded = gaussian_filter(vol_padded, (sigma_xy, sigma_xy, 0))
     dz = gaussian_filter1d(vol_padded, sigma=sigma_z, axis=-1, order=1)
-    avg_dz = np.sum(dz, axis=(0, 1))
+
+    # Mask to tissue-containing (X,Y) positions so background doesn't
+    # dilute the gradient signal when tissue covers a small fraction of XY.
+    mean_xy = np.mean(vol_f, axis=2)  # (X, Y)
+    nonzero_vals = mean_xy[mean_xy > 0]
+    if nonzero_vals.size > 0:
+        threshold = np.percentile(nonzero_vals, 5)
+        tissue_mask = mean_xy > threshold  # (X, Y)
+        avg_dz = np.sum(dz[tissue_mask, :], axis=0)
+    else:
+        avg_dz = np.sum(dz, axis=(0, 1))
 
     avg_iface = max(int(np.argmax(avg_dz)) - pad_width, 0)
     return avg_iface

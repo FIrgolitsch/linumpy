@@ -123,3 +123,38 @@ def test_crop_below_interface_percentile_clip_runs():
     vol_crop, _ = crop_below_interface(
         vol_zxy, depth_um=50.0, resolution_um=5.0, percentile_clip=99.0)
     assert vol_crop.shape[1] > 0
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for interface detection edge cases
+# ---------------------------------------------------------------------------
+
+def test_detect_interface_z_small_tissue_coverage():
+    """Interface must be detected when tissue covers only ~15% of XY."""
+    n_z, n_x, n_y = 80, 40, 40
+    interface_z = 25
+    vol = np.zeros((n_x, n_y, n_z), dtype=np.float32)
+    # Place tissue in a small corner patch (6x6 = 36 out of 1600 pixels ≈ 2%)
+    vol[:6, :6, interface_z:] = 100.0
+    rng = np.random.default_rng(42)
+    vol += rng.random((n_x, n_y, n_z)).astype(np.float32) * 2.0
+    result = detect_interface_z(vol, sigma_xy=1.0, sigma_z=1.0)
+    assert abs(result - interface_z) <= 10, (
+        f"Expected interface near {interface_z}, got {result}"
+    )
+
+
+def test_detect_interface_z_no_wrap_artifact():
+    """Bright values at the end of Z must not create a false interface at z=0."""
+    n_z, n_x, n_y = 80, 16, 16
+    interface_z = 30
+    vol = np.zeros((n_x, n_y, n_z), dtype=np.float32)
+    vol[:, :, interface_z:] = 100.0
+    # Make the last few Z slices extra bright — would create z=0 artifact with wrap padding
+    vol[:, :, -5:] = 500.0
+    rng = np.random.default_rng(7)
+    vol += rng.random((n_x, n_y, n_z)).astype(np.float32) * 2.0
+    result = detect_interface_z(vol, sigma_xy=1.0, sigma_z=1.0)
+    assert result > 5, (
+        f"Interface falsely detected near z=0 ({result}), expected near {interface_z}"
+    )
