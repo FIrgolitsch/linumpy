@@ -36,7 +36,6 @@ from linumpy.utils.metrics import aggregate_metrics, compute_summary_statistics
 STEP_ORDER = [
     'stitch_3d',
     'xy_transform_estimation',
-    'create_masks',
     'normalize_intensities',
     'psf_compensation',
     'crop_interface',
@@ -48,7 +47,6 @@ STEP_ORDER = [
 STEP_DISPLAY_NAMES = {
     'stitch_3d': 'Stitch 3D',
     'xy_transform_estimation': 'XY Transform Estimation',
-    'create_masks': 'Create Masks',
     'normalize_intensities': 'Normalize Intensities',
     'psf_compensation': 'PSF Compensation',
     'crop_interface': 'Crop Interface',
@@ -60,7 +58,6 @@ STEP_DISPLAY_NAMES = {
 STEP_DESCRIPTIONS = {
     'stitch_3d': 'Stitches individual mosaic tiles into a single 2D slice.',
     'xy_transform_estimation': 'Estimates the affine transformation for tile overlap correction.',
-    'create_masks': 'Creates binary tissue masks to guide registration and normalization.',
     'normalize_intensities': 'Normalizes per-slice intensities using agarose background.',
     'psf_compensation': 'Compensates for beam profile / PSF attenuation along the optical axis.',
     'crop_interface': 'Detects and crops the tissue-agarose interface.',
@@ -71,7 +68,6 @@ STEP_DESCRIPTIONS = {
 # Maps pipeline step_name → image category shown in that step section
 STEP_PREVIEW_CATEGORY = {
     'stitch_3d': 'stitch_preview',
-    'create_masks': 'mask_preview',
     'pairwise_registration': 'common_space_preview',
 }
 
@@ -530,14 +526,12 @@ def discover_images(input_dir: Path,
     Returns a dict mapping category → sorted list of image paths:
       'overview'              – main volume screenshots (up to 2)
       'stitch_preview'        – per-slice stitched previews
-      'mask_preview'          – per-slice mask previews
       'common_space_preview'  – common-space alignment previews
       'diag_*'                – images found in diagnostics/ subdirs
     """
     images: Dict[str, List[Path]] = {
         'overview': [],
         'stitch_preview': [],
-        'mask_preview': [],
         'common_space_preview': [],
     }
 
@@ -550,11 +544,6 @@ def discover_images(input_dir: Path,
     stitch_dir = input_dir / 'previews' / 'stitched_slices'
     if stitch_dir.exists():
         images['stitch_preview'] = sorted(stitch_dir.glob('*.png'))
-
-    # Mask previews (published alongside masks)
-    mask_dir = input_dir / 'create_registration_masks'
-    if mask_dir.exists():
-        images['mask_preview'] = sorted(mask_dir.glob('*_preview.png'))
 
     # Common-space alignment previews
     cs_dir = input_dir / 'common_space_previews'
