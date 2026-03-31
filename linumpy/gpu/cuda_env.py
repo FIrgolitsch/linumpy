@@ -96,9 +96,8 @@ def get_cuda12_ld_path(include_existing: bool = True) -> tuple[str, list[str]]:
         if os.path.isdir(full_path):
             # Check for the expected file or any .so file
             expected = os.path.join(full_path, check_file)
-            if os.path.exists(expected) or any(Path(full_path).glob("*.so*")):
-                if full_path not in cuda_paths:
-                    cuda_paths.append(full_path)
+            if (os.path.exists(expected) or any(Path(full_path).glob("*.so*"))) and full_path not in cuda_paths:
+                cuda_paths.append(full_path)
 
     # Priority 3: Check for system cuDNN 8.x (if pip package doesn't have it)
     system_cudnn_paths = ["/usr/lib/x86_64-linux-gnu", "/usr/local/cuda/lib64", "/usr/lib64"]
@@ -232,14 +231,13 @@ def setup_jax_cuda_env(
     >>> print(jax.devices())
     """
     # Check if JAX is already imported - warn that it may be too late
-    if "jax" in sys.modules:
-        if warn_on_failure:
-            warnings.warn(
-                "JAX is already imported. setup_jax_cuda_env() should be called "
-                "BEFORE importing JAX for LD_LIBRARY_PATH changes to take effect. "
-                "You may need to restart the Python process.",
-                stacklevel=2,
-            )
+    if "jax" in sys.modules and warn_on_failure:
+        warnings.warn(
+            "JAX is already imported. setup_jax_cuda_env() should be called "
+            "BEFORE importing JAX for LD_LIBRARY_PATH changes to take effect. "
+            "You may need to restart the Python process.",
+            stacklevel=2,
+        )
 
     # Build and set LD_LIBRARY_PATH
     new_ld_path, cuda_paths = get_cuda12_ld_path(include_existing=True)

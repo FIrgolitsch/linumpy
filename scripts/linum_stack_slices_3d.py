@@ -96,7 +96,7 @@ def get_input(mosaics_dir, transforms_dir, parser):
     # get all .ome.zarr files in in_mosaics_dir
     in_mosaics_dir = Path(mosaics_dir)
     in_transforms_dir = Path(transforms_dir)
-    mosaics_files = [p for p in in_mosaics_dir.glob("*.ome.zarr")]
+    mosaics_files = list(in_mosaics_dir.glob("*.ome.zarr"))
     pattern = r".*z(\d+)_.*"
     slice_ids = []
     for f in mosaics_files:
@@ -112,7 +112,7 @@ def get_input(mosaics_dir, transforms_dir, parser):
     for arg_idx in slice_ids_argsort[1:]:
         f = mosaics_files[arg_idx]
         current_transform_dirname, ext = os.path.splitext(f.name)
-        while not ext == "":  # remove all trailing extensions
+        while ext != "":  # remove all trailing extensions
             current_transform_dirname, ext = os.path.splitext(current_transform_dirname)
         current_transform_dir = in_transforms_dir / current_transform_dirname
 

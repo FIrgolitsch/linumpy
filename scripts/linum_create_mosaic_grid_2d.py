@@ -124,7 +124,8 @@ def main():
 
     # Load the JSON config file
     if args.config is not None:
-        mosaic_config = json.load(open(args.config))
+        with open(args.config) as f:
+            mosaic_config = json.load(f)
     else:
         mosaic_config = {}
 
@@ -132,10 +133,7 @@ def main():
     tiles_directory = Path(args.tiles_directory)
     output_file = Path(args.output_file)
     assert output_file.suffix in [".jpg", ".tiff", ".zarr"], "The output file must be .jpg, .tiff, or .zarr file."
-    if output_file.suffix == ".zarr":
-        zarr_file = output_file
-    else:
-        zarr_file = output_file.with_suffix(".zarr")
+    zarr_file = output_file if output_file.suffix == ".zarr" else output_file.with_suffix(".zarr")
     z = args.slice
     output_resolution = args.resolution
     n_cpus = args.n_cpus

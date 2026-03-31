@@ -16,7 +16,7 @@ def get_data(name):
         "raw_tiles": _get_raw_tiles,
         "aip": _get_aip,
     }
-    if name not in data.keys():
+    if name not in data:
         raise ValueError(f"Unknown key for data: {name}")
     return data[name]()
 

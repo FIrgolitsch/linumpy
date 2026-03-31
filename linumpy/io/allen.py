@@ -34,11 +34,7 @@ def numpy_to_sitk_image(volume: np.ndarray, spacing: tuple, cast_dtype=None) -> 
     # Note: volume is (Z, X, Y), SimpleITK GetImageFromArray interprets as (Z, Y, X)
     # So we transpose: (Z, X, Y) -> (Z, Y, X) to match SimpleITK's expectation
     vol_for_sitk = np.transpose(volume, (0, 2, 1))
-    if cast_dtype is not None:
-        vol_for_sitk = vol_for_sitk.astype(cast_dtype)
-    else:
-        # preserve dtype
-        vol_for_sitk = vol_for_sitk.copy()
+    vol_for_sitk = vol_for_sitk.astype(cast_dtype) if cast_dtype is not None else vol_for_sitk.copy()
     vol_sitk = sitk.GetImageFromArray(vol_for_sitk)
     # Spacing: SimpleITK uses (X, Y, Z) = (width, height, depth)
     # Our spacing is (res_z, res_x, res_y), so:

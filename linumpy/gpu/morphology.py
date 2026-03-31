@@ -37,10 +37,7 @@ def binary_closing(mask, iterations=1, structure=None, use_gpu=True):
 
         mask_gpu = cp.asarray(mask.astype(np.bool_))
 
-        if structure is None:
-            structure = generate_binary_structure(mask.ndim, 1)
-        else:
-            structure = cp.asarray(structure)
+        structure = generate_binary_structure(mask.ndim, 1) if structure is None else cp.asarray(structure)
 
         result = cp_closing(mask_gpu, structure=structure, iterations=iterations, brute_force=True)
 
@@ -86,10 +83,7 @@ def binary_opening(mask, iterations=1, structure=None, use_gpu=True):
 
         mask_gpu = cp.asarray(mask.astype(np.bool_))
 
-        if structure is None:
-            structure = generate_binary_structure(mask.ndim, 1)
-        else:
-            structure = cp.asarray(structure)
+        structure = generate_binary_structure(mask.ndim, 1) if structure is None else cp.asarray(structure)
 
         result = cp_opening(mask_gpu, structure=structure, iterations=iterations, brute_force=True)
 
@@ -135,10 +129,7 @@ def binary_dilation(mask, iterations=1, structure=None, use_gpu=True):
 
         mask_gpu = cp.asarray(mask.astype(np.bool_))
 
-        if structure is None:
-            structure = generate_binary_structure(mask.ndim, 1)
-        else:
-            structure = cp.asarray(structure)
+        structure = generate_binary_structure(mask.ndim, 1) if structure is None else cp.asarray(structure)
 
         result = cp_dilation(mask_gpu, structure=structure, iterations=iterations, brute_force=True)
 
@@ -184,10 +175,7 @@ def binary_erosion(mask, iterations=1, structure=None, use_gpu=True):
 
         mask_gpu = cp.asarray(mask.astype(np.bool_))
 
-        if structure is None:
-            structure = generate_binary_structure(mask.ndim, 1)
-        else:
-            structure = cp.asarray(structure)
+        structure = generate_binary_structure(mask.ndim, 1) if structure is None else cp.asarray(structure)
 
         result = cp_erosion(mask_gpu, structure=structure, iterations=iterations, brute_force=True)
 

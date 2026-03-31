@@ -81,7 +81,7 @@ def find_registration_dirs(base_path):
             json_files = list(base.glob("**/pairwise_registration_metrics.json"))
             if json_files:
                 # Return the parent directories of the JSON files
-                slice_dirs = sorted(set(f.parent for f in json_files))
+                slice_dirs = sorted({f.parent for f in json_files})
                 logger.info(f"Found {len(slice_dirs)} directories with registration metrics")
                 return slice_dirs
 

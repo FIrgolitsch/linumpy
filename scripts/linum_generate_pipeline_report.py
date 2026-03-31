@@ -238,9 +238,9 @@ def separate_metrics_by_type(metrics_list: list[dict]) -> tuple[dict, dict]:
             if numeric and len(numeric) == len(vals):
                 is_const = float(np.std(numeric)) < 1e-10
             else:
-                is_const = len(set(str(v) for v in vals)) <= 1
+                is_const = len({str(v) for v in vals}) <= 1
         except Exception:
-            is_const = len(set(str(v) for v in vals)) <= 1
+            is_const = len({str(v) for v in vals}) <= 1
         info["is_constant"] = is_const
         info["display_value"] = vals[0] if vals else None
 
@@ -618,10 +618,7 @@ def render_image_gallery_html(
 
     items = []
     for p in images:
-        if mode == "embed":
-            src = image_to_data_uri(p, max_width=max_width)
-        else:
-            src = f"previews/{category}/{p.name}"
+        src = image_to_data_uri(p, max_width=max_width) if mode == "embed" else f"previews/{category}/{p.name}"
         name = p.stem
         items.append(
             f'<figure class="gallery-item">'
@@ -718,10 +715,7 @@ def _render_grouped_issues_html(grouped: list[dict], color_class: str, label: st
             html += f'                <div class="issue-item">{g["details"][0]}</div>\n'
         else:
             vals = g["values"]
-            if vals:
-                val_str = f"range {min(vals):.3g} – {max(vals):.3g}"
-            else:
-                val_str = f"{g['count']} occurrences"
+            val_str = f"range {min(vals):.3g} – {max(vals):.3g}" if vals else f"{g['count']} occurrences"
             thresh_str = f", threshold: {g['threshold']:.3g}" if g["threshold"] is not None else ""
             summary_line = f"<strong>{g['metric']}</strong>: {g['count']} slices affected ({val_str}{thresh_str})"
             html += '                <details class="sub-issue">\n'

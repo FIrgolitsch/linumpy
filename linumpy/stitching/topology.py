@@ -34,8 +34,8 @@ def generate_default(nX, nY):
     # Creating vertices
     xx, yy = np.meshgrid(list(range(nX)), list(range(nY)))
     vPos = {"x": xx.ravel(), "y": yy.ravel()}
-    nPosX = dict()
-    nPosY = dict()
+    nPosX = {}
+    nPosY = {}
     for ii in range(nX * nY):
         nPosX[ii] = vPos["x"][ii]
         nPosY[ii] = vPos["y"][ii]
@@ -109,7 +109,7 @@ def remove_agarose(topo, tissueMask):
 
     """
     agarosePos = np.where(tissueMask == 0)
-    agaroseIds = list()
+    agaroseIds = []
     for ii in range(len(agarosePos[0])):
         this_pos = (agarosePos[0][ii], agarosePos[1][ii])
         agaroseIds.append(_pos2id(topo, this_pos))
@@ -128,8 +128,8 @@ def topoIterator(topo, root=(1, 1), method="dfs"):
     :returns: sourceList, targetList : Lists of source and target node positions.
 
     """
-    sourceList = list()
-    targetList = list()
+    sourceList = []
+    targetList = []
 
     # Find the edge corresponding to position = root
     idx = _pos2id(topo, root)
@@ -190,9 +190,9 @@ def _pos2id(topo, pos):
 
     """
     # Find the edge corresponding to position
-    nList = list()
-    xx = list()
-    yy = list()
+    nList = []
+    xx = []
+    yy = []
 
     # Extracting the node x positions
     for this_node, this_x in list(nx.get_node_attributes(topo, "x").items()):
@@ -246,5 +246,3 @@ def keepLargestCCInMask(mask):
     output = sitk.LabelMapMask(sitk.LabelImageToLabelMap(labels), vol, label=largestLabel)
 
     return sitk.GetArrayFromImage(output)
-
-    pass

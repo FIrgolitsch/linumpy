@@ -212,10 +212,7 @@ class MosaicGrid:
 
         # Get the tile shape
         nx, ny = t1.shape[0:2]
-        if ndim == 2:
-            nz = 1
-        else:
-            nz = t1.shape[2]
+        nz = 1 if ndim == 2 else t1.shape[2]
 
         # Get the min and max coordinates for this mosaic
         x0 = int(min([p1[0], p2[0]]))
@@ -538,10 +535,7 @@ def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3,
     wx = int(pos[0])
     wy = int(pos[1])
 
-    if len(pos) == 3:
-        wz = pos[2]
-    else:
-        wz = 0
+    wz = pos[2] if len(pos) == 3 else 0
 
     # Use a small positive threshold to detect existing mosaic data
     # This avoids including near-zero values from numerical precision issues
@@ -557,10 +551,9 @@ def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3,
     # This prevents intensity gradients across the mosaic with diffusion blending
     if match_intensity and np.any(mask) and blendingMethod == "diffusion":
         # Get overlap regions for both mosaic and volume
-        if mosaic.ndim == 3:
-            mosaic_overlap = mosaic[wz : wz + nz, wx : wx + nx, wy : wy + ny]
-        else:
-            mosaic_overlap = mosaic[wx : wx + nx, wy : wy + ny]
+        mosaic_overlap = (
+            mosaic[wz : wz + nz, wx : wx + nx, wy : wy + ny] if mosaic.ndim == 3 else mosaic[wx : wx + nx, wy : wy + ny]
+        )
 
         # Use 2D mask expanded to 3D
         mask_3d = np.tile(mask[np.newaxis, :, :], [nz, 1, 1]) if volume.ndim == 3 else mask
@@ -762,10 +755,9 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
     else:
         isBool = False
 
-    if vol.ndim == 3:
-        if vol.shape[2] == 1:
-            vol = np.squeeze(vol, axis=(2,))
-            newshape = newshape[0:2]
+    if vol.ndim == 3 and vol.shape[2] == 1:
+        vol = np.squeeze(vol, axis=(2,))
+        newshape = newshape[0:2]
 
     if vol.ndim == 2:
         nx, ny = vol.shape
@@ -793,10 +785,7 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
     # Use a small positive default value instead of zero to avoid black dots
     # at boundaries during resampling
     nonzero_vals = vol[vol > 0]
-    if len(nonzero_vals) > 0:
-        default_val = float(np.percentile(nonzero_vals, 1))
-    else:
-        default_val = 0.0
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
     resample.SetDefaultPixelValue(default_val)
 
     vol_itk = sitk.GetImageFromArray(vol)

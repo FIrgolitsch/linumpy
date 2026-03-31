@@ -228,14 +228,8 @@ def main():
                             dx, dy = result
 
                         # Compute the tile position
-                        if r == -1:
-                            r_px = p1[2] - mosaic.tile_size_x + dx
-                        else:
-                            r_px = p1[0] + dx
-                        if c == -1:
-                            c_px = p1[3] - mosaic.tile_size_y + dy
-                        else:
-                            c_px = p1[1] + dy
+                        r_px = p1[2] - mosaic.tile_size_x + dx if r == -1 else p1[0] + dx
+                        c_px = p1[3] - mosaic.tile_size_y + dy if c == -1 else p1[1] + dy
 
                         # Updating the rows/cols and rows_px/cols_px
                         rows.append(r)

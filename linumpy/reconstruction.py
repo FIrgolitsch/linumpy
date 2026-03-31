@@ -45,10 +45,7 @@ def get_tiles_ids(directory, z: int | None = None):
     input_directory = Path(directory)
 
     # Get a list of the input tiles
-    if z is not None:
-        tiles_to_process = f"*z{z:02d}"
-    else:
-        tiles_to_process = "tile_*"
+    tiles_to_process = f"*z{z:02d}" if z is not None else "tile_*"
     tiles = list(input_directory.rglob(tiles_to_process))
     tiles = [t for t in tiles if t.name.startswith("tile_") and not os.path.isfile(t)]
     tile_ids = get_tiles_ids_from_list(tiles)
@@ -222,16 +219,11 @@ def quick_stitch(
         my = int(match.group("y"))
 
         apply_shift = True
-        if mx < galvo_shift_first_tile[0]:
-            apply_shift = False
-        elif mx == galvo_shift_first_tile[0] and my < galvo_shift_first_tile[1]:
+        if mx < galvo_shift_first_tile[0] or (mx == galvo_shift_first_tile[0] and my < galvo_shift_first_tile[1]):
             apply_shift = False
 
         # Load the fringes
-        if apply_shift:
-            img = oct.load_image(fix_galvo_shift=galvo_shift)
-        else:
-            img = oct.load_image()
+        img = oct.load_image(fix_galvo_shift=galvo_shift) if apply_shift else oct.load_image()
 
         # Log transform
         if use_log:
@@ -242,10 +234,7 @@ def quick_stitch(
 
         # BUG: there are sometimes missing bscans
         if img.shape != oct.shape[0:2]:
-            if np.any(np.array(img.shape) == 0):
-                img = np.zeros(oct.shape[0:2])
-            else:
-                img = resize(img, oct.shape[0:2])
+            img = np.zeros(oct.shape[0:2]) if np.any(np.array(img.shape) == 0) else resize(img, oct.shape[0:2])
 
         # Apply rotations
         img = np.rot90(img, k=n_rot)

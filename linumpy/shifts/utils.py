@@ -42,10 +42,7 @@ def load_shifts_csv(shifts_path) -> tuple[dict, list]:
         fixed_id = all_ids[i]
         moving_id = all_ids[i + 1]
 
-        if (fixed_id, moving_id) in shift_lookup:
-            dx_mm, dy_mm = shift_lookup[(fixed_id, moving_id)]
-        else:
-            dx_mm, dy_mm = 0.0, 0.0
+        dx_mm, dy_mm = shift_lookup.get((fixed_id, moving_id), (0.0, 0.0))
 
         prev_dx, prev_dy = cumsum[fixed_id]
         cumsum[moving_id] = (prev_dx + dx_mm, prev_dy + dy_mm)

@@ -61,10 +61,7 @@ def rescale_gpu(image, scale, order=1, use_gpu=True):
         Rescaled image
     """
     # Convert scalar scale to tuple
-    if np.isscalar(scale):
-        scale = tuple([scale] * image.ndim)
-    else:
-        scale = tuple(scale)
+    scale = tuple([scale] * image.ndim) if np.isscalar(scale) else tuple(scale)
 
     # Compute output shape
     output_shape = tuple(round(s * sc) for s, sc in zip(image.shape, scale, strict=False))

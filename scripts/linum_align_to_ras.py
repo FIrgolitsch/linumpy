@@ -575,7 +575,7 @@ Example:
         fontsize=10,
         verticalalignment="top",
         fontfamily="monospace",
-        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
     )
 
     plt.tight_layout()
@@ -710,7 +710,8 @@ def create_alignment_preview(
     info_text = (
         f"Original shape: {vol_original.shape}\nAligned shape: {vol_aligned.shape}\nAllen shape: {allen_template.shape}"
     )
-    fig.text(0.02, 0.02, info_text, fontsize=10, family="monospace", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+    bbox_props = {"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5}
+    fig.text(0.02, 0.02, info_text, fontsize=10, family="monospace", bbox=bbox_props)
 
     plt.tight_layout()
     Path(preview_path).parent.mkdir(parents=True, exist_ok=True)

@@ -53,9 +53,7 @@ def parse_processes_arg(n_processes):
         int: Number of processes to use
     """
     available = get_available_cpus()
-    if n_processes is None or n_processes <= 0:
-        return available
-    elif n_processes > available:
+    if n_processes is None or n_processes <= 0 or n_processes > available:
         return available
     return n_processes
 

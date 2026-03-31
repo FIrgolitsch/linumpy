@@ -385,10 +385,7 @@ def apply_xy_shift(image, reference, dy, dx, use_gpu=True):
     """
     # Get a representative non-zero value for out-of-bounds fill
     nonzero_vals = image[image > 0]
-    if len(nonzero_vals) > 0:
-        cval = float(np.percentile(nonzero_vals, 1))
-    else:
-        cval = 0.0
+    cval = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp

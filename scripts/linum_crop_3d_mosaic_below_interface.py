@@ -85,10 +85,7 @@ def main():
     surface_idx = max(0, min(avg_iface, vol.shape[0] - 1))
     end_idx = surface_idx + depth_px
     if end_idx > vol.shape[0]:
-        if args.pad_after:
-            out_shape = (end_idx, vol.shape[1], vol.shape[2])
-        else:
-            out_shape = vol.shape
+        out_shape = (end_idx, vol.shape[1], vol.shape[2]) if args.pad_after else vol.shape
         store = create_tempstore()
         out_vol = zarr.open(store, mode="w", shape=out_shape, dtype=np.float32, chunks=vol.chunks)
         out_vol[: vol.shape[0]] = vol[:]

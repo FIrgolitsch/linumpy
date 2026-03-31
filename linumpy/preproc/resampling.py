@@ -40,10 +40,7 @@ def resample_mosaic_grid(vol, source_res, target_res_um, n_levels=5, out_path=No
 
     # Convert target resolution to same unit as source_res
     # source_res values < 1 are assumed mm; >= 1 are assumed µm
-    if source_res[0] < 1.0:
-        target_res = target_res_um / 1000.0  # convert µm to mm
-    else:
-        target_res = float(target_res_um)
+    target_res = target_res_um / 1000.0 if source_res[0] < 1.0 else float(target_res_um)
 
     scaling_factor = np.asarray(source_res) / target_res
     tile_00 = np.array(vol[: tile_shape[0], : tile_shape[1], : tile_shape[2]])
@@ -71,10 +68,7 @@ def resample_mosaic_grid(vol, source_res, target_res_um, n_levels=5, out_path=No
                 :, i * out_tile_shape[1] : (i + 1) * out_tile_shape[1], j * out_tile_shape[2] : (j + 1) * out_tile_shape[2]
             ] = rescale(current_vol, scaling_factor, order=1, preserve_range=True, anti_aliasing=True)
 
-        if source_res[0] < 1.0:
-            out_res = [target_res] * 3
-        else:
-            out_res = [target_res_um] * 3
+        out_res = [target_res] * 3 if source_res[0] < 1.0 else [target_res_um] * 3
         out_zarr.finalize(out_res, n_levels)
         return None
     else:

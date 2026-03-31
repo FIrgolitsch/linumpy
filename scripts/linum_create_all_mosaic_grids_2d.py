@@ -51,7 +51,7 @@ def main():
 
     # Get a list of slices to process
     _tiles, tiles_id = reconstruction.get_tiles_ids(input_directory)
-    slices = list(set([t[2] for t in tiles_id]))
+    slices = list({t[2] for t in tiles_id})
 
     for z in tqdm(slices, desc="Creating mosaic grids", unit="slice", leave=True):
         output_file = f"{output_directory}/mosaic_grid_z{z:02d}{extension}"

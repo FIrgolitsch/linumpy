@@ -172,7 +172,7 @@ class Subject:
     def __setstate__(self, state):
         """To control how this class is loaded by pickle"""
         datalist, sbj_members = state
-        self.data = list()
+        self.data = []
 
         # Adding subjects in each group
         for this_data in datalist:
@@ -741,7 +741,7 @@ def dataSniffer(datadir: str) -> dict:
     )
 
     # Grap all volume-like files
-    dataList = list()
+    dataList = []
     prefix = set()
     suffix = set()
     extension = set()
@@ -825,7 +825,7 @@ def dataSniffer(datadir: str) -> dict:
     logger.info(f"There are {nVols - data_mask.sum()}/{nVols} missing files in this grid.")
 
     # Creating the output dict
-    data_info = dict()
+    data_info = {}
     data_info["datadir"] = datadir
     data_info["prototype"] = prototype
     data_info["extension"] = extension

@@ -334,11 +334,10 @@ class ThorOCT:
                         continue
 
                     # If in the positions section, extract x, y values
-                    if positions_section:
-                        if line:  # Ignore empty lines
-                            # Split by comma and convert to float
-                            x, y = map(float, line.split(","))
-                            raw_positions.append((x, y, 0))
+                    if positions_section and line:  # Ignore empty lines
+                        # Split by comma and convert to float
+                        x, y = map(float, line.split(","))
+                        raw_positions.append((x, y, 0))
 
         # Remap x: sort unique x values in ascending order
         unique_x = np.unique([pos[0] for pos in raw_positions])

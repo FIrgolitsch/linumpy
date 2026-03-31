@@ -136,10 +136,7 @@ def compute_ssim_3d(vol1: np.ndarray, vol2: np.ndarray, win_size: int = 7, sampl
         ys, ye, xs, xe = 0, ny, 0, nx
 
     # Sample z-planes if requested
-    if sample_depth > 0 and nz > sample_depth:
-        indices = np.linspace(0, nz - 1, sample_depth, dtype=int)
-    else:
-        indices = np.arange(nz)
+    indices = np.linspace(0, nz - 1, sample_depth, dtype=int) if sample_depth > 0 and nz > sample_depth else np.arange(nz)
 
     ssim_scores = []
     for z in indices:

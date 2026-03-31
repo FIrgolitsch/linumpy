@@ -162,7 +162,7 @@ def find_best_overlap_planes(vol_before: np.ndarray, vol_after: np.ndarray, sear
         return (crop - crop.mean()) / (crop.std() + 1e-8)
 
     before_zs = range(max(0, nz_before - search_window), nz_before)
-    after_zs = range(0, min(search_window, nz_after))
+    after_zs = range(min(search_window, nz_after))
 
     before_norms = {z: _norm_roi(vol_before[z]) for z in before_zs}
     after_norms = {z: _norm_roi(vol_after[z]) for z in after_zs}

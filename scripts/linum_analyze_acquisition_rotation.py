@@ -167,7 +167,7 @@ def load_registration_rotations(reg_dir):
     # If no direct slice dirs, search recursively for JSON files
     if not slice_dirs:
         json_files = list(reg_path.glob("**/pairwise_registration_metrics.json"))
-        slice_dirs = sorted(set(f.parent for f in json_files))
+        slice_dirs = sorted({f.parent for f in json_files})
 
     if not slice_dirs:
         logger.warning(f"No slice directories found in {reg_dir}")

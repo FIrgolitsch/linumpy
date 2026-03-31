@@ -5,6 +5,7 @@
 
 """
 
+import contextlib
 import csv
 import os
 import re
@@ -15,7 +16,7 @@ from PIL import Image
 
 
 def listSlicesInDir(directory, extension=".nii", returnIndices=False):
-    slice_list = list()
+    slice_list = []
     content = os.listdir(directory)
     for elem in content:
         if elem.endswith(extension):
@@ -34,7 +35,7 @@ def listSlicesInDir(directory, extension=".nii", returnIndices=False):
 
 
 def getSliceListIndices(slice_list):
-    zList = list()
+    zList = []
     for this_file in slice_list:
         filename_rx = re.compile(r".*z(\d+).*")
         tmp = filename_rx.match(this_file)
@@ -206,9 +207,7 @@ def save_nifti(fname, volume, pixDim=(1, 1, 1), pixelFormat=None, intent=1007, e
     afft[3, 1] = -np.round(ny / 2) * pixDim[1]  # y origin
     afft[3, 2] = -np.round(nz / 2) * pixDim[2]  # z origin
 
-    if volume.dtype is np.dtype(bool):
-        volume = 255 * volume.astype(np.uint8)
-    elif len(np.unique(np.ravel(volume))) == 2:
+    if volume.dtype is np.dtype(bool) or len(np.unique(np.ravel(volume))) == 2:
         volume = 255 * volume.astype(np.uint8)
 
     # Create the nibabel img object and adjust header.
@@ -282,7 +281,7 @@ def save_png(vol, filename):
     .. note:: Image intensity is normalized on a 2^8 intensity scale.
     """
     vol = np.squeeze(vol)
-    if not (vol.ndim == 2):
+    if vol.ndim != 2:
         print("Dimension of array should be 2")
         raise
 
@@ -297,20 +296,18 @@ def load_acqinfo_from_csv(filename):
     """Import the acquisition information from a csv file"""
     with open(filename, "rb") as f:
         reader = csv.reader(f)
-        info = dict()
+        info = {}
 
-        rownum = 0
-        for row in reader:
+        for rownum, row in enumerate(reader):
             # Save header row.
             if rownum == 0:
                 header = row
             else:
                 colnum = 0
                 for col in row:
-                    if not len(header[colnum]) == 0:
+                    if len(header[colnum]) != 0:
                         info[header[colnum]] = _convert2num(col)
                         colnum += 1
-            rownum += 1
         info["dx"] = info["fovX"] / info["nAlinesPerBframe"] * 1000.0
         info["dy"] = info["fovY"] / info["nBframes"] * 1000.0
         if "fovZ" in info:
@@ -327,14 +324,10 @@ def load_acqinfo_from_csv(filename):
 def _convert2num(s):
     """Convert string to number, unless it is a string"""
     a = s  # Default is str
-    try:
+    with contextlib.suppress(ValueError):
         a = int(s)
-    except ValueError:
-        pass  # Not an int
 
-    try:
+    with contextlib.suppress(ValueError):
         a = float(s)
-    except ValueError:
-        pass  # Not a float
 
     return a

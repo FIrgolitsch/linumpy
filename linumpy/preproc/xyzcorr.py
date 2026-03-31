@@ -105,10 +105,9 @@ def resampleITK(vol, newshape, interpolator="linear"):
     else:
         isBool = False
 
-    if vol.ndim == 3:
-        if vol.shape[2] == 1:
-            vol = np.squeeze(vol, axis=(2,))
-            newshape = newshape[0:2]
+    if vol.ndim == 3 and vol.shape[2] == 1:
+        vol = np.squeeze(vol, axis=(2,))
+        newshape = newshape[0:2]
 
     if vol.ndim == 2:
         nx, ny = vol.shape
@@ -135,10 +134,7 @@ def resampleITK(vol, newshape, interpolator="linear"):
 
     # Use a small positive default value instead of zero to avoid black dots
     nonzero_vals = vol[vol > 0]
-    if len(nonzero_vals) > 0:
-        default_val = float(np.percentile(nonzero_vals, 1))
-    else:
-        default_val = 0.0
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
     resample.SetDefaultPixelValue(default_val)
 
     vol_itk = sitk.GetImageFromArray(vol)
@@ -197,10 +193,7 @@ def shrink(vol, spacing=(1.0, 1.0, 1.0), res=(10.0, 10.0, 10.0)):
 
     # Use a small positive default value instead of zero to avoid black dots
     nonzero_vals = vol[vol > 0]
-    if len(nonzero_vals) > 0:
-        default_val = float(np.percentile(nonzero_vals, 1))
-    else:
-        default_val = 0.0
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
     resample.SetDefaultPixelValue(default_val)
 
     # Resampling
@@ -331,7 +324,7 @@ def findTissueDepth(vol, zmin=15, zmax=100, agaroseIntensity=5000):
 
         # Labeling features and keeping the largest
         im_label, num_features = label(im)
-        hist = list()
+        hist = []
         for i in range(num_features):
             hist.append(np.sum(im_label == i))
         mainFeature = np.argmax(hist[1:]) + 1
@@ -700,10 +693,7 @@ def estimateLHProfileParameters(vol, s=25):
             zlist_min = indices[0][indices[0] < this_z0]
             zlist_max = indices[0][indices[0] > this_z0]
 
-            if len(zlist_min) > 0 and len(zlist_max) > 0:
-                this_dz = zlist_max[0] - zlist_min[-1]
-            else:
-                this_dz = 1
+            this_dz = zlist_max[0] - zlist_min[-1] if len(zlist_min) > 0 and len(zlist_max) > 0 else 1
             if len(zlist_max) > 0:
                 this_z0 = zlist_max[0]
 
@@ -714,10 +704,7 @@ def estimateLHProfileParameters(vol, s=25):
             this_I0 = I[this_z0]
             this_sigma = -np.median(I_g[this_z0::])
 
-            if (this_z0 == 0) or (this_z0 - this_dz <= 0):
-                this_Ib = 1
-            else:
-                this_Ib = np.median(I[0 : this_z0 - this_dz])
+            this_Ib = 1 if this_z0 == 0 or this_z0 - this_dz <= 0 else np.median(I[0 : this_z0 - this_dz])
 
             z0[x, y] = this_z0
             dz[x, y] = this_dz

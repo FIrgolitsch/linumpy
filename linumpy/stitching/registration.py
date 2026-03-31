@@ -42,7 +42,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
     vol_shape = vol1.shape
     new_shape = np.array(vol_shape) * 1.25
     pad_size = np.ceil(0.5 * (new_shape - vol_shape)).astype(int)
-    pad_width = list()
+    pad_width = []
     for pad in pad_size:
         pad_width.append((pad, pad))
     vol1_p = np.pad(vol1, pad_width, mode="reflect")
@@ -64,16 +64,16 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
 
     # Find the main peak
     pmax = np.amax(Q)
-    indices = np.where(Q == pmax)
+    indices = np.where(pmax == Q)
 
     # Find the first N peaks
     coordinates = peak_local_max(
         np.abs(Q), min_distance=1, num_peaks=nPeaks, exclude_border=False
     )  # max value in the whole image
 
-    deltasList = list()
+    deltasList = []
     for indices in coordinates:
-        deltas = list()
+        deltas = []
         for idx, s in zip(indices, vol1_p.shape, strict=False):
             deltas.append(int(-idx + s / 2))
 
@@ -85,7 +85,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
         deltasList.append(deltas)
 
     # Try all translation permutations and find which one has the highest correlation.
-    translations = list()
+    translations = []
     for deltas in deltasList:
         if vol1.ndim == 2:
             dx, dy = deltas[:]
@@ -117,7 +117,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
                     [dx - nxp, dy - nyp, dz - nzp],
                 ]
             )
-    corrScore = list()
+    corrScore = []
     for this_delta in translations:
         pos1 = [0] * vol1.ndim
         ov1, ov2, _, _ = getOverlap(vol1, vol2, pos1, this_delta)
@@ -443,10 +443,7 @@ def register_2d_images_sitk(
         raise ValueError(f"Unknown metric: {metric}")
 
     # Use smaller step size when we have an initial translation estimate (to avoid drifting away)
-    if initial_step is None:
-        step_size = 1.0 if initial_translation is not None else 4.0
-    else:
-        step_size = initial_step
+    step_size = (1.0 if initial_translation is not None else 4.0) if initial_step is None else initial_step
 
     R.SetOptimizerAsRegularStepGradientDescent(step_size, min_step, max_iterations, 0.5, grad_mag_tol)
     R.SetShrinkFactorsPerLevel([4, 2, 1])
@@ -469,10 +466,7 @@ def register_2d_images_sitk(
     if initial_translation is not None:
         # Set center to image center
         center = [fixed_sitk_image.GetWidth() / 2.0, fixed_sitk_image.GetHeight() / 2.0]
-        if method == "euler":
-            sitk_transform.SetCenter(center)
-            sitk_transform.SetTranslation(initial_translation)
-        elif method == "affine":
+        if method == "euler" or method == "affine":
             sitk_transform.SetCenter(center)
             sitk_transform.SetTranslation(initial_translation)
         elif method == "translation":
@@ -550,10 +544,7 @@ def apply_transform(moving_image, transform):
 
     # Use edge value instead of zero to avoid black dots at boundaries
     nonzero_vals = moving_image[moving_image > 0]
-    if len(nonzero_vals) > 0:
-        default_val = float(np.percentile(nonzero_vals, 1))
-    else:
-        default_val = 0.0
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
     resampler.SetDefaultPixelValue(default_val)
 
     resampler.SetTransform(transform)

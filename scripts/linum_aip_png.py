@@ -49,10 +49,7 @@ def main():
 
     vmin = np.percentile(aip, 0.1)
     vmax = np.percentile(aip, 99.9)
-    if vmax > vmin:
-        aip_norm = np.clip((aip - vmin) / (vmax - vmin), 0, 1)
-    else:
-        aip_norm = np.zeros_like(aip)
+    aip_norm = np.clip((aip - vmin) / (vmax - vmin), 0, 1) if vmax > vmin else np.zeros_like(aip)
     imsave(output_file, (aip_norm * 65535).astype(np.uint16))
 
 

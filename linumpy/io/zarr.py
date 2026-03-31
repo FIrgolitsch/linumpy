@@ -257,7 +257,7 @@ def save_omezarr(data, store_path, voxel_size=(1e-3, 1e-3, 1e-3), chunks=(128, 1
         zarr_group,
         axes=axes,
         scaler=CustomScaler(**pyramid_kw),
-        storage_options=dict(chunks=chunks),
+        storage_options={"chunks": chunks},
         coordinate_transformations=coordinate_transformations,
         compute=True,
         metadata=metadata,

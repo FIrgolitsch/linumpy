@@ -51,10 +51,10 @@ Both layouts are detected automatically when --data_dir is provided.
 
 # Configure thread limits before numpy/scipy imports (optional; skipped if
 # linumpy is not installed into the current environment)
-try:
+import contextlib
+
+with contextlib.suppress(ImportError):
     import linumpy._thread_config  # noqa: F401
-except ImportError:
-    pass
 
 import argparse
 import json

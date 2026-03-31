@@ -47,9 +47,7 @@ class OCT:
             if len(hello) == 1:
                 continue
             key, val = hello
-            if val.isnumeric():
-                val = int(val)
-            elif val.strip("-").isnumeric():
+            if val.isnumeric() or val.strip("-").isnumeric():
                 val = int(val)
             self.info[key] = val
 

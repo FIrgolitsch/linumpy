@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 """Collection of functions to fix intensity-related artefacts in raw data"""
 
+import contextlib
 import itertools
 import multiprocessing
 
@@ -468,10 +469,7 @@ def getSmoothIntensityTransition(vol, slicesStart):
             a_next = gaussian_filter(volume[:, :, z2], sigma=5)  # First z of next slice local intensity average
 
         b_current = gaussian_filter(volume[:, :, z2 - 1], sigma=5)  # Last z of current slice local intensity average
-        if i == 0:  # If first slice
-            b_previous = gaussian_filter(volume[:, :, z1], sigma=5)  # Last z of current slice local intensity average
-        else:
-            b_previous = gaussian_filter(volume[:, :, z1 - 1], sigma=5)  # Last z of previous slice local intensity average
+        b_previous = gaussian_filter(volume[:, :, z1], sigma=5) if i == 0 else gaussian_filter(volume[:, :, z1 - 1], sigma=5)
 
         # Depth position
         z = np.linspace(0, z2 - z1, z2 - z1)
@@ -536,7 +534,7 @@ def getAttenuation_Vermeer2013(vol, dz=6.5e-6, mask=None, C=None):
     # Prepare the bottom constant (to better consider the finite Bscan dimension)
     if C is None:
         C = np.zeros(vol.shape)
-    elif isinstance(C, int) or isinstance(C, float):
+    elif isinstance(C, (int, float)):
         C = np.ones(vol, dtype=float) * C
     elif C.ndim == 2:
         C = np.tile(np.reshape(C, (C.shape[0], C.shape[1], 1)), (1, 1, vol.shape[2]))
@@ -707,10 +705,7 @@ def getAttenuation_Faber2004(vol, mask=None, dz=6.5e-6, N=4):
     z = np.arange(0.0, dz * vol.shape[2], dz)
     for x in range(vol.shape[0]):
         for y in range(vol.shape[1]):
-            if mask is not None:
-                mask_Aline = mask[x, y, :]
-            else:
-                mask_Aline = np.ones((vol.shape[2],)).astype(np.bool)
+            mask_Aline = mask[x, y, :] if mask is not None else np.ones((vol.shape[2],)).astype(np.bool)
 
             if np.any(mask_Aline):
                 p0 = [0.0, 100.0, 0.001]
@@ -782,10 +777,10 @@ def _AlineFit(data):
 
 
 def splitAline(data, mask):
-    data_list = list()
-    z_list = list()
-    this_aline = list()
-    this_z = list()
+    data_list = []
+    z_list = []
+    this_aline = []
+    this_z = []
     for elem, m, z in zip(data, mask, list(range(len(data))), strict=False):
         if m:
             this_aline.append(elem)
@@ -793,9 +788,9 @@ def splitAline(data, mask):
         else:
             if len(this_aline) > 0:
                 data_list.append(this_aline)
-                this_aline = list()
+                this_aline = []
                 z_list.append(this_z)
-                this_z = list()
+                this_z = []
     if len(this_aline) > 0:
         data_list.append(this_aline)
         z_list.append(this_z)
@@ -1007,9 +1002,9 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
 
     # Compute the attenuation for each aline portions
     print(f"Computing attenuation for each Aline portion (using {nproc} processors)")
-    aline_portions = list()
-    z_portions = list()
-    portion_idx = list()
+    aline_portions = []
+    z_portions = []
+    portion_idx = []
     for foo, idx in zip(result, list(range(nAlines)), strict=False):
         aline_portions.extend(foo[0])
         z_portions.extend(foo[1])
@@ -1118,21 +1113,12 @@ def getSignalFromAttenuation(attn, i0=None, nz=120, mask=None, res=1.0):
         return np.exp(-2 * x * z)
 
     for ix, iy in itertools.product(list(range(nx)), list(range(ny))):
-        if mask is not None:
-            this_mask = mask[ix, iy, :].astype(bool)
-        else:
-            this_mask = np.ones((nz,), dtype=bool)
+        this_mask = mask[ix, iy, :].astype(bool) if mask is not None else np.ones((nz,), dtype=bool)
 
         z0 = np.where(this_mask)
-        if len(z0[0]) > 0:
-            z0 = z0[0][0]
-        else:
-            z0 = 0
+        z0 = z0[0][0] if len(z0[0]) > 0 else 0
 
-        if i0 is not None:
-            A = i0[ix, iy]
-        else:
-            A = 1
+        A = i0[ix, iy] if i0 is not None else 1
 
         if np.any(this_mask):
             this_mu = attn[ix, iy]
@@ -1227,10 +1213,7 @@ def estimatePSF(
     -----
     * If no interface is given, the whole volume is used for the psf regression
     """
-    if agarose.ndim == 1:
-        iProfile = np.copy(agarose)
-    else:
-        iProfile = agarose.mean(axis=(0, 1))
+    iProfile = np.copy(agarose) if agarose.ndim == 1 else agarose.mean(axis=(0, 1))
     nz = len(iProfile)
     z = np.linspace(0, len(iProfile) * dz, len(iProfile))
 
@@ -1494,8 +1477,8 @@ def get_vignette(vol, returnParams=False, mask_z=None, method="gauss"):
 
     print(popt_0)
 
-    w_list = list()
-    params_list = list()
+    w_list = []
+    params_list = []
     if mask_z is None:
         mask_z = np.ones((vol.shape[2],))
     for z in range(vol.shape[2]):
@@ -1652,10 +1635,8 @@ def fit_TissueConfocalModel(
             t_grad = -gaussian_filter1d(signal, w, order=2)
             t_grad[t_grad < 0] = 0
             if t_grad.max() > 0:
-                try:
+                with contextlib.suppress(Exception):
                     t_grad /= float(t_grad.max())
-                except Exception:
-                    pass
             bump = b * t_grad
             return bump
 

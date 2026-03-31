@@ -22,6 +22,7 @@ Usage:
 
 # Configure thread limits before numpy/scipy imports
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -78,10 +79,8 @@ def benchmark_operation(func_cpu, func_gpu, data, name, iterations=3, check_corr
 
     # Warmup GPU
     if GPU_AVAILABLE:
-        try:
+        with contextlib.suppress(Exception):
             _ = func_gpu(data)
-        except Exception:
-            pass
 
     # CPU benchmark
     for _ in range(iterations):

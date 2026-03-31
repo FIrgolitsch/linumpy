@@ -132,7 +132,7 @@ def handle_excluded_slice_shifts(shifts_df, excluded_slice_ids, mode="keep", win
         return shifts_df
 
     df = shifts_df.copy()
-    excluded_set = set(int(s) for s in excluded_slice_ids)
+    excluded_set = {int(s) for s in excluded_slice_ids}
     mask = df["fixed_id"].astype(int).isin(excluded_set) | df["moving_id"].astype(int).isin(excluded_set)
     n_pairs = int(mask.sum())
     if n_pairs == 0:
@@ -166,7 +166,7 @@ def handle_excluded_slice_shifts(shifts_df, excluded_slice_ids, mode="keep", win
         return df
 
     # local_median
-    skip_mask = {idx: True for idx in df[mask].index}
+    skip_mask = dict.fromkeys(df[mask].index, True)
     for idx in df[mask].index:
         replacement = _replace_with_local_median(df, idx, window, skip_mask=skip_mask)
         if replacement is None:
@@ -310,7 +310,7 @@ def main():
 
     # Get all .ome.zarr files in in_mosaics_dir and build mapping
     in_mosaics_dir = Path(args.in_mosaics_dir)
-    mosaics_list = sorted([p for p in in_mosaics_dir.glob("*.ome.zarr")])
+    mosaics_list = sorted(in_mosaics_dir.glob("*.ome.zarr"))
 
     # Extract slice IDs from filenames and build slice_id -> file mapping
     pattern = r".*z(\d+).*"

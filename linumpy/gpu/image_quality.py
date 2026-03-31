@@ -17,6 +17,7 @@ Usage:
     ssim = compute_ssim_3d_gpu(vol1, vol2)
 """
 
+import contextlib
 from typing import Any
 
 import numpy as np
@@ -411,7 +412,5 @@ def assess_slice_quality_gpu(
 def clear_gpu_memory():
     """Clear GPU memory pools."""
     if GPU_AVAILABLE and cp is not None:
-        try:
+        with contextlib.suppress(Exception):
             cp.get_default_memory_pool().free_all_blocks()
-        except Exception:
-            pass

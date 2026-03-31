@@ -162,10 +162,7 @@ def add_z_slice_labels(
         y_center_pixels = (slice_idx + 0.5) * voxels_per_slice
 
         if slice_idx % label_every == 0:
-            if slice_ids is not None and slice_idx < len(slice_ids):
-                label = f"z{slice_ids[slice_idx]}"
-            else:
-                label = f"z{slice_idx:02d}"
+            label = f"z{slice_ids[slice_idx]}" if slice_ids is not None and slice_idx < len(slice_ids) else f"z{slice_idx:02d}"
 
             ax.text(
                 x_pos,
@@ -177,7 +174,7 @@ def add_z_slice_labels(
                 ha=ha,
                 va="center",
                 fontfamily="monospace",
-                bbox=dict(boxstyle="round,pad=0.1", facecolor="black", alpha=0.7, edgecolor="none"),
+                bbox={"boxstyle": "round,pad=0.1", "facecolor": "black", "alpha": 0.7, "edgecolor": "none"},
             )
 
         if show_lines and slice_idx > 0:

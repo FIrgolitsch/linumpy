@@ -286,7 +286,7 @@ def _generate_comparison_preview(
             color="cyan",
             fontsize=7,
             va="bottom",
-            bbox=dict(facecolor="black", alpha=0.5, pad=2),
+            bbox={"facecolor": "black", "alpha": 0.5, "pad": 2},
         )
         print(f"\nPreview scale: {zarr_px_per_preview_px:.1f} zarr px per preview px in the XY panel.")
         print(
@@ -627,10 +627,7 @@ def _apply_fix(
 
             chunk = np.asarray(arr[:, xs:xe, ys:ye], dtype=np.float32)
 
-            if mode == "fix":
-                fixed = np.roll(chunk, roll_amount, axis=1)
-            else:
-                fixed = np.roll(chunk, -undo_shift, axis=1)
+            fixed = np.roll(chunk, roll_amount, axis=1) if mode == "fix" else np.roll(chunk, -undo_shift, axis=1)
 
             writer[0 : shape[0], xs:xe, ys:ye] = fixed.astype(dtype)
 

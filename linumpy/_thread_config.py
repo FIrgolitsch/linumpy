@@ -29,6 +29,7 @@ Known gaps that can cause CPU usage spikes:
 To ensure proper limiting, scripts should call configure_all_libraries() after imports.
 """
 
+import contextlib
 import multiprocessing
 import os
 import sys
@@ -82,10 +83,8 @@ def configure_thread_limits():
 
     # If OMP_NUM_THREADS is already set, use that value instead
     if "OMP_NUM_THREADS" in os.environ:
-        try:
+        with contextlib.suppress(ValueError):
             max_threads = int(os.environ["OMP_NUM_THREADS"])
-        except ValueError:
-            pass
 
     # Set environment variables for all common threading libraries
     # Set ALL of them unconditionally to ensure consistency

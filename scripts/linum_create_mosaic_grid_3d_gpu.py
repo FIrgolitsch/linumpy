@@ -282,7 +282,7 @@ def main():
     psoct_config = PreprocessingConfig()
     psoct_config.crop_first_index = args.crop_first_index
     psoct_config.crop_second_index = args.crop_second_index
-    psoct_config.erase_polarization_1 = not args.polarization == 1
+    psoct_config.erase_polarization_1 = args.polarization != 1
     psoct_config.erase_polarization_2 = not psoct_config.erase_polarization_1
     psoct_config.return_complex = args.return_complex
 

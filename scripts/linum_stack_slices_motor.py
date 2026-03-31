@@ -463,7 +463,7 @@ def main():
     if args.no_xy_shift:
         # Slices are already in common space, no XY shifting needed
         logger.info("Skipping XY shifts (--no_xy_shift specified, slices already in common space)")
-        cumsum_px = {slice_id: (0.0, 0.0) for slice_id in available_ids}
+        cumsum_px = dict.fromkeys(available_ids, (0.0, 0.0))
         out_ny, out_nx = first_vol.shape[1], first_vol.shape[2]
         x0, y0 = 0, 0
     else:
