@@ -4,13 +4,14 @@ Apply corrections from linum_estimate_slices_transforms_gui.py to volume.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import numpy as np
 import zarr
 from tqdm import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.stitching.manual_registration import transform_and_rescale_slice
 
 

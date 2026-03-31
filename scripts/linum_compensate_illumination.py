@@ -3,13 +3,14 @@
 """Uses the BaSiC algorithm to estimate and compensate illumination inhomogeneities in a mosaic grid"""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.stitching.mosaic_grid import MosaicGrid
 
 # TODO: Adapt the script to use multiple mosaic grids

@@ -9,6 +9,8 @@ water/tissue interface. The cropped volume is saved as a new OME-Zarr file.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
@@ -16,7 +18,6 @@ import dask.array as da
 import numpy as np
 import zarr
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import create_tempstore, read_omezarr, save_omezarr
 from linumpy.preproc.xyzcorr import crop_below_interface
 from linumpy.utils.metrics import collect_interface_crop_metrics

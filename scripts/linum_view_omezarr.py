@@ -3,13 +3,13 @@
 """View an ome-zarr file with napari."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import napari
 from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

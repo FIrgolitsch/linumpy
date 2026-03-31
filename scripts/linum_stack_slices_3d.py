@@ -12,8 +12,12 @@ equivalent behavior on common-space slices.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
+# Configure all libraries (especially SimpleITK) to respect thread limits
+from linumpy._thread_config import configure_all_libraries
+
 import argparse
-import os
 import re
 import warnings
 from pathlib import Path
@@ -24,10 +28,6 @@ from scipy.ndimage import gaussian_filter
 from skimage.filters import threshold_otsu
 from tqdm import tqdm
 
-import linumpy._thread_config  # noqa: F401
-
-# Configure all libraries (especially SimpleITK) to respect thread limits
-from linumpy._thread_config import configure_all_libraries
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.stitching.mosaic_grid import getDiffusionBlendingWeights
 from linumpy.stitching.registration import apply_transform
@@ -111,12 +111,12 @@ def get_input(mosaics_dir, transforms_dir, parser):
     first_mosaic = mosaics_files[slice_ids_argsort[0]]
     for arg_idx in slice_ids_argsort[1:]:
         f = mosaics_files[arg_idx]
-        current_transform_dirname, ext = os.path.splitext(f.name)
-        while ext != "":  # remove all trailing extensions
-            current_transform_dirname, ext = os.path.splitext(current_transform_dirname)
+        current_transform_dirname = Path(f.name).stem
+        while Path(current_transform_dirname).suffix != "":
+            current_transform_dirname = Path(current_transform_dirname).stem
         current_transform_dir = in_transforms_dir / current_transform_dirname
 
-        if not os.path.exists(current_transform_dir):
+        if not current_transform_dir.exists():
             parser.error(f"Transform {current_transform_dir} not found.")
 
         current_mat_file = list(current_transform_dir.glob("*.tfm"))

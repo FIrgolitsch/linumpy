@@ -24,6 +24,8 @@ Example usage:
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 import re
@@ -33,7 +35,6 @@ from typing import Any
 import numpy as np
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.gpu import GPU_AVAILABLE
 from linumpy.gpu.image_quality import (
     assess_slice_quality_gpu,
@@ -125,7 +126,7 @@ def get_mosaic_files(directory: Path) -> dict[int, Path]:
 def read_existing_config(config_path: Path) -> dict[int, dict[str, Any]]:
     """Read an existing slice configuration file."""
     config = {}
-    with open(config_path) as f:
+    with Path(config_path).open() as f:
         reader = csv.DictReader(f)
         for row in reader:
             slice_id = int(row["slice_id"])
@@ -141,7 +142,7 @@ def write_slice_config_with_quality(
     existing_config: dict[int, dict[str, Any]] | None = None,
 ):
     """Write the slice configuration file with quality metrics."""
-    with open(output_file, "w", newline="") as f:
+    with Path(output_file).open("w", newline="") as f:
         writer = csv.writer(f)
 
         header = ["slice_id", "use", "quality_score", "ssim_mean", "edge_score", "variance_score", "depth", "exclude_reason"]

@@ -3,13 +3,14 @@
 """Convert a zarr file to an ome-zarr file"""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import dask.array as da
 import zarr
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import save_omezarr
 
 

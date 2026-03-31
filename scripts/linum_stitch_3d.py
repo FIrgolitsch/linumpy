@@ -10,12 +10,13 @@ The stitching simply applies this transform to place tiles in the output mosaic.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import OmeZarrWriter, read_omezarr
 from linumpy.stitching.mosaic_grid import addVolumeToMosaic
 from linumpy.utils.metrics import collect_stitch_3d_metrics

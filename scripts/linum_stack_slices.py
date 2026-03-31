@@ -3,6 +3,8 @@
 """Stack 2D mosaics into a single volume."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import re
 import shutil
@@ -14,7 +16,6 @@ import pandas
 import zarr
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils_images import apply_xy_shift
 
 # TODO: add option to give a folder

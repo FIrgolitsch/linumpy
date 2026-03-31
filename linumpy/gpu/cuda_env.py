@@ -74,8 +74,8 @@ def get_cuda12_ld_path(include_existing: bool = True) -> tuple[str, list[str]]:
         "/usr/local/cuda/lib64",
     ]
     for cuda_path in system_cuda_paths:
-        cublas_path = os.path.join(cuda_path, "libcublas.so.11")
-        if os.path.exists(cublas_path):
+        cublas_path = Path(cuda_path) / "libcublas.so.11"
+        if cublas_path.exists():
             cuda_paths.append(cuda_path)
             break
 
@@ -92,17 +92,17 @@ def get_cuda12_ld_path(include_existing: bool = True) -> tuple[str, list[str]]:
     ]
 
     for lib_path, check_file in cu12_lib_paths:
-        full_path = os.path.join(sp, lib_path)
-        if os.path.isdir(full_path):
+        full_path = Path(sp) / lib_path
+        if full_path.is_dir():
             # Check for the expected file or any .so file
-            expected = os.path.join(full_path, check_file)
-            if (os.path.exists(expected) or any(Path(full_path).glob("*.so*"))) and full_path not in cuda_paths:
-                cuda_paths.append(full_path)
+            expected = full_path / check_file
+            if (expected.exists() or any(full_path.glob("*.so*"))) and str(full_path) not in cuda_paths:
+                cuda_paths.append(str(full_path))
 
     # Priority 3: Check for system cuDNN 8.x (if pip package doesn't have it)
     system_cudnn_paths = ["/usr/lib/x86_64-linux-gnu", "/usr/local/cuda/lib64", "/usr/lib64"]
     for sys_path in system_cudnn_paths:
-        if os.path.exists(os.path.join(sys_path, "libcudnn.so.8")):
+        if (Path(sys_path) / "libcudnn.so.8").exists():
             if sys_path not in cuda_paths:
                 cuda_paths.insert(0, sys_path)  # System cuDNN first
             break
@@ -131,9 +131,9 @@ def check_patchelf_needed() -> tuple[bool, str | None]:
         Path to the xla_cuda_plugin.so file, or None if not found
     """
     sp = get_site_packages()
-    plugin_path = os.path.join(sp, "jax_plugins", "xla_cuda12", "xla_cuda_plugin.so")
+    plugin_path = Path(sp) / "jax_plugins" / "xla_cuda12" / "xla_cuda_plugin.so"
 
-    if not os.path.exists(plugin_path):
+    if not plugin_path.exists():
         return False, None
 
     # Check if it has executable stack using execstack or readelf
@@ -183,8 +183,8 @@ def apply_patchelf_fix(verbose: bool = False) -> bool:
         jaxlib = None
 
     # Patch jax_plugins
-    jax_plugins_path = os.path.join(sp, "jax_plugins")
-    if os.path.isdir(jax_plugins_path):
+    jax_plugins_path = Path(sp) / "jax_plugins"
+    if jax_plugins_path.is_dir():
         for so_file in Path(jax_plugins_path).rglob("*.so"):
             try:
                 subprocess.run(["patchelf", "--clear-execstack", str(so_file)], capture_output=True, check=True)

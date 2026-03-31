@@ -7,11 +7,11 @@ For CPU-only processing, use linum_fix_illumination_3d.py
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import ctypes
 import os
 import site
-
-import linumpy._thread_config  # noqa: F401
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
 # to prevent thread oversubscription. The number of threads per worker should be
@@ -51,8 +51,8 @@ def _preload_cuda_libraries():
             "nvidia/cudnn/lib",
             "nvidia/nvjitlink/lib",
         ]:
-            path = os.path.join(sp, lib_dir)
-            if os.path.isdir(path):
+            path = Path(sp) / lib_dir
+            if path.is_dir():
                 search_paths.append(path)
     search_paths.extend(ld_path.split(":"))
     # Libraries to preload (order matters - dependencies first)
@@ -68,17 +68,17 @@ def _preload_cuda_libraries():
     loaded = []
     for lib in libs:
         for path in search_paths:
-            lib_path = os.path.join(path, lib)
-            if os.path.exists(lib_path):
+            lib_path = Path(path) / lib
+            if lib_path.exists():
                 try:
-                    ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
+                    ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
                     loaded.append(lib)
                 except Exception:
                     pass
                 break
     if loaded:
         # Update LD_LIBRARY_PATH so child processes can find libraries too
-        new_paths = ":".join(search_paths)
+        new_paths = ":".join(str(p) for p in search_paths)
         if ld_path:
             os.environ["LD_LIBRARY_PATH"] = f"{new_paths}:{ld_path}"
         else:

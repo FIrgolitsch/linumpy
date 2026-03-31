@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import shutil
+from pathlib import Path
 
 
 def get_available_cpus():
@@ -70,10 +71,11 @@ def add_overwrite_arg(parser):
 
 
 def assert_output_exists(output, parser, args):
-    if os.path.exists(output):
+    output_path = Path(output)
+    if output_path.exists():
         if not args.overwrite:
             parser.error(f"Output {output} exists. Use -f to overwrite.")
-        elif os.path.isdir(output):  # remove the directory if it exists
+        elif output_path.is_dir():  # remove the directory if it exists
             shutil.rmtree(output)
 
 

@@ -15,6 +15,8 @@ Output:
 - metrics.json: Registration quality metrics
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import logging
 from pathlib import Path
@@ -22,7 +24,6 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 from linumpy.stitching.registration import create_transform, find_best_z, register_refinement
 from linumpy.utils.io import add_overwrite_arg

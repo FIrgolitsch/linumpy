@@ -2,7 +2,6 @@
 
 """ "Quick reconstruction and processing methods for the S-OCT data."""
 
-import os.path
 import re
 from pathlib import Path
 
@@ -47,7 +46,7 @@ def get_tiles_ids(directory, z: int | None = None):
     # Get a list of the input tiles
     tiles_to_process = f"*z{z:02d}" if z is not None else "tile_*"
     tiles = list(input_directory.rglob(tiles_to_process))
-    tiles = [t for t in tiles if t.name.startswith("tile_") and not os.path.isfile(t)]
+    tiles = [t for t in tiles if t.name.startswith("tile_") and not t.is_file()]
     tile_ids = get_tiles_ids_from_list(tiles)
     return tiles, tile_ids
 

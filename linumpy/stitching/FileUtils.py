@@ -6,7 +6,6 @@
 
 import itertools
 import logging
-import os
 import pickle as pcl
 import re
 import typing
@@ -61,7 +60,7 @@ class Subject:
         :returns: True/False if directory is valid or not.
 
         """
-        if os.path.isdir(data_dir):
+        if Path(data_dir).is_dir():
             self.data_dir = data_dir
             return True
         else:
@@ -77,7 +76,7 @@ class Subject:
         OUTPUT
             True/False if directory is valid or not.
         """
-        if os.path.isdir(result_dir):
+        if Path(result_dir).is_dir():
             self.result_dir = result_dir
             return True
         else:
@@ -116,7 +115,7 @@ class Subject:
         if isFluo:
             nFiles *= 2
         fileCount = 0
-        for file in os.listdir(self.getDataDir()):
+        for file in Path(self.getDataDir()).iterdir():
             if file.endswith(".bin"):
                 fileCount += 1
 
@@ -208,11 +207,11 @@ class Study:
         OUTPUT
             True/False if directory is valid or not.
         """
-        result_dir = os.path.join(result_dir, self.study_id)
-        d = os.path.dirname(result_dir)
-        if not os.path.exists(d):
-            os.makedirs(d)
-        self.result_dir = result_dir
+        result_dir = Path(result_dir) / self.study_id
+        d = result_dir.parent
+        if not d.exists():
+            d.mkdir(parents=True)
+        self.result_dir = str(result_dir)
 
     def getResultDir(self):
         """Get output data directory for this study
@@ -234,9 +233,9 @@ class Study:
 
         # Create the subject directory within the category it is assigned to
         self.categories[category].append(subject)
-        study_dir = os.path.join(self.result_dir, category, subject.subj_id)
-        if not os.path.exists(study_dir):
-            os.makedirs(study_dir)
+        study_dir = Path(self.result_dir) / category / subject.subj_id
+        if not study_dir.exists():
+            study_dir.mkdir(parents=True)
 
         # Inform the subject of where result data should be saved
         subject.setResultDir(study_dir)
@@ -366,7 +365,7 @@ class SlicerData:
         return object_str
 
     def save(self, filename):
-        with open(filename, "w") as f:
+        with Path(filename).open("w") as f:
             pcl.dump(self, f)
 
     def checkVolShape(self):
@@ -410,9 +409,9 @@ class SlicerData:
 
     def get_tile_path(self, pos):
         x, y, z = pos
-        filename = os.path.join(
-            self.datadir,
-            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
+        filename = str(
+            Path(self.datadir)
+            / (self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension)
         )
         return filename
 
@@ -451,17 +450,17 @@ class SlicerData:
 
         """
         x, y, z = pos
-        filename = os.path.join(
-            self.datadir,
-            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
+        filename = str(
+            Path(self.datadir)
+            / (self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension)
         )
 
         # Check if datadir exits
-        if not (os.path.exists(self.datadir)):
-            os.makedirs(self.datadir)
+        if not Path(self.datadir).exists():
+            Path(self.datadir).mkdir(parents=True)
 
         # Check if file exists
-        if not (os.path.exists(filename)) or overwrite:
+        if not Path(filename).exists() or overwrite:
             if self.extension in [".nii", ".nii.gz"]:
                 data_io.save_nifti(filename, vol, pixelFormat=self.format)
             else:
@@ -661,7 +660,7 @@ class SlicerData:
 def detect_gridshape(datadir, prototype="volume_x%02.0f_y%02.0f_z%02.0f", extension=".bin"):
     # List all files in datadir
     if isinstance(datadir, str):
-        fileList = os.listdir(datadir)
+        fileList = [f.name for f in Path(datadir).iterdir()]
     elif isinstance(datadir, list):
         fileList = datadir
 
@@ -732,7 +731,7 @@ def dataSniffer(datadir: str) -> dict:
     data_info: dict
         Dictionary with extracted information.
     """
-    filelist = os.listdir(datadir)
+    filelist = [f.name for f in Path(datadir).iterdir()]
     filename_rx = re.compile(
         r"(?P<prefix>[A-Za-z-_]+)(?P<x>\d+)(?P<bXY>[A-Za-z-_]+)(?P<y>\d+)(?P<bYZ>[A-Za-z-_]+)(?P<z>\d+)(?P<suffix>.*)(?P<ext>\..*)"
     )

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io import read_omezarr
 from linumpy.preproc.resampling import resample_mosaic_grid
 

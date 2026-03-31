@@ -1,6 +1,7 @@
 """Tests for linumpy/stitching/motor.py"""
 
 import json
+from pathlib import Path
 
 import numpy as np
 
@@ -118,7 +119,7 @@ def test_compare_motor_vs_registration_writes_json(tmp_path):
     reg = [(1, 0), (11, 0)]
     out_path = str(tmp_path / "comparison.json")
     compare_motor_vs_registration(motor, reg, output_path=out_path)
-    with open(out_path) as f:
+    with Path(out_path).open() as f:
         loaded = json.load(f)
     assert loaded["n_tiles"] == 2
     assert abs(loaded["mean_diff_y"] - 1.0) < 1e-9

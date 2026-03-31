@@ -40,6 +40,11 @@ Example usage:
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
+# Configure all libraries (especially SimpleITK) to respect thread limits
+from linumpy._thread_config import configure_all_libraries
+
 import argparse
 from pathlib import Path
 
@@ -47,10 +52,6 @@ import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
-
-# Configure all libraries (especially SimpleITK) to respect thread limits
-from linumpy._thread_config import configure_all_libraries
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.stitching.interpolation import (
     assess_degraded_slice_quality,

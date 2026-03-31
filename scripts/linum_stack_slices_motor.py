@@ -14,6 +14,8 @@ The Z-matching finds where consecutive slices should overlap by correlating
 the bottom of one slice with the top of the next.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 import logging
@@ -25,7 +27,6 @@ import pandas as pd
 import SimpleITK as sitk
 from tqdm import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.shifts.utils import load_shifts_csv
 from linumpy.stitching.stacking import (
@@ -325,7 +326,7 @@ def load_registration_transforms(
             confidence = 1.0
             metrics_files = list(transform_dir.glob("pairwise_registration_metrics.json"))
             if metrics_files:
-                with open(metrics_files[0]) as f:
+                with Path(metrics_files[0]).open() as f:
                     metrics_data = json.load(f)
                 status = metrics_data.get("overall_status", "ok")
                 try:
@@ -513,7 +514,7 @@ def main():
                 force_skip_path = Path(args.force_skip_slices)
                 if force_skip_path.exists():
                     force_skip_ids = set()
-                    with open(force_skip_path) as f:
+                    with Path(force_skip_path).open() as f:
                         reader = csv.DictReader(f)
                         for row in reader:
                             force_skip_ids.add(int(row["slice_id"]))

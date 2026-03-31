@@ -7,8 +7,8 @@
 
 import contextlib
 import csv
-import os
 import re
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -17,10 +17,10 @@ from PIL import Image
 
 def listSlicesInDir(directory, extension=".nii", returnIndices=False):
     slice_list = []
-    content = os.listdir(directory)
+    content = list(Path(directory).iterdir())
     for elem in content:
-        if elem.endswith(extension):
-            slice_list.append(os.path.join(directory, elem))
+        if str(elem).endswith(extension):
+            slice_list.append(str(Path(directory) / elem))
 
     zlist = getSliceListIndices(slice_list)
 
@@ -74,9 +74,9 @@ def load_volume(
         prefix = "image"  # FIXME: hardcoded
         precision = "float64"  # FIXME: hardcoded
 
-    filename = os.path.join(
-        directory,
-        prefix + "_" + f"x{pos[0]:02.0f}" + "_" + f"y{pos[1]:02.0f}" + "_" + f"z{pos[2]:02.0f}" + suffix + extension,
+    filename = str(
+        Path(directory)
+        / (prefix + "_" + f"x{pos[0]:02.0f}" + "_" + f"y{pos[1]:02.0f}" + "_" + f"z{pos[2]:02.0f}" + suffix + extension)
     )
     return load_volumeByFilename(filename, vol_shape, precision)
 
@@ -102,7 +102,7 @@ def load_slice(directory, z, prototype="slice_z%d", extension=".nii"):
 
     """
     try:
-        filename = os.path.join(directory, prototype % (z) + extension)
+        filename = str(Path(directory) / (prototype % (z) + extension))
         return load_volumeByFilename(filename)
     except Exception:
         print("Unable to create filename for this slice.")
@@ -294,7 +294,7 @@ def save_png(vol, filename):
 
 def load_acqinfo_from_csv(filename):
     """Import the acquisition information from a csv file"""
-    with open(filename, "rb") as f:
+    with Path(filename).open("rb") as f:
         reader = csv.reader(f)
         info = {}
 

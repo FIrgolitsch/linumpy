@@ -1,4 +1,6 @@
-import os
+# Configure dask thread pool based on environment variables
+from linumpy._thread_config import configure_dask
+
 import shutil
 import tempfile
 from importlib.metadata import version
@@ -14,9 +16,6 @@ from ome_zarr.reader import Multiscales, Reader
 from ome_zarr.scale import Scaler
 from ome_zarr.writer import write_image, write_multiscales_metadata
 from skimage.transform import resize
-
-# Configure dask thread pool based on environment variables
-from linumpy._thread_config import configure_dask
 
 configure_dask()
 
@@ -357,10 +356,11 @@ class OmeZarrWriter:
         self.shape = shape
         self.downscale_factor = downscale_factor
 
-        if os.path.exists(store_path) or os.path.islink(store_path):
+        store_path = Path(store_path)
+        if store_path.exists() or store_path.is_symlink():
             if overwrite:
-                if os.path.islink(store_path):
-                    os.unlink(store_path)
+                if store_path.is_symlink():
+                    store_path.unlink()
                 else:
                     shutil.rmtree(store_path)
             else:
@@ -393,15 +393,15 @@ class OmeZarrWriter:
         """
         group_path = str(parent.store_path)
         img_path = parent.store_path / parent.path
-        image_path = os.path.join(group_path, parent.path)
+        image_path = Path(group_path) / parent.path
         print("downsample_pyramid_on_disk", image_path)
         for count, path in enumerate(paths[1:]):
-            target_path = os.path.join(image_path, path)
-            if os.path.exists(target_path):
+            target_path = image_path / path
+            if target_path.exists():
                 print(f"path exists: {target_path}")
                 continue
             # open previous resolution from disk via dask...
-            path_to_array = os.path.join(image_path, paths[count])
+            path_to_array = image_path / paths[count]
             dask_image = da.from_zarr(path_to_array)
 
             # resize in X and Y
@@ -492,15 +492,15 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
         if group_path.startswith("file://"):
             group_path = group_path[7:]
         img_path = parent.store_path / parent.path
-        image_path = os.path.join(group_path, parent.path)
+        image_path = Path(group_path) / parent.path
 
-        full_target_path = os.path.join(image_path, target_path)
-        if os.path.exists(full_target_path):
+        full_target_path = image_path / target_path
+        if full_target_path.exists():
             print(f"Path exists: {full_target_path}")
             return
 
         # Open source from disk via dask
-        path_to_array = os.path.join(image_path, source_path)
+        path_to_array = image_path / source_path
         dask_image = da.from_zarr(path_to_array)
 
         output = da_resize(dask_image, tuple(target_shape), preserve_range=True, anti_aliasing=True)
@@ -632,10 +632,10 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
                 self._downsample_to_resolution(self.root, "0", temp_path, target_shape)
 
                 # Remove original level 0 and rename temp
-                original_path = os.path.join(group_path, self.root.path, "0")
-                temp_full_path = os.path.join(group_path, self.root.path, temp_path)
+                original_path = Path(group_path) / self.root.path / "0"
+                temp_full_path = Path(group_path) / self.root.path / temp_path
 
-                if os.path.exists(original_path):
+                if original_path.exists():
                     shutil.rmtree(original_path)
                 shutil.move(temp_full_path, original_path)
             else:

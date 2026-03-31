@@ -37,7 +37,7 @@ class OCT:
         filename
             Path to the scan_file written by the OCT (.txt)
         """
-        with open(filename) as f:
+        with Path(filename).open() as f:
             foo = f.read()
 
         # Process the file input
@@ -82,7 +82,7 @@ class OCT:
         files.sort()
         chunks = []
         for file in files:
-            with open(file, "rb") as f:
+            with Path(file).open("rb") as f:
                 foo = np.fromfile(f, dtype=np.float32)
             n_frames = int(len(foo) / (n_alines_per_bscan * n_z))
             foo = np.reshape(foo, (n_z, n_alines_per_bscan, n_frames), order="F")

@@ -9,10 +9,11 @@ When slices are skipped, their shifts are accumulated to maintain proper alignme
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 import re
-from os.path import join as pjoin
 from os.path import split as psplit
 from pathlib import Path
 
@@ -20,7 +21,6 @@ import dask.array as da
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.shifts.utils import build_cumulative_shifts
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
@@ -86,7 +86,7 @@ def _build_arg_parser():
 def load_slice_config(config_path):
     """Load slice configuration and return set of slice IDs to use."""
     slices_to_use = set()
-    with open(config_path) as f:
+    with Path(config_path).open() as f:
         reader = csv.DictReader(f)
         for row in reader:
             slice_id = int(row["slice_id"])
@@ -466,7 +466,7 @@ def main():
         aligned = apply_xy_shift(img_data, reference, -dx_shifted, -dy_shifted)
 
         _, filename = psplit(mosaic_file)
-        outfile = pjoin(args.out_directory, filename)
+        outfile = Path(args.out_directory) / filename
         save_omezarr(da.from_array(aligned), outfile, res, chunks=img.chunks)
 
         print(

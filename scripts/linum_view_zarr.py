@@ -3,12 +3,12 @@
 """View a Zarr file with napari."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import napari
 import zarr
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

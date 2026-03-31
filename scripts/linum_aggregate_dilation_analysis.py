@@ -13,6 +13,8 @@ Outputs:
 - Visualization of scale variation across slices
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -22,7 +24,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils.io import add_overwrite_arg
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -62,7 +63,7 @@ def load_dilation_results(input_dir, pattern):
 
     results = []
     for json_file in json_files:
-        with open(json_file) as f:
+        with Path(json_file).open() as f:
             data = json.load(f)
             # Extract slice ID from path if not in data
             if data.get("slice_id") is None:
@@ -294,7 +295,7 @@ def generate_report(stats, corrections, per_slice, output_dir):
     )
 
     report_path = output_dir / "aggregated_dilation_report.txt"
-    with open(report_path, "w") as f:
+    with Path(report_path).open("w") as f:
         f.write("\n".join(lines))
 
     logger.info(f"Report saved to {report_path}")
@@ -400,7 +401,7 @@ def main():
     }
 
     json_path = output_dir / "aggregated_dilation_analysis.json"
-    with open(json_path, "w") as f:
+    with Path(json_path).open("w") as f:
         json.dump(output_data, f, indent=2)
     logger.info(f"JSON saved to {json_path}")
 

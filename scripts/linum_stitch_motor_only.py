@@ -16,13 +16,14 @@ the fully-registered reconstruction, you can identify:
 For troubleshooting 45° oblique-cut samples where edges don't match up.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import logging
 from pathlib import Path
 
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import OmeZarrWriter, read_omezarr
 from linumpy.stitching.mosaic_grid import addVolumeToMosaic
 from linumpy.stitching.motor import compare_motor_vs_registration, compute_motor_positions

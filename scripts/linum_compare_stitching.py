@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Compare stitching results between different methods."""
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 from pathlib import Path
@@ -9,7 +11,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import sobel
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 
@@ -126,7 +127,7 @@ def main():
         "difference": {"mean": float(np.mean(diff)), "max": float(np.max(diff)), "std": float(np.std(diff))},
     }
 
-    with open(output_dir / "metrics.json", "w") as f:
+    with Path(output_dir / "metrics.json").open("w") as f:
         json.dump(metrics, f, indent=2)
 
     # Print summary

@@ -3,13 +3,13 @@
 """Convert a nifti volume into a nrrd volume"""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import nibabel as nib
 import nrrd
 import numpy as np
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

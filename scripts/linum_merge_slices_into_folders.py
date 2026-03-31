@@ -4,6 +4,8 @@ Move slices from a flat directory into subdirectories based on their names.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import filecmp
 import re
@@ -11,8 +13,6 @@ import shutil
 from pathlib import Path
 
 from tqdm.auto import tqdm
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

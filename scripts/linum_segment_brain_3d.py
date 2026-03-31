@@ -3,6 +3,8 @@
 """Segment the brain from a 3D volume using a threshold and morphological operations."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
@@ -11,7 +13,6 @@ import numpy as np
 from scipy.ndimage import median_filter
 from skimage.filters import threshold_otsu
 
-import linumpy._thread_config  # noqa: F401
 from linumpy import segmentation
 
 

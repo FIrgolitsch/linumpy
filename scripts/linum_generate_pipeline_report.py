@@ -8,6 +8,8 @@ issues in the 3D reconstruction pipeline.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import base64
 import io as _io
@@ -16,8 +18,6 @@ import zipfile
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-
-import linumpy._thread_config  # noqa: F401
 
 try:
     from PIL import Image as _PILImage
@@ -507,7 +507,7 @@ def discover_diagnostic_data(input_dir: Path) -> dict[str, dict]:
         # Collect all JSON files (recursively for per-slice diagnostics)
         for json_file in sorted(subdir.rglob("*.json")):
             try:
-                with open(json_file) as f:
+                with Path(json_file).open() as f:
                     data = _json.load(f)
                 data["_source"] = str(json_file)
                 json_data.append(data)
@@ -1644,11 +1644,11 @@ def main():
                 output_file = output_file.with_suffix(".zip")
             generate_zip_bundle(report, images, output_file)
         else:
-            with open(output_file, "w") as f:
+            with Path(output_file).open("w") as f:
                 f.write(report)
     else:
         report = generate_text_report(aggregated, args.title, args.verbose)
-        with open(output_file, "w") as f:
+        with Path(output_file).open("w") as f:
             f.write(report)
 
     print(f"Report saved to: {output_file}")

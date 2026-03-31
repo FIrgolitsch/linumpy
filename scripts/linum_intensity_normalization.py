@@ -3,14 +3,14 @@
 """Normalize the intensity in a given nifty image"""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 from tqdm import tqdm
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

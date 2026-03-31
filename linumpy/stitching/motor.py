@@ -5,6 +5,7 @@ Consolidated from linum_stitch_3d_refined.py and linum_stitch_motor_only.py.
 """
 
 import logging
+from pathlib import Path
 
 import numpy as np
 
@@ -509,7 +510,7 @@ def compare_motor_vs_registration(motor_positions: list, reg_positions: list, ou
             comparison["dilation_indicator"] = False
 
     if output_path:
-        with open(output_path, "w") as f:
+        with Path(output_path).open("w") as f:
             json.dump(comparison, f, indent=2)
 
     return comparison

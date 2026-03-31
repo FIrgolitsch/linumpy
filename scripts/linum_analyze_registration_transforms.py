@@ -13,6 +13,8 @@ Useful for troubleshooting 3D reconstruction artifacts like "overhangs" and edge
 mismatches in obliquely-cut samples (e.g., 45° between sagittal/coronal).
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -23,7 +25,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils.io import add_overwrite_arg
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -105,7 +106,7 @@ def parse_slice_id(dirname):
 
 def load_metrics_from_json(json_path):
     """Load registration metrics from JSON file."""
-    with open(json_path) as f:
+    with Path(json_path).open() as f:
         data = json.load(f)
 
     metrics = data.get("metrics", {})
@@ -334,7 +335,7 @@ def generate_report(df, analysis, correlation, output_dir):
     lines.append("=" * 70)
 
     report_path = output_dir / "rotation_analysis.txt"
-    with open(report_path, "w") as f:
+    with Path(report_path).open("w") as f:
         f.write("\n".join(lines))
 
     logger.info(f"Report saved to {report_path}")

@@ -16,6 +16,8 @@ boundaries give consistent estimates and the result is the same as before.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 from pathlib import Path
@@ -23,7 +25,6 @@ from pathlib import Path
 import numpy as np
 from tqdm.contrib.concurrent import process_map
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.reconstruction import get_mosaic_info, get_tiles_ids
 from linumpy.utils.io import add_processes_arg, parse_processes_arg
 
@@ -113,7 +114,7 @@ def main():
 
     # Save the shifts to a csv file
     shifts = np.array([z_values[:-1], z_values[1:], x_shift_px, y_shift_px, x_shifts_mm, y_shifts_mm, reliable_flags]).T
-    with open(output_file, "w") as csv_file:
+    with Path(output_file).open("w") as csv_file:
         writer = csv.writer(csv_file, delimiter=",")
         writer.writerow(["fixed_id", "moving_id", "x_shift", "y_shift", "x_shift_mm", "y_shift_mm", "reliable"])
         writer.writerows(shifts)

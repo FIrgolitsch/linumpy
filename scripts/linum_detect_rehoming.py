@@ -41,6 +41,8 @@ Outputs
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 from pathlib import Path
@@ -48,7 +50,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.shifts.utils import correct_tile_offset_shifts, filter_outlier_shifts
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
 
@@ -162,7 +163,7 @@ def _save_diagnostics(
         "corrected_tile_offsets": [r for r in records if r["correction_type"] == "tile_offset"],
     }
     report_path = diag_dir / "rehoming_report.json"
-    with open(report_path, "w") as fh:
+    with Path(report_path).open("w") as fh:
         json.dump(report, fh, indent=2)
     print(f"  Diagnostics report: {report_path}")
 

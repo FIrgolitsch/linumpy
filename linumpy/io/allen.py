@@ -75,7 +75,7 @@ def download_template(resolution: int, cache: bool = True, cache_dir: str = ".da
     if not (nrrd_file.is_file()):
         # Download the template
         response = requests.get(url, stream=True)
-        with open(nrrd_file, "wb") as f:
+        with Path(nrrd_file).open("wb") as f:
             for data in tqdm(response.iter_content()):
                 f.write(data)
 

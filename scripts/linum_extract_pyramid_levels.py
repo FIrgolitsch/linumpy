@@ -15,6 +15,8 @@ linum_extract_pyramid_levels.py /data/3d_volume.ome.zarr 0 2
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
@@ -24,7 +26,6 @@ import zarr
 from ome_zarr.io import parse_url
 from ome_zarr.reader import Multiscales, Reader
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 

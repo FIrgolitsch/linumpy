@@ -4,12 +4,13 @@ Clip .ome.zarr volume intensities between lower and upper percentile.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import dask.array as da
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr, save_omezarr
 
 

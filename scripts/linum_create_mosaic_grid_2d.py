@@ -8,6 +8,8 @@ Notes
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import shutil
@@ -19,7 +21,6 @@ import zarr
 from pqdm.processes import pqdm
 from skimage.transform import resize
 
-import linumpy._thread_config  # noqa: F401
 from linumpy import reconstruction
 from linumpy.microscope.oct import OCT
 from linumpy.utils.io import get_available_cpus
@@ -124,7 +125,7 @@ def main():
 
     # Load the JSON config file
     if args.config is not None:
-        with open(args.config) as f:
+        with Path(args.config).open() as f:
             mosaic_config = json.load(f)
     else:
         mosaic_config = {}

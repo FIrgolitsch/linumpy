@@ -3,6 +3,8 @@
 """Convert 3D OCT tiles to a 3D mosaic grid"""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +14,6 @@ import numpy as np
 from skimage.transform import resize
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy import reconstruction
 from linumpy.io.thorlabs import PreprocessingConfig, ThorOCT
 from linumpy.io.zarr import OmeZarrWriter

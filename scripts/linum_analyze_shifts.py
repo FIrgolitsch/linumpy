@@ -11,15 +11,16 @@ Produces:
 Useful for debugging alignment issues and understanding sample drift during acquisition.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import logging
-import os
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -159,8 +160,8 @@ def generate_report(df, df_filtered, outlier_mask, stats, resolution, output_dir
     report_text = "\n".join(report_lines)
 
     # Save report
-    report_path = os.path.join(output_dir, "shifts_analysis.txt")
-    with open(report_path, "w") as f:
+    report_path = Path(output_dir) / "shifts_analysis.txt"
+    with report_path.open("w") as f:
         f.write(report_text)
 
     return report_text
@@ -241,7 +242,7 @@ def generate_plots(df, df_filtered, outlier_mask, stats, resolution, output_dir)
     plt.tight_layout()
 
     # Save plot
-    plot_path = os.path.join(output_dir, "drift_analysis.png")
+    plot_path = Path(output_dir) / "drift_analysis.png"
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -255,7 +256,7 @@ def main():
 
     # Create output directory
     assert_output_exists(args.out_directory, parser, args)
-    os.makedirs(args.out_directory)
+    Path(args.out_directory).mkdir(parents=True)
 
     # Load shifts
     logger.info(f"Loading shifts from {args.in_shifts}")
@@ -280,7 +281,7 @@ def main():
     generate_plots(df, df_filtered, outlier_mask, stats, args.resolution, args.out_directory)
 
     # Save filtered shifts (useful for debugging)
-    filtered_path = os.path.join(args.out_directory, "shifts_filtered.csv")
+    filtered_path = Path(args.out_directory) / "shifts_filtered.csv"
     df_filtered.to_csv(filtered_path, index=False)
     logger.info(f"Saved filtered shifts: {filtered_path}")
 

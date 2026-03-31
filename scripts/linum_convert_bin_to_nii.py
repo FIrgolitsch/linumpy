@@ -5,13 +5,14 @@ Convert OCT raw binary data to nifti
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.microscope.oct import OCT
 
 

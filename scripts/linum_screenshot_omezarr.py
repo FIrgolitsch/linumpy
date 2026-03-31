@@ -7,10 +7,11 @@ through the center of the volume (or at specified slice indices).
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 from linumpy.utils.visualization import save_orthogonal_views
 

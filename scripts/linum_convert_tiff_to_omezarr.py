@@ -18,10 +18,12 @@ If there are more than one channel, file structure should be
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import logging
 import os
-from glob import glob
+from pathlib import Path
 
 import dask.array as da
 import numpy as np
@@ -29,7 +31,6 @@ import zarr
 from skimage.transform import resize
 from tifffile import imread
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import create_tempstore, save_omezarr
 from linumpy.utils.io import add_overwrite_arg, add_verbose_arg
 
@@ -78,7 +79,7 @@ def check_folders(parser, folder):
     """
     tiff_files = []
     # check if there are tiff files in the folder
-    if glob(os.path.join(folder, "*.tif")) == []:
+    if not list(Path(folder).glob("*.tif")):
         # list subfolders
         subfolders = [f.path for f in os.scandir(folder) if f.is_dir()]
         if subfolders == []:
@@ -86,14 +87,14 @@ def check_folders(parser, folder):
         else:
             logging.info("Found subfolders in the folder.")
             for _index, subfolder in enumerate(subfolders):
-                if glob(os.path.join(subfolder, "*.tif")) == []:
+                if not list(Path(subfolder).glob("*.tif")):
                     parser.error("No tiff files found in the subfolder.")
                 else:
-                    tiff_files.append(sorted(glob(os.path.join(subfolder, "*.tif"))))
+                    tiff_files.append(sorted(str(p) for p in Path(subfolder).glob("*.tif")))
     elif len([f.path for f in os.scandir(folder) if f.is_dir()]) != 0:
         parser.error("Both tiff files and subfolders found in the folder.")
     else:
-        tiff_files = sorted(glob(os.path.join(folder, "*.tif")))
+        tiff_files = sorted(str(p) for p in Path(folder).glob("*.tif"))
         logging.info("Found tiff files in the folder.")
 
     # check if all subfolders contain the same number of files

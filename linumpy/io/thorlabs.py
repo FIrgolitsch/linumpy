@@ -320,7 +320,7 @@ class ThorOCT:
         raw_positions = []
 
         if scan_file_path:
-            with open(file=scan_file_path, encoding="utf-8") as file:
+            with Path(file=scan_file_path).open(encoding="utf-8") as file:
                 lines = file.readlines()
 
                 # Find the start of the positions section

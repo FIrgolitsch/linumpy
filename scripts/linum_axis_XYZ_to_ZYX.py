@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-
-import linumpy._thread_config  # noqa: F401
 
 """ Change the axis from XYZ order to ZYX, necessary before converting to .zarr format
 """

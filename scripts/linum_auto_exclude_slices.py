@@ -70,7 +70,7 @@ def load_registration_metrics(transforms_dir: Path):
         if not m:
             continue
         slice_id = int(m.group(1))
-        with open(metrics_file) as f:
+        with Path(metrics_file).open() as f:
             data = json.load(f)
         z_corr = data.get("metrics", {}).get("z_correlation", {}).get("value")
         if z_corr is not None:
@@ -112,7 +112,7 @@ def main():
     if not metrics:
         logger.warning("No registration metrics found in %s", args.transforms_dir)
         # Write empty CSV
-        with open(args.output_csv, "w", newline="") as f:
+        with Path(args.output_csv).open("w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["slice_id", "z_correlation", "exclude_reason"])
         return
@@ -143,7 +143,7 @@ def main():
             )
 
     # Write output CSV
-    with open(args.output_csv, "w", newline="") as f:
+    with Path(args.output_csv).open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["slice_id", "z_correlation", "exclude_reason"])
         writer.writeheader()
         writer.writerows(exclude_slices)

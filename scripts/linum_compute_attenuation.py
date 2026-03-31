@@ -7,12 +7,13 @@ the OCT reflectivity data.
 
 # Configure thread limits before numpy/scipy imports
 # TODO: Keep the OCT pixel format (which is float32 ?)
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.preproc.icorr import get_extendedAttenuation_Vermeer2013
 

@@ -231,7 +231,7 @@ class PipelineMetrics:
         else:
             filepath = Path(filename)
 
-        with open(filepath, "w") as f:
+        with Path(filepath).open("w") as f:
             json.dump(self.to_dict(), f, indent=2, cls=MetricsEncoder)
 
         return filepath
@@ -848,7 +848,7 @@ def load_metrics(filepath: str | Path) -> dict:
     dict
         Loaded metrics dictionary.
     """
-    with open(filepath) as f:
+    with Path(filepath).open() as f:
         return json.load(f)
 
 

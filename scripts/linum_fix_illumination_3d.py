@@ -8,9 +8,9 @@ This is the CPU version. For GPU acceleration, use linum_fix_illumination_3d_gpu
 """
 
 # Configure thread limits before numpy/scipy imports
-import os
-
 import linumpy._thread_config  # noqa: F401
+
+import os
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
 # to prevent thread oversubscription. The number of threads per worker should be

@@ -8,13 +8,14 @@ a 16-bit PNG for QC visualization.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import numpy as np
 from skimage.io import imsave
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 

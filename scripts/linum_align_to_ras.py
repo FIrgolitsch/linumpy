@@ -9,6 +9,8 @@ directly to the zarr file (resampling) or stored in OME-Zarr metadata.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 from pathlib import Path
@@ -19,7 +21,6 @@ import numpy as np
 import SimpleITK as sitk
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io import allen
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.utils.orientation import (
@@ -241,7 +242,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
     if not zattrs_path.exists():
         raise FileNotFoundError(f".zattrs not found: {zarr_path}")
 
-    with open(zattrs_path, encoding="utf-8") as f:
+    with Path(zattrs_path).open(encoding="utf-8") as f:
         metadata = json.load(f)
 
     affine_transform = {"type": "affine", "affine": affine_matrix.flatten().tolist()}
@@ -254,7 +255,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
         existing = dataset.get("coordinateTransformations", [])
         dataset["coordinateTransformations"] = [affine_transform, *existing]
 
-    with open(zattrs_path, "w", encoding="utf-8") as f:
+    with Path(zattrs_path).open("w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     print(f"Stored affine transform in metadata: {zattrs_path}")
@@ -285,7 +286,7 @@ def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> list[float] | None:
             continue
 
         try:
-            with open(metadata_path, encoding="utf-8") as f:
+            with Path(metadata_path).open(encoding="utf-8") as f:
                 metadata = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue

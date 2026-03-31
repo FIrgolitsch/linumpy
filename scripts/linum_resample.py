@@ -3,13 +3,13 @@
 """Resample a nifti volume to a given resolution."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
-
-import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():

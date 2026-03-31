@@ -30,6 +30,8 @@ Example usage:
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 import re
@@ -38,7 +40,6 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.microscope.oct import OCT
 from linumpy.preproc.xyzcorr import detect_galvo_for_slice
 from linumpy.reconstruction import get_tiles_ids
@@ -99,7 +100,7 @@ def get_slice_ids_from_shifts(shifts_file: Path) -> list:
     """Extract slice IDs from an existing shifts_xy.csv file."""
     slice_ids = set()
 
-    with open(shifts_file) as f:
+    with Path(shifts_file).open() as f:
         reader = csv.DictReader(f)
         for row in reader:
             # Handle both int and float string formats (e.g., '0' or '0.0')
@@ -187,7 +188,7 @@ def write_slice_config(
     if first_slice_excludes is None:
         first_slice_excludes = []
 
-    with open(output_file, "w", newline="") as f:
+    with Path(output_file).open("w", newline="") as f:
         writer = csv.writer(f)
 
         # Header depends on whether galvo detection was run

@@ -11,6 +11,8 @@ Falls back to CPU if GPU is not available.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +21,6 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy import reconstruction
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize

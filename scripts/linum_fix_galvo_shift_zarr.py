@@ -54,6 +54,8 @@ Update slice_config.csv after fixing::
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import csv
 from pathlib import Path
@@ -61,7 +63,6 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import OmeZarrWriter
 from linumpy.preproc.xyzcorr import detect_galvo_band_in_tile, detect_galvo_shift
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
@@ -649,7 +650,7 @@ def _update_slice_config(config_path: Path, slice_id: int, confidence: float, fi
     """Update galvo_confidence and galvo_fix columns for one slice."""
     rows = []
     fieldnames = None
-    with open(config_path, newline="") as f:
+    with Path(config_path).open(newline="") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             raise ValueError(f"Empty or malformed CSV: {config_path}")
@@ -675,7 +676,7 @@ def _update_slice_config(config_path: Path, slice_id: int, confidence: float, fi
         print(f"  Warning: slice_id {slice_id:02d} not found in {config_path}")
         return
 
-    with open(config_path, "w", newline="") as f:
+    with Path(config_path).open("w", newline="") as f:
         writer_csv = csv.DictWriter(f, fieldnames=fieldnames)
         writer_csv.writeheader()
         writer_csv.writerows(rows)

@@ -12,6 +12,11 @@ The output transform is a 2x2 matrix that maps tile indices (i, j) to pixel posi
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
+# Configure all libraries (especially SimpleITK) to respect thread limits
+from linumpy._thread_config import configure_all_libraries
+
 import argparse
 import logging
 from pathlib import Path
@@ -20,10 +25,6 @@ import numpy as np
 import SimpleITK as sitk
 import zarr
 
-import linumpy._thread_config  # noqa: F401
-
-# Configure all libraries (especially SimpleITK) to respect thread limits
-from linumpy._thread_config import configure_all_libraries
 from linumpy.io.zarr import read_omezarr
 from linumpy.stitching import mosaic_grid
 from linumpy.stitching.registration import compute_motor_transform, estimate_mosaic_transform

@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 """Collection of functions to fix intensity-related artefacts in raw data"""
 
+from linumpy._thread_config import worker_initializer
+
 import contextlib
 import itertools
 import multiprocessing
@@ -21,7 +23,6 @@ from scipy.optimize import curve_fit, minimize
 from skimage.filters import threshold_li
 from sklearn import linear_model
 
-from linumpy._thread_config import worker_initializer
 from linumpy.preproc import xyzcorr
 from linumpy.stitching.stitch_utils import getOverlap
 from linumpy.utils.io import get_available_cpus

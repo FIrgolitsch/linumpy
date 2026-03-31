@@ -17,6 +17,8 @@ For obliquely-mounted samples (e.g., 45° from standard planes), the shift
 vector direction should remain relatively constant if there's no rotation.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -26,7 +28,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils.io import add_overwrite_arg
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -182,7 +183,7 @@ def load_registration_rotations(reg_dir):
         json_path = slice_dir / "pairwise_registration_metrics.json"
 
         if json_path.exists():
-            with open(json_path) as f:
+            with Path(json_path).open() as f:
                 data = json.load(f)
             metrics = data.get("metrics", {})
             rotation = metrics.get("rotation", {}).get("value")
@@ -374,7 +375,7 @@ def generate_report(analysis, reg_comparison, output_dir):
     lines.extend(["", "=" * 70])
 
     report_path = output_dir / "acquisition_rotation_analysis.txt"
-    with open(report_path, "w") as f:
+    with Path(report_path).open("w") as f:
         f.write("\n".join(lines))
 
     logger.info(f"Report saved to {report_path}")
@@ -545,7 +546,7 @@ def main():
 
     # Save analysis JSON
     json_path = output_dir / "acquisition_rotation_analysis.json"
-    with open(json_path, "w") as f:
+    with Path(json_path).open("w") as f:
         json.dump(analysis, f, indent=2)
 
     # Generate outputs

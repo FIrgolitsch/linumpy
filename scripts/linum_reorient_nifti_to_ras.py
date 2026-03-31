@@ -7,13 +7,13 @@ The script will estimate the main axis of the volume and reorient it to RAS+. Cu
 performs 90° rotations and flips."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-
-import linumpy._thread_config  # noqa: F401
 
 choices = {
     "x+": [1.0, 0.0, 0.0],

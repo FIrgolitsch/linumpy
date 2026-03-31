@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.psf.psf_estimator import extract_psfParametersFromMosaic, get_3dPSF
 

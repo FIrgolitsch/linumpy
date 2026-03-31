@@ -10,13 +10,14 @@ Falls back to CPU if GPU is not available.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import numpy as np
 from skimage.io import imsave
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info, to_cpu
 from linumpy.io.zarr import read_omezarr
 

@@ -5,6 +5,8 @@ from agarose voxels and then applies the inverse profile to each a-line.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 
 import dask.array as da
@@ -12,7 +14,6 @@ import matplotlib
 import numpy as np
 from skimage.filters import threshold_otsu
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.preproc.xyzcorr import findTissueInterface, maskUnderInterface
 from linumpy.utils.metrics import collect_psf_compensation_metrics

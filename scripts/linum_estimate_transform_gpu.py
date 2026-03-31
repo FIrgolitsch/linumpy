@@ -13,6 +13,11 @@ Two modes are available:
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
+# Configure all libraries (especially SimpleITK) to respect thread limits
+from linumpy._thread_config import configure_all_libraries
+
 import argparse
 import logging
 import random
@@ -24,10 +29,6 @@ import zarr
 from skimage.exposure import match_histograms
 from skimage.filters import threshold_otsu
 
-import linumpy._thread_config  # noqa: F401
-
-# Configure all libraries (especially SimpleITK) to respect thread limits
-from linumpy._thread_config import configure_all_libraries
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.fft_ops import phase_correlation
 from linumpy.io.zarr import read_omezarr

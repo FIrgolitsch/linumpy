@@ -18,6 +18,8 @@ blending quality at tile boundaries.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -25,7 +27,6 @@ from pathlib import Path
 
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 from linumpy.stitching.mosaic_grid import addVolumeToMosaic
 from linumpy.stitching.motor import (
@@ -258,7 +259,7 @@ def main():
                 "input_transform": args.input_transform,
             },
         }
-        with open(args.output_refinements, "w") as f:
+        with Path(args.output_refinements).open("w") as f:
             json.dump(json_refinements, f, indent=2)
         logger.info(f"Refinements saved to: {args.output_refinements}")
 

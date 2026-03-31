@@ -10,6 +10,8 @@ Falls back to CPU if GPU is not available.
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import itertools
 import time
@@ -18,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from tqdm import tqdm
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
 from linumpy.io import OmeZarrWriter, read_omezarr

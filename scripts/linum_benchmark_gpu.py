@@ -21,16 +21,17 @@ Usage:
 """
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import contextlib
 import json
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-
-import linumpy._thread_config  # noqa: F401
 
 # Import GPU module
 from linumpy.gpu import GPU_AVAILABLE, gpu_info, print_gpu_info
@@ -479,7 +480,7 @@ def main():
             "results": all_results,
         }
 
-        with open(args.output, "w", encoding="utf-8") as f:
+        with Path(args.output).open("w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, default=str)
 
         print(f"\nResults saved to: {args.output}")

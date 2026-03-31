@@ -3,12 +3,13 @@
 """Crop the tiles given a 2D mosaic grid."""
 
 # Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 from pathlib import Path
 
 import SimpleITK as sitk
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.stitching.mosaic_grid import MosaicGrid
 
 

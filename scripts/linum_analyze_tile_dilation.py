@@ -15,6 +15,8 @@ particularly for obliquely-cut samples where physical vs measured positions
 may diverge due to tissue deformation after slicing.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -23,7 +25,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 from linumpy.utils.io import add_overwrite_arg
 
@@ -231,7 +232,7 @@ def generate_report(analysis, scale_factors, residuals, distortions, output_dir,
     )
 
     report_path = output_dir / "dilation_analysis.txt"
-    with open(report_path, "w") as f:
+    with Path(report_path).open("w") as f:
         f.write("\n".join(lines))
 
     logger.info(f"Report saved to {report_path}")
@@ -342,7 +343,7 @@ def main():
 
     # Save JSON
     json_path = output_dir / "dilation_analysis.json"
-    with open(json_path, "w") as f:
+    with Path(json_path).open("w") as f:
         json.dump(analysis, f, indent=2, cls=NumpyEncoder)
     logger.info(f"Analysis JSON saved to {json_path}")
 

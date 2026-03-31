@@ -13,6 +13,8 @@ reconstruction artifacts like edge mismatches and "overhangs" in serial OCT data
 Designed for troubleshooting 45° oblique-cut mouse brain reconstructions.
 """
 
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
 import logging
@@ -24,7 +26,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import linumpy._thread_config  # noqa: F401
 from linumpy.utils.io import add_overwrite_arg
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -92,7 +93,7 @@ def analyze_rotation_drift(pipeline_dir, output_dir, threshold=2.0, slice_ids=No
         if not json_path.exists():
             continue
 
-        with open(json_path) as f:
+        with Path(json_path).open() as f:
             data = json.load(f)
 
         metrics = data.get("metrics", {})
@@ -373,12 +374,12 @@ def generate_summary_report(results, output_dir):
     lines.extend(["", "=" * 70])
 
     report_path = output_dir / "diagnostic_report.txt"
-    with open(report_path, "w") as f:
+    with Path(report_path).open("w") as f:
         f.write("\n".join(lines))
 
     # Also save JSON
     json_path = output_dir / "diagnostic_results.json"
-    with open(json_path, "w") as f:
+    with Path(json_path).open("w") as f:
         json.dump(
             {
                 "timestamp": timestamp,
