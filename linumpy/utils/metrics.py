@@ -8,11 +8,7 @@ from various processing steps in the 3D reconstruction pipeline.
 
 Usage:
     # Use step-specific collectors (recommended)
-    from linumpy.utils.metrics import collect_mask_metrics, collect_pairwise_registration_metrics
-
-    # In your script:
-    mask = create_mask(vol, ...)
-    collect_mask_metrics(mask, vol, output_path, params={'sigma': 5.0})
+    from linumpy.utils.metrics import collect_pairwise_registration_metrics
 """
 
 import json
@@ -257,68 +253,6 @@ class PipelineMetrics:
 # =============================================================================
 # Step-specific metric collectors
 # =============================================================================
-
-def collect_mask_metrics(mask: np.ndarray,
-                         input_vol: np.ndarray,
-                         output_path: Union[str, Path],
-                         input_path: Optional[str] = None,
-                         params: Optional[Dict] = None) -> PipelineMetrics:
-    """
-    Collect metrics for mask creation step.
-
-    Parameters
-    ----------
-    mask : np.ndarray
-        The created binary mask.
-    input_vol : np.ndarray
-        The input volume.
-    output_path : str or Path
-        Path to the output mask file.
-    input_path : str, optional
-        Path to the input image.
-    params : dict, optional
-        Dictionary of parameters used (sigma, selem_radius, min_size, etc.)
-
-    Returns
-    -------
-    PipelineMetrics
-        Metrics object (already saved).
-    """
-    output_path = Path(output_path)
-    metrics = PipelineMetrics('create_masks', str(output_path.parent))
-
-    # Info
-    if input_path:
-        metrics.add_info('input_image', str(input_path), 'Input image path')
-    metrics.add_info('output_mask', str(output_path), 'Output mask path')
-    metrics.add_info('volume_shape', list(input_vol.shape), 'Volume shape')
-
-    if params:
-        for key, val in params.items():
-            metrics.add_info(key, val, f'Parameter: {key}')
-
-    # Mask coverage metrics
-    mask_coverage = float(np.sum(mask > 0)) / mask.size
-    metrics.add_metric('mask_coverage', mask_coverage,
-                       description='Fraction of volume covered by mask',
-                       threshold_name='mask_coverage')
-
-    # Per-slice coverage
-    if mask.ndim == 3:
-        per_slice_coverage = np.mean(mask > 0, axis=(1, 2))
-        metrics.add_metric('mean_slice_coverage', float(np.mean(per_slice_coverage)),
-                           description='Mean mask coverage per slice')
-        metrics.add_metric('min_slice_coverage', float(np.min(per_slice_coverage)),
-                           description='Minimum mask coverage across slices',
-                           threshold_name='min_slice_coverage')
-        metrics.add_metric('std_slice_coverage', float(np.std(per_slice_coverage)),
-                           description='Std dev of mask coverage across slices',
-                           threshold_name='std_slice_coverage')
-
-    metrics.save(f"{output_path.stem}_metrics.json")
-    metrics.log_issues()
-    return metrics
-
 
 def collect_normalization_metrics(vol_normalized: np.ndarray,
                                   agarose_mask: np.ndarray,
