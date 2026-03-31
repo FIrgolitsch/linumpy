@@ -193,7 +193,9 @@ target-version = "py312"
 line-length = 127
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE"]
+select = ["E", "F", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE", "PTH"]
+# N (pep8-naming) excluded: N802/N803/N806 false-positive on scientific variable
+# names (X, Y, I); N813 is standard SimpleITK convention; N999 is legacy filenames.
 # Scientific codebase: these Unicode characters are intentional
 allowed-confusables = ["–", "×", "σ", "ℹ"]
 
@@ -212,8 +214,9 @@ allowed-confusables = ["–", "×", "σ", "ℹ"]
 "linumpy/stitching/mosaic_grid.py" = ["E741"]
 # Ambiguous `l` in list comprehension is clear in context
 "scripts/linum_convert_tiff_to_omezarr.py" = ["E741"]
-# Diagnostic shell snippets have intentionally long template strings
-"scripts/linum_diagnose_pipeline.py" = ["E501"]
+# Diagnostic shell snippets have intentionally long template strings;
+# CUDA library detection uses os.path for system-level path traversal
+"scripts/linum_diagnose_pipeline.py" = ["E501", "PTH"]
 
 [tool.ruff.format]
 # Use default (black-compatible) formatting
