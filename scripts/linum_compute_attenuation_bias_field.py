@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """Compute the tissue attenuation compensation bias field"""
 

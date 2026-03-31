@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Image quality assessment functions for slice analysis.
 
@@ -28,7 +27,7 @@ Usage:
     quality, metrics = assess_slice_quality(vol, vol_before, vol_after)
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -153,7 +152,7 @@ def compute_ssim_3d(vol1: np.ndarray, vol2: np.ndarray, win_size: int = 7, sampl
     return float(np.mean(ssim_scores))
 
 
-def compute_edge_score(vol: np.ndarray, reference: np.ndarray, sample_z: Optional[int] = None) -> float:
+def compute_edge_score(vol: np.ndarray, reference: np.ndarray, sample_z: int | None = None) -> float:
     """
     Compute edge preservation score between volume and reference.
 
@@ -244,12 +243,12 @@ def compute_variance_score(vol: np.ndarray, reference: np.ndarray) -> float:
 
 def assess_slice_quality(
     vol: np.ndarray,
-    vol_before: Optional[np.ndarray],
-    vol_after: Optional[np.ndarray],
+    vol_before: np.ndarray | None,
+    vol_after: np.ndarray | None,
     sample_depth: int = 5,
-    weights: Optional[Dict[str, float]] = None,
+    weights: dict[str, float] | None = None,
     xy_roi: int = 0,
-) -> Tuple[float, Dict[str, Any]]:
+) -> tuple[float, dict[str, Any]]:
     """
     Assess overall quality of a slice volume.
 
@@ -304,7 +303,7 @@ def assess_slice_quality(
     step = max(1, nz // 8)
     vol_sample = np.asarray(vol[::step, ys:ye, xs:xe])
 
-    metrics: Dict[str, Any] = {
+    metrics: dict[str, Any] = {
         "ssim_before": 0.0,
         "ssim_after": 0.0,
         "ssim_mean": 0.0,
@@ -340,7 +339,7 @@ def assess_slice_quality(
     ye_n = min(ye, ny_n)
     xe_n = min(xe, nx_n)
 
-    ref_plane: Optional[np.ndarray] = None
+    ref_plane: np.ndarray | None = None
     if vol_before is not None and vol_after is not None:
         z_b = min(mid_z, vol_before.shape[0] - 1)
         z_a = min(mid_z, vol_after.shape[0] - 1)
@@ -374,7 +373,7 @@ def assess_slice_quality(
     return float(overall), metrics
 
 
-def detect_calibration_slice(volumes: Dict[int, np.ndarray], thickness_ratio: float = 1.5) -> List[int]:
+def detect_calibration_slice(volumes: dict[int, np.ndarray], thickness_ratio: float = 1.5) -> list[int]:
     """
     Detect calibration slices by their different thickness.
 
@@ -415,7 +414,7 @@ def detect_calibration_slice(volumes: Dict[int, np.ndarray], thickness_ratio: fl
     return calibration
 
 
-def compute_quality_report(slice_qualities: Dict[int, Dict[str, Any]], min_quality: float = 0.0) -> Dict[str, Any]:
+def compute_quality_report(slice_qualities: dict[int, dict[str, Any]], min_quality: float = 0.0) -> dict[str, Any]:
     """
     Generate a quality report from slice quality assessments.
 

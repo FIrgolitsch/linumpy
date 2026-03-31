@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Convert folder of tiff files to omezarr. Expected file structure is:
     in_folder/
@@ -86,7 +85,7 @@ def check_folders(parser, folder):
             parser.error("No tiff files or subfolder found in the folder.")
         else:
             logging.info("Found subfolders in the folder.")
-            for index, subfolder in enumerate(subfolders):
+            for _index, subfolder in enumerate(subfolders):
                 if glob(os.path.join(subfolder, "*.tif")) == []:
                     parser.error("No tiff files found in the subfolder.")
                 else:
@@ -135,17 +134,15 @@ def main():
     logging.getLogger().setLevel(logging.getLevelName(args.verbose))
 
     tiff_files = check_folders(parser, args.in_folder)
-    logging.info("Found {} channels and {} slices in z.".format(len(tiff_files), len(tiff_files[0])))
+    logging.info(f"Found {len(tiff_files)} channels and {len(tiff_files[0])} slices in z.")
 
     # Get first image to get the resolution
     volume = imread(tiff_files[0][0])
     volume = np.array(volume)
 
-    logging.info("Initial shape: {} ".format(volume.shape[2:]))
+    logging.info(f"Initial shape: {volume.shape[2:]} ")
     logging.info(
-        "Initial resolution: {} x {} x {} um (X, Y, Z)".format(
-            args.in_dimensions[0], args.in_dimensions[1], args.in_dimensions[2]
-        )
+        f"Initial resolution: {args.in_dimensions[0]} x {args.in_dimensions[1]} x {args.in_dimensions[2]} um (X, Y, Z)"
     )
 
     if args.resolution:  # Resampling
@@ -156,10 +153,8 @@ def main():
             int(volume.shape[3] * resolution[0] * 1000 / args.resolution),
         ]
         mosaic_shape = [len(tiff_files), len(tiff_files[0]), volume_shape[0], volume_shape[1]]
-        logging.info("Output shape: {}".format(tuple(mosaic_shape[2:])))
-        logging.info(
-            "Output resolution: {} x {} x {} um (X, Y, Z)".format(args.resolution, args.resolution, args.in_dimensions[2])
-        )
+        logging.info(f"Output shape: {tuple(mosaic_shape[2:])}")
+        logging.info(f"Output resolution: {args.resolution} x {args.resolution} x {args.in_dimensions[2]} um (X, Y, Z)")
     else:
         logging.info("No resampling.")
         resolution = [args.in_dimensions[2] / 1000, args.in_dimensions[0] / 1000, args.in_dimensions[1] / 1000]
@@ -170,7 +165,7 @@ def main():
     mosaic = zarr.open(zarr_store, mode="w", shape=mosaic_shape, dtype=np.float32, chunks=[1, 1, 128, 128])
 
     for index_z in range(len(tiff_files[0])):
-        process_volume(mosaic, [item[index_z] for item in tiff_files], index_z, [1, 1] + mosaic_shape[2:])
+        process_volume(mosaic, [item[index_z] for item in tiff_files], index_z, [1, 1, *mosaic_shape[2:]])
 
     mosaic_dask = da.from_zarr(mosaic)
     save_omezarr(mosaic_dask, args.out_zarr, voxel_size=resolution, chunks=args.chunks, n_levels=args.n_levels)

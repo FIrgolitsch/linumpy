@@ -271,7 +271,7 @@ class ManualImageCorrection:
         transformed_coords = self.transform_coordinates(view_coords, self.current_z)
         data_view = self.apply_scaling(self.image_interpolator(transformed_coords), self.current_z)
 
-        data_rgb = np.zeros(data_view.shape + (3,))
+        data_rgb = np.zeros((*data_view.shape, 3))
         data_rgb[..., :] = data_view[..., None]
 
         if self.ref_z_mode != NO_REF_LABEL:

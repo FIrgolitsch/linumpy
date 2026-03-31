@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for detect_interface_z and crop_below_interface in linumpy/preproc/xyzcorr.py"""
 
 import numpy as np
@@ -83,7 +82,7 @@ def test_crop_below_interface_output_shape_depth():
     """With crop_before_interface=True, output Z == depth_px exactly."""
     resolution_um = 5.0
     depth_um = 50.0
-    expected_depth_px = int(round(depth_um / resolution_um))  # 10
+    expected_depth_px = round(depth_um / resolution_um)  # 10
     vol_zxy = _make_zxy_vol(n_z=80, interface_z=10)
     vol_crop, _ = crop_below_interface(vol_zxy, depth_um=depth_um, resolution_um=resolution_um, crop_before_interface=True)
     assert vol_crop.shape[0] == pytest.approx(expected_depth_px, abs=1)
@@ -108,7 +107,7 @@ def test_crop_below_interface_returns_interface_index():
 def test_crop_below_interface_crop_before():
     """With crop_before_interface=True the start is shifted to the interface."""
     vol_zxy = _make_zxy_vol(n_z=80, n_x=16, n_y=16, interface_z=20)
-    vol_crop_after, iface = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, crop_before_interface=False)
+    vol_crop_after, _iface = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, crop_before_interface=False)
     vol_crop_before, _ = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, crop_before_interface=True)
     # crop_before removes voxels above the interface → fewer Z voxels
     assert vol_crop_before.shape[0] <= vol_crop_after.shape[0]

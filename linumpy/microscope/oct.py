@@ -1,6 +1,5 @@
 import warnings
 from pathlib import Path
-from typing import Union
 
 import numpy as np
 
@@ -38,7 +37,7 @@ class OCT:
         filename
             Path to the scan_file written by the OCT (.txt)
         """
-        with open(filename, "r") as f:
+        with open(filename) as f:
             foo = f.read()
 
         # Process the file input
@@ -54,9 +53,7 @@ class OCT:
                 val = int(val)
             self.info[key] = val
 
-    def load_image(
-        self, crop: bool = True, fix_galvo_shift: Union[bool, int] = True, fix_camera_shift: bool = False
-    ) -> np.ndarray:
+    def load_image(self, crop: bool = True, fix_galvo_shift: bool | int = True, fix_camera_shift: bool = False) -> np.ndarray:
         """Load an image dataset
         Parameters
         ----------
@@ -109,7 +106,7 @@ class OCT:
         # Estimate the galvo shift
         if isinstance(fix_galvo_shift, bool) and fix_galvo_shift is True:
             if n_extra == 0:
-                warnings.warn("Cannot estimate the shift correction as there are no extra a-lines in the file.")
+                warnings.warn("Cannot estimate the shift correction as there are no extra a-lines in the file.", stacklevel=2)
             else:
                 if aip is None:
                     aip = vol.mean(axis=0)

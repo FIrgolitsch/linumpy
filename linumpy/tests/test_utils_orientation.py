@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/utils/orientation.py"""
 
 import numpy as np

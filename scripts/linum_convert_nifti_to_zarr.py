@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Convert a nifti volume into a .zarr volume"""
 

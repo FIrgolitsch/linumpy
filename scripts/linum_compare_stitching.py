@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Compare stitching results between different methods."""
 
 import argparse
@@ -82,7 +81,7 @@ def main():
     diff = np.abs(s1.astype(float) - s2.astype(float))
 
     # Create comparison figure
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    _fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     vmin = min(s1.min(), s2.min())
     vmax = max(np.percentile(s1, 99), np.percentile(s2, 99))
 

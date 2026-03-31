@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Stack 2D mosaics into a single volume."""
 
@@ -100,8 +99,8 @@ def main():
     y0 = min(ymin)
     x1 = max(xmax)
     y1 = max(ymax)
-    nx = int((x1 - x0))
-    ny = int((y1 - y0))
+    nx = int(x1 - x0)
+    ny = int(y1 - y0)
     volume_shape = (n_slices, ny, nx)
 
     # Create the zarr persistent array

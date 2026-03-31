@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 """Collection of functions to fix spatial-related artefacts in raw data"""
 
 import itertools
@@ -22,7 +21,7 @@ from skimage.filters import threshold_li, threshold_otsu
 from skimage.morphology import dilation, disk
 
 
-def cropVolume(vol, xlim=[0, -1], ylim=[0, -1], zlim=[0, -1]):
+def cropVolume(vol, xlim=None, ylim=None, zlim=None):
     """Crops the given volume according to the range given as input
 
     Parameters
@@ -46,6 +45,12 @@ def cropVolume(vol, xlim=[0, -1], ylim=[0, -1], zlim=[0, -1]):
     * xlim=[0,-1] means that the whole volume in the x dimension will be returned.
 
     """
+    if zlim is None:
+        zlim = [0, -1]
+    if ylim is None:
+        ylim = [0, -1]
+    if xlim is None:
+        xlim = [0, -1]
     nx, ny = vol.shape[:2]
     xlim = list(xlim)
     ylim = list(ylim)
@@ -267,8 +272,8 @@ def cropZ0WholeSlice(
     zmax = np.floor((zmin * voxdim[2] + nz) / (1.0 * voxdim[2])).astype(int)
 
     if verbose:
-        print(("Crop limits are : [%.2f, %.2f] microns" % (zmin * voxdim[2], zmax * voxdim[2])))
-        print(("Crop limits are : [%d, %d] pixels" % (zmin, zmax)))
+        print(f"Crop limits are : [{zmin * voxdim[2]:.2f}, {zmax * voxdim[2]:.2f}] microns")
+        print(f"Crop limits are : [{zmin}, {zmax}] pixels")
 
     # Cropping
     if returnZ0:
@@ -834,7 +839,7 @@ def detect_galvo_for_slice(
     n_extra: int,
     threshold: float = 0.6,
     n_samples: int = 5,
-    axial_resolution: float = None,
+    axial_resolution: float | None = None,
     min_intensity: float = 20.0,
 ) -> tuple:
     """Detect galvo shift for a slice by sampling multiple tiles.
@@ -1064,7 +1069,7 @@ def crop_below_interface(
     sigma_xy: float = 3.0,
     sigma_z: float = 2.0,
     crop_before_interface: bool = False,
-    percentile_clip: float = None,
+    percentile_clip: float | None = None,
 ) -> np.ndarray:
     """Crop an OME-Zarr volume to a specified depth below the tissue interface.
 
@@ -1105,7 +1110,7 @@ def crop_below_interface(
 
     avg_iface = detect_interface_z(vol_xyz, sigma_xy=sigma_xy, sigma_z=sigma_z)
 
-    depth_px = int(round(depth_um / resolution_um))
+    depth_px = round(depth_um / resolution_um)
     surface_idx = max(0, min(avg_iface, vol_zxy.shape[0] - 1))
     end_idx = surface_idx + depth_px
 

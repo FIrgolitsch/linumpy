@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """Computes the tissue apparent attenuation coefficient map
 and then use the average attenuation to compensate its effect in

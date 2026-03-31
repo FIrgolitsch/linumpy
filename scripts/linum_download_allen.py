@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Download the Allen mouse brain template, and setting the correct RAS+ direction and spacing.

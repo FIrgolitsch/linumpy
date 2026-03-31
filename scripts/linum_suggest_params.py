@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Suggest 3D reconstruction pipeline parameters from raw input files.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/stitching/motor.py"""
 
 import json
@@ -17,14 +16,14 @@ from linumpy.stitching.motor import (
 
 
 def test_compute_motor_positions_count():
-    positions, step_y, step_x = compute_motor_positions(nx=3, ny=4, tile_shape=(10, 64, 64), overlap_fraction=0.1)
+    positions, _step_y, _step_x = compute_motor_positions(nx=3, ny=4, tile_shape=(10, 64, 64), overlap_fraction=0.1)
     assert len(positions) == 12  # 3 × 4
 
 
 def test_compute_motor_positions_step_sizes():
     tile_shape = (10, 100, 80)
     overlap = 0.2
-    positions, step_y, step_x = compute_motor_positions(nx=2, ny=2, tile_shape=tile_shape, overlap_fraction=overlap)
+    _positions, step_y, step_x = compute_motor_positions(nx=2, ny=2, tile_shape=tile_shape, overlap_fraction=overlap)
     expected_step_y = int(100 * (1 - overlap))  # 80
     expected_step_x = int(80 * (1 - overlap))  # 64
     assert step_y == expected_step_y
@@ -40,10 +39,10 @@ def test_compute_motor_positions_first_is_origin():
 
 def test_compute_motor_positions_scale_factor():
     tile_shape = (10, 100, 100)
-    positions_1x, step_y_1x, _ = compute_motor_positions(
+    _positions_1x, step_y_1x, _ = compute_motor_positions(
         nx=2, ny=1, tile_shape=tile_shape, overlap_fraction=0.0, scale_factor=1.0
     )
-    positions_2x, step_y_2x, _ = compute_motor_positions(
+    _positions_2x, step_y_2x, _ = compute_motor_positions(
         nx=2, ny=1, tile_shape=tile_shape, overlap_fraction=0.0, scale_factor=2.0
     )
     assert step_y_2x == 2 * step_y_1x

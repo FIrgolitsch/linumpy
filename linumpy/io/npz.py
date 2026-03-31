@@ -1,9 +1,9 @@
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 
-def write_numpy(npz_path: str, *, data: Optional[Any] = None, metadata: Optional[Any] = None):
+def write_numpy(npz_path: str, *, data: Any | None = None, metadata: Any | None = None):
     """
     Writes data and metadata to a compressed numpy (.npz) file.
     Data and metadata are wrapped in a numpy array before being written to the file.
@@ -29,7 +29,7 @@ def write_numpy(npz_path: str, *, data: Optional[Any] = None, metadata: Optional
     )
 
 
-def read_numpy(npz_path: str) -> Tuple[Any, Any]:
+def read_numpy(npz_path: str) -> tuple[Any, Any]:
     """
     Reads data and metadata from a compressed numpy (.npz) file.
 
@@ -43,7 +43,7 @@ def read_numpy(npz_path: str) -> Tuple[Any, Any]:
     return npz["data"][0], npz["metadata"][0]
 
 
-def read_numpy_data(npz_path: str) -> Tuple[Any, type]:
+def read_numpy_data(npz_path: str) -> tuple[Any, type]:
     """
     Reads only the data from a compressed numpy (.npz) file.
 
@@ -57,7 +57,7 @@ def read_numpy_data(npz_path: str) -> Tuple[Any, type]:
     return npz["data"][0], npz["types"][0]["data"]
 
 
-def read_numpy_metadata(npz_path: str) -> Tuple[Any, type]:
+def read_numpy_metadata(npz_path: str) -> tuple[Any, type]:
     """
     Reads only the metadata from a compressed numpy (.npz) file.
 

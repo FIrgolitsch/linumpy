@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 Utilities for handling 3D volume orientation codes and transformations.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 3D slice stacking utilities.
 
@@ -6,7 +5,6 @@ Consolidated from linum_stack_slices_motor.py and linum_stack_motor_only.py.
 """
 
 import logging
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -15,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 def enforce_z_consistency(
     z_matches: list,
-    confidence_per_slice: Optional[dict] = None,
+    confidence_per_slice: dict | None = None,
     outlier_threshold_frac: float = 0.30,
     confidence_protect_threshold: float = 0.6,
-) -> Tuple[list, list]:
+) -> tuple[list, list]:
     """Correct outlier Z-overlaps using neighbor interpolation.
 
     Scans pairwise Z-overlap measurements for outliers (deviating more than
@@ -98,7 +96,7 @@ def enforce_z_consistency(
 
 def find_z_overlap(
     fixed_vol: np.ndarray, moving_vol: np.ndarray, slicing_interval_mm: float, search_range_mm: float, resolution_um: float
-) -> Tuple[int, float]:
+) -> tuple[int, float]:
     """Find optimal Z-overlap between consecutive slices using cross-correlation.
 
     Searches around the expected overlap for the best normalized
@@ -265,7 +263,7 @@ def apply_transform_to_volume(
     return result
 
 
-def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: Tuple[int, int]):
+def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: tuple[int, int]):
     """Compute destination region for placing a shifted volume.
 
     Returns the (possibly cropped) volume data and destination coordinates
@@ -288,7 +286,7 @@ def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: Tu
         (y_start, y_end, x_start, x_end) in output coordinates.
     """
     out_ny, out_nx = output_shape
-    dx_int, dy_int = int(round(dx_px)), int(round(dy_px))
+    dx_int, dy_int = round(dx_px), round(dy_px)
 
     dst_y_start = dy_int
     dst_x_start = dx_int
@@ -394,7 +392,7 @@ def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "
 
 def refine_z_blend_overlap(
     existing: np.ndarray, moving_overlap: np.ndarray, max_refinement_px: float
-) -> Tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float]:
     """Find and apply a small XY shift to align moving_overlap with existing before blending.
 
     Uses 2D phase correlation on Z-projected overlap regions to detect residual

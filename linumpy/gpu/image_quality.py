@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 GPU-accelerated image quality assessment functions.
 
@@ -18,7 +17,7 @@ Usage:
     ssim = compute_ssim_3d_gpu(vol1, vol2)
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -179,7 +178,7 @@ def compute_ssim_3d_gpu(vol1: np.ndarray, vol2: np.ndarray, win_size: int = 7, s
     return float(np.mean(ssim_scores))
 
 
-def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray, sample_z: Optional[int] = None) -> float:
+def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray, sample_z: int | None = None) -> float:
     """
     Compute edge preservation score using GPU.
 
@@ -296,11 +295,11 @@ def compute_variance_score_gpu(vol: np.ndarray, reference: np.ndarray) -> float:
 
 def assess_slice_quality_gpu(
     vol: np.ndarray,
-    vol_before: Optional[np.ndarray],
-    vol_after: Optional[np.ndarray],
+    vol_before: np.ndarray | None,
+    vol_after: np.ndarray | None,
     sample_depth: int = 5,
-    weights: Optional[Dict[str, float]] = None,
-) -> Tuple[float, Dict[str, Any]]:
+    weights: dict[str, float] | None = None,
+) -> tuple[float, dict[str, Any]]:
     """
     Assess overall quality of a slice volume using GPU acceleration.
 
@@ -333,7 +332,7 @@ def assess_slice_quality_gpu(
         weights = {"ssim": 0.5, "edge": 0.3, "variance": 0.2}
 
     depth = vol.shape[0] if vol.ndim == 3 else 1
-    metrics: Dict[str, Any] = {
+    metrics: dict[str, Any] = {
         "ssim_before": 0.0,
         "ssim_after": 0.0,
         "ssim_mean": 0.0,

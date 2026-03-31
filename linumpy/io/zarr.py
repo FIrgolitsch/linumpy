@@ -176,14 +176,12 @@ def create_directory(store_path, overwrite=False):
         if overwrite:
             directory.unlink()  # Remove the symlink only; target is NOT deleted
         else:
-            raise FileExistsError(
-                "Path {} already exists as a symlink. Set overwrite=True to overwrite.".format(directory.as_posix())
-            )
+            raise FileExistsError(f"Path {directory.as_posix()} already exists as a symlink. Set overwrite=True to overwrite.")
     elif directory.exists():
         if overwrite:
             shutil.rmtree(directory)
         else:
-            raise FileExistsError("Directory {} already exists. Set overwrite=True to overwrite.".format(directory.as_posix()))
+            raise FileExistsError(f"Directory {directory.as_posix()} already exists. Set overwrite=True to overwrite.")
     directory.mkdir(parents=True)
     return directory
 
@@ -325,7 +323,7 @@ class OmeZarrWriter:
         store_path: str | Path,
         shape: tuple,
         chunk_shape: tuple,
-        shards: tuple = None,
+        shards: tuple | None = None,
         dtype: np.dtype = np.float32,
         overwrite: bool = True,
         downscale_factor: int = 2,
@@ -400,7 +398,7 @@ class OmeZarrWriter:
         for count, path in enumerate(paths[1:]):
             target_path = os.path.join(image_path, path)
             if os.path.exists(target_path):
-                print("path exists: %s" % target_path)
+                print(f"path exists: {target_path}")
                 continue
             # open previous resolution from disk via dask...
             path_to_array = os.path.join(image_path, paths[count])
@@ -453,7 +451,7 @@ class OmeZarrWriter:
         self._downsample_pyramid_on_disk(self.root, paths)
         transformations = create_transformation_dict(n_levels + 1, res, len(self.shape))
         datasets = []
-        for p, t in zip(paths, transformations):
+        for p, t in zip(paths, transformations, strict=False):
             datasets.append({"path": p, "coordinateTransformations": t})
 
         pyramid_kw = {"max_layer": n_levels, "method": "linear", "downscale": self.downscale_factor}
@@ -614,10 +612,10 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
                 scale_factors = [uniform_scale] * len(base_res_um)
 
             # Calculate target shape using scale factors
-            target_shape = [max(1, int(s / sf)) for s, sf in zip(self.shape, scale_factors)]
+            target_shape = [max(1, int(s / sf)) for s, sf in zip(self.shape, scale_factors, strict=False)]
 
             # Calculate target resolution per-dimension
-            target_res_mm = [r * sf for r, sf in zip(res, scale_factors)]
+            target_res_mm = [r * sf for r, sf in zip(res, scale_factors, strict=False)]
             resolutions.append(target_res_mm)
 
             # Display resolution info
@@ -646,7 +644,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         # Create transformation metadata
         datasets = []
-        for path, res_mm in zip(paths, resolutions):
+        for path, res_mm in zip(paths, resolutions, strict=False):
             transforms = [{"type": "scale", "scale": res_mm}]
             datasets.append({"path": path, "coordinateTransformations": transforms})
 

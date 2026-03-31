@@ -173,7 +173,7 @@ def save_plot(raw_metrics, smoothed, scale_factors, n_serial_slices, plot_path):
     axes[0].grid(True, alpha=0.3)
 
     expanded_scale = (
-        np.array([scale_factors[int(round(i * len(scale_factors) / len(raw_metrics)))] for i in range(len(raw_metrics))])
+        np.array([scale_factors[round(i * len(scale_factors) / len(raw_metrics))] for i in range(len(raw_metrics))])
         if len(scale_factors) != len(raw_metrics)
         else scale_factors
     )
@@ -229,7 +229,7 @@ def main():
             f"({'serial-slice mode, n=' + str(args.n_serial_slices) if args.n_serial_slices else 'Z-plane mode'}), "
             f"sigma={args.smooth_sigma}, percentile={args.percentile}, strength={args.strength} ..."
         )
-        scale_factors, raw_metrics, smoothed, boundaries = compute_scale_factors(
+        scale_factors, raw_metrics, smoothed, _boundaries = compute_scale_factors(
             vol,
             n_serial_slices=args.n_serial_slices,
             smooth_sigma=args.smooth_sigma,

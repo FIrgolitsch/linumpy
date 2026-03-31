@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-from typing import Tuple
-
 import numpy as np
 import SimpleITK as sitk
 from matplotlib import pyplot as plt
@@ -46,7 +43,7 @@ def get_overlay_as_rgb(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
     return rgb
 
 
-def match_shape(img1: np.ndarray, img2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def match_shape(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Match the shape of two images by padding the smallest one.
     Parameters
     ----------

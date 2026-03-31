@@ -40,7 +40,7 @@ def getLargestCC(segmentation: np.ndarray) -> np.ndarray:
 DEFAULT_TILE_FILE_PATTERN = r"tile_x(?P<x>\d+)_y(?P<y>\d+)_z(?P<z>\d+)"
 
 
-def get_tiles_ids(directory, z: int = None):
+def get_tiles_ids(directory, z: int | None = None):
     """Analyzes a directory and detects all the tiles in contains"""
     input_directory = Path(directory)
 
@@ -74,7 +74,7 @@ def get_tiles_ids_from_list(tiles_list, file_pattern=DEFAULT_TILE_FILE_PATTERN):
 
 def get_mosaic_info(directory, z: int, overlap_fraction: float = 0.2, use_stage_positions: bool = False):
     # Get a list of the input tiles
-    tiles, tile_ids = get_tiles_ids(directory, z)
+    tiles, _tile_ids = get_tiles_ids(directory, z)
 
     # Get the tile positions (in pixel and mm)
     file_pattern = r"tile_x(?P<x>\d+)_y(?P<y>\d+)_z(?P<z>\d+)"
@@ -163,7 +163,7 @@ def quick_stitch(
     use_stage_positions: bool = False,
     flip_ud: bool = True,
     flip_lr: bool = False,
-    galvo_shift: int = None,
+    galvo_shift: int | None = None,
     galvo_shift_first_tile=(0, 0),
 ):
     # TODO: accelerate the stitching by preprocessing the tiles in parallel
@@ -269,10 +269,10 @@ def detect_mosaic(
     img: np.ndarray = None,
     margin: float = 0.5,
     display: bool = False,
-    image_file: str = None,
-    roi_file: str = None,
+    image_file: str | None = None,
+    roi_file: str | None = None,
     keep_largest_island: bool = False,
-    stitching_settings: dict = None,
+    stitching_settings: dict | None = None,
 ):
     """Detect the tissue in the mosaic and compute the limits of the tissue.
     Parameters
@@ -361,7 +361,7 @@ def detect_mosaic(
 
     # Display the result
     if display or roi_file is not None:
-        fig, ax = plt.subplots()
+        _fig, ax = plt.subplots()
         ax.imshow(label2rgb(mask, img, bg_label=0, colors=["blue"]), extent=(ymin, ymax, xmax, xmin))  # Y axes are inverted
 
         rect = Rectangle(

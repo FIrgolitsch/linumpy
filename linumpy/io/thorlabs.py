@@ -65,8 +65,8 @@ class ThorOCT:
 
     def __init__(
         self,
-        path: str = None,
-        compressed_data: zipfile.ZipFile = None,
+        path: str | None = None,
+        compressed_data: zipfile.ZipFile | None = None,
         config: PreprocessingConfig = None,
     ):
         """
@@ -308,7 +308,7 @@ class ThorOCT:
         return processed_data
 
     @staticmethod
-    def extract_positions_from_scan(scan_file_path: str = None):
+    def extract_positions_from_scan(scan_file_path: str | None = None):
         """
         Extracts the raw and index x, y positions from the .scan file.
 
@@ -320,7 +320,7 @@ class ThorOCT:
         raw_positions = []
 
         if scan_file_path:
-            with open(file=scan_file_path, mode="r", encoding="utf-8") as file:
+            with open(file=scan_file_path, encoding="utf-8") as file:
                 lines = file.readlines()
 
                 # Find the start of the positions section

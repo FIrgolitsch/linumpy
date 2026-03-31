@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Reorient a volume to RAS+ using control points in pixel coordinates (ex: from Fiji).
 

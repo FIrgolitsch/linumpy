@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Fix galvo shift artefacts in assembled mosaic OME-Zarr files.
 
@@ -180,9 +179,9 @@ def _generate_comparison_preview(
     out_png: Path,
     level: int = 2,
     cmap: str = "magma",
-    band_start: int = None,
-    band_width: int = None,
-    chunk_x: int = None,
+    band_start: int | None = None,
+    band_width: int | None = None,
+    chunk_x: int | None = None,
 ) -> None:
     """Save a side-by-side before/after comparison PNG.
 
@@ -209,7 +208,7 @@ def _generate_comparison_preview(
     import matplotlib.pyplot as plt
 
     def _read_panels(zarr_path: Path, level: int):
-        arr, _, actual, _ = _open_level(zarr_path, level)
+        arr, _, _actual, _ = _open_level(zarr_path, level)
         vol = np.asarray(arr, dtype=np.float32)
         # Pick the Z slice with the highest mean signal so tissue is always visible.
         z_means = vol.mean(axis=(1, 2))
@@ -244,7 +243,7 @@ def _generate_comparison_preview(
     fig.set_dpi(200)
     fig.patch.set_facecolor("black")
 
-    for col, (bpanel, apanel, ttop, tbot) in enumerate(zip(before_panels, after_panels, titles_top, titles_bot)):
+    for col, (bpanel, apanel, ttop, tbot) in enumerate(zip(before_panels, after_panels, titles_top, titles_bot, strict=False)):
         for row, (panel, title) in enumerate([(bpanel, ttop), (apanel, tbot)]):
             ax = axes[row, col]
             ax.imshow(panel, cmap=cmap, origin="lower", vmin=vmin, vmax=vmax, aspect="auto")
@@ -334,7 +333,7 @@ def _open_level(zarr_root: Path, level: int):
     return arr, res, actual_level, multiscale
 
 
-def _auto_detect(zarr_root: Path, detection_level: int, n_extra: int = None, verbose: bool = False):
+def _auto_detect(zarr_root: Path, detection_level: int, n_extra: int | None = None, verbose: bool = False):
     """Sample representative chunks and return (band_start, band_width, confidence).
 
     band_start and band_width are expressed in level-0 (full-resolution) pixels.
@@ -359,7 +358,7 @@ def _auto_detect(zarr_root: Path, detection_level: int, n_extra: int = None, ver
     n_cy = det_arr.shape[2] // chunk_y
 
     # n_extra at the downsampled level
-    n_extra_ds = int(round(n_extra / scale_factor)) if n_extra else None
+    n_extra_ds = round(n_extra / scale_factor) if n_extra else None
 
     # Sample a spread of chunks from the central region (more likely tissue).
     cx_lo = max(0, n_cx // 4)
@@ -397,8 +396,8 @@ def _auto_detect(zarr_root: Path, detection_level: int, n_extra: int = None, ver
             bs_ds, bw_ds, conf = detect_galvo_band_in_tile(tile_aip)
 
         if verbose:
-            bs_l0 = int(round(bs_ds * scale_factor))
-            bw_l0 = int(round(bw_ds * scale_factor))
+            bs_l0 = round(bs_ds * scale_factor)
+            bw_l0 = round(bw_ds * scale_factor)
             print(
                 f"  Chunk ({cx:3d}, {cy_mid}): "
                 f"band_start={bs_l0:4d}px  band_width={bw_l0:3d}px  "
@@ -437,8 +436,8 @@ def _auto_detect(zarr_root: Path, detection_level: int, n_extra: int = None, ver
             )
 
     # Scale back to level-0 pixels.
-    band_start_l0 = int(round(med_start * scale_factor))
-    band_width_l0 = int(round(med_width * scale_factor))
+    band_start_l0 = round(med_start * scale_factor)
+    band_width_l0 = round(med_width * scale_factor)
 
     return band_start_l0, band_width_l0, best_conf
 
@@ -488,10 +487,10 @@ def _scan_band_start(
     n_cy = arr.shape[2] // chunk_y
 
     # Scale level-0 parameters to the detection level.
-    bw_ds = max(1, int(round(band_width / scale_factor)))
-    start_ds = max(0, int(round(scan_start / scale_factor)))
-    stop_ds = int(round(scan_stop / scale_factor))
-    step_ds = max(1, int(round(scan_step / scale_factor)))
+    bw_ds = max(1, round(band_width / scale_factor))
+    start_ds = max(0, round(scan_start / scale_factor))
+    stop_ds = round(scan_stop / scale_factor)
+    step_ds = max(1, round(scan_step / scale_factor))
 
     # Sample a spread of central tiles.
     cx_lo = max(0, n_cx // 4)
@@ -532,12 +531,12 @@ def _scan_band_start(
     axes_flat[0].set_axis_off()
 
     for i, bs_ds in enumerate(candidates_ds):
-        bs_l0 = int(round(bs_ds * scale_factor))
+        bs_l0 = round(bs_ds * scale_factor)
         roll = chunk_x - bs_ds - bw_ds
         fixed = np.roll(avg_tile, roll, axis=0)
         ax = axes_flat[i + 1]
         ax.imshow(fixed.T, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto", origin="lower")
-        roll_l0 = int(round(roll * scale_factor))
+        roll_l0 = round(roll * scale_factor)
         ax.set_title(f"bs={bs_l0}  r={roll_l0}", color="white", fontsize=7)
         ax.set_axis_off()
 
@@ -787,7 +786,7 @@ def main():
     # ------------------------------------------------------------------
     # Step 2 – open level-0 array to report tile metadata
     # ------------------------------------------------------------------
-    arr, res, _, _ = _open_level(input_path, level=0)
+    arr, _res, _, _ = _open_level(input_path, level=0)
     chunk_x = arr.chunks[1]
     chunk_y = arr.chunks[2]
     n_cx = arr.shape[1] // chunk_x

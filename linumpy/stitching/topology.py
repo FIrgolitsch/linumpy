@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 """This module uses graph theory to describe and interact with the mosaic topology.
 
 .. moduleauthor:: Joël Lefebvre <joel.lefebvre@polymtl.ca>
@@ -90,8 +89,8 @@ def generate_graphFromEdges(sources, targets):
     topo = nx.DiGraph()
     nSteps = len(sources)
     for iStep in range(nSteps):
-        inNode = "x%dy%d" % (sources[iStep][0], sources[iStep][1])
-        outNode = "x%dy%d" % (targets[iStep][0], targets[iStep][1])
+        inNode = f"x{sources[iStep][0]}y{sources[iStep][1]}"
+        outNode = f"x{targets[iStep][0]}y{targets[iStep][1]}"
         inAttr = {"x": sources[iStep][0], "y": sources[iStep][1]}
         outAttr = {"x": targets[iStep][0], "y": targets[iStep][1]}
         topo.add_node(inNode, inAttr)
@@ -201,7 +200,7 @@ def _pos2id(topo, pos):
         xx.append(this_x)
 
     # Extracting the node y positions
-    for this_node, this_y in list(nx.get_node_attributes(topo, "y").items()):
+    for _this_node, this_y in list(nx.get_node_attributes(topo, "y").items()):
         yy.append(this_y)
 
     # Detecting the corresponding node

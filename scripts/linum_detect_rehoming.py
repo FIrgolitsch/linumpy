@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Read a shifts CSV produced by linum_compute_shifts_3d.py and detect/correct
 two classes of spurious inter-slice shifts.
@@ -45,7 +44,6 @@ Outputs
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -117,7 +115,7 @@ def _save_diagnostics(
     shifts_before: pd.DataFrame,
     shifts_after: pd.DataFrame,
     corrected_indices: list,
-    tile_corrected_indices: Optional[list] = None,
+    tile_corrected_indices: list | None = None,
 ) -> None:
     """Save a JSON report and PNG plot of corrected glitch spikes."""
     diag_dir.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Uses the BaSiC algorithm to estimate the illumination inhomogeneities in a mosaic grid"""
 

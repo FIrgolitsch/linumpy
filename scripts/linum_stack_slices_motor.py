@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Stack 3D slices using motor positions for XY alignment and simplified Z-matching.
 
@@ -395,7 +394,7 @@ def compute_output_shape(slice_files, cumsum_px, first_vol_shape):
     """Compute output volume shape to fit all slices."""
     xmin, xmax, ymin, ymax = [0], [first_vol_shape[2]], [0], [first_vol_shape[1]]
 
-    for slice_id, (dx, dy) in cumsum_px.items():
+    for _slice_id, (dx, dy) in cumsum_px.items():
         # Assuming all slices have similar XY dimensions
         xmin.append(dx)
         xmax.append(dx + first_vol_shape[2])
@@ -445,7 +444,7 @@ def main():
 
     # Load shifts
     logger.info(f"Loading shifts from {args.in_shifts}")
-    cumsum_mm, all_shift_ids = load_shifts_csv(args.in_shifts)
+    cumsum_mm, _all_shift_ids = load_shifts_csv(args.in_shifts)
 
     # Get resolution from first slice
     # NOTE: read_omezarr returns resolution in MILLIMETERS (OME-NGFF standard)
@@ -712,7 +711,7 @@ def main():
     prev_vol = first_vol
     prev_id = first_id
 
-    for i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
+    for _i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
         vol, _ = read_omezarr(str(slice_files[slice_id]), level=0)
         vol = np.array(vol[:])
         volume_shapes[slice_id] = vol.shape  # Cache shape
@@ -885,7 +884,7 @@ def main():
     z_cursor = first_vol.shape[0]
 
     # Stack remaining slices
-    for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
+    for _i, match in enumerate(tqdm(z_matches, desc="Stacking")):
         slice_id = match["moving_id"]
         overlap = match["overlap_voxels"]
         # blend_overlap may be < overlap when z-blend refinement found a tighter tissue match

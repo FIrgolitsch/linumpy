@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/stitching/stacking.py"""
 
 import numpy as np
@@ -43,7 +42,7 @@ def test_find_z_overlap_min_max_degenerate():
     fixed = _make_vol((10, 8, 8))
     moving = _make_vol((10, 8, 8))
     # Very large interval → expected overlap < 0 → min >= max edge case
-    overlap, corr = find_z_overlap(fixed, moving, slicing_interval_mm=10.0, search_range_mm=0.0, resolution_um=5.0)
+    overlap, _corr = find_z_overlap(fixed, moving, slicing_interval_mm=10.0, search_range_mm=0.0, resolution_um=5.0)
     assert isinstance(overlap, int)
 
 

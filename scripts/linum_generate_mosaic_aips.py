@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Generate Average Intensity Projection (AIP) PNG previews from mosaic grid OME-Zarr files.
 
 Computes the AIP (mean over the Z-axis) for each mosaic grid found in the input

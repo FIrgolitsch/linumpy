@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Create a stitched mosaic using only motor positions (bypassing image-based registration).
 

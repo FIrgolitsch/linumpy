@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Intensity normalization functions for OCT volumes.
 
@@ -7,14 +6,12 @@ This module provides functions for normalizing OCT volume intensities
 based on agarose background detection.
 """
 
-from typing import Tuple
-
 import numpy as np
 
 
 def normalize_volume(
     vol: np.ndarray, agarose_mask: np.ndarray, percentile_max: float = 99.9, min_contrast_fraction: float = 0.1
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Normalize volume intensities based on agarose background.
 
@@ -134,12 +131,12 @@ def _chunk_boundaries(n_z: int, n_serial_slices):
     """Return list of (start, end) Z-index pairs, one per chunk."""
     if n_serial_slices is not None:
         chunk_size = n_z / n_serial_slices
-        starts = [int(round(i * chunk_size)) for i in range(n_serial_slices)]
-        ends = [int(round(i * chunk_size)) for i in range(1, n_serial_slices + 1)]
+        starts = [round(i * chunk_size) for i in range(n_serial_slices)]
+        ends = [round(i * chunk_size) for i in range(1, n_serial_slices + 1)]
     else:
         starts = list(range(n_z))
         ends = list(range(1, n_z + 1))
-    return list(zip(starts, ends))
+    return list(zip(starts, ends, strict=False))
 
 
 def compute_scale_factors(
@@ -268,7 +265,7 @@ def apply_histogram_matching(vol: np.ndarray, n_serial_slices, n_bins: int, tiss
     bounds = _chunk_boundaries(vol.shape[0], n_serial_slices)
 
     out = np.empty_like(vol)
-    for i, (s, e) in enumerate(bounds):
+    for _i, (s, e) in enumerate(bounds):
         chunk = vol[s:e]
         out[s:e] = _match_chunk_to_reference(chunk, ref_bins, ref_cdf, n_bins, tissue_threshold)
 

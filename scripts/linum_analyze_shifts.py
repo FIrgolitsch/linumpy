@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Analyze XY shifts from a shifts file and generate a drift analysis report.
 

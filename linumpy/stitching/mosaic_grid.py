@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-# -*- coding:utf-8 -*-
 
 import numpy as np
 import scipy.ndimage
@@ -235,7 +234,7 @@ class MosaicGrid:
         mask = mosaic1 * mosaic2 >= 1
 
         # Convert this into t1 and t2 coordinates
-        x, y, z = np.where(mask)
+        x, y, _z = np.where(mask)
         o_xmin = x.min()
         o_ymin = y.min()
         o_xmax = x.max()
@@ -356,7 +355,7 @@ class MosaicGrid:
 
         return image.squeeze()
 
-    def global_overlap_similarity(self, random_fraction: float = 1.0, threshold: float = None):
+    def global_overlap_similarity(self, random_fraction: float = 1.0, threshold: float | None = None):
         neighbors = self.get_neighbors_list(neighborhood_type="N4")
         n_neighbors = len(neighbors)
         neighbors_ids = list(range(n_neighbors))
@@ -367,7 +366,7 @@ class MosaicGrid:
 
         i = 0
         while (i < n_neighbors) and (n_samples / float(n_neighbors) < random_fraction):
-            o1, o2, p1, p2 = self.get_neighbor_overlap(neighbors_ids[i])
+            o1, o2, _p1, _p2 = self.get_neighbor_overlap(neighbors_ids[i])
 
             if threshold is None:
                 if np.all(o1 == 0) or np.all(o2 == 0):  # Ignore empty overlaps

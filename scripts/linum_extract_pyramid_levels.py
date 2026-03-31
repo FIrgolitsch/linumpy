@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Extract one or more pyramid levels from an OME-Zarr volume as NIfTI files.
 

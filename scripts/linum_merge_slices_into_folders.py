@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Move slices from a flat directory into subdirectories based on their names.
 """

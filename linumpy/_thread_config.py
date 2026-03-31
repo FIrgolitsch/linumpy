@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Thread configuration module for linumpy.
 

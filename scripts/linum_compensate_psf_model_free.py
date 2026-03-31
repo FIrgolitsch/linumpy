@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Axial beam profile correction. The script estimates the beam profile
 from agarose voxels and then applies the inverse profile to each a-line.

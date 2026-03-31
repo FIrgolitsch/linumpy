@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Interpolate a missing or degraded slice using information from adjacent slices.
 
@@ -466,7 +465,7 @@ def main():
         degraded_path = Path(args.degraded_slice)
         if degraded_path.exists():
             print(f"Loading degraded slice: {degraded_path}")
-            vol_degraded, res_degraded = read_omezarr(degraded_path)
+            vol_degraded, _res_degraded = read_omezarr(degraded_path)
             vol_degraded = np.array(vol_degraded)
 
             if vol_degraded.shape != vol_before.shape:
@@ -536,7 +535,7 @@ def main():
             print(f"Using manual degraded weight: {quality_weight:.3f}")
         else:
             # Automatic quality assessment
-            quality_weight, metrics = assess_degraded_slice_quality(vol_degraded, vol_before, vol_after)
+            quality_weight, _metrics = assess_degraded_slice_quality(vol_degraded, vol_before, vol_after)
 
         # Check if quality is above threshold
         if quality_weight >= args.min_quality_threshold:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/preproc/resampling.py"""
 
 import numpy as np

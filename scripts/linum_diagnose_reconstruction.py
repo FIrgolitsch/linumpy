@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Comprehensive diagnostic analysis for 3D reconstruction troubleshooting.
 
@@ -140,7 +139,7 @@ def analyze_rotation_drift(pipeline_dir, output_dir, threshold=2.0, slice_ids=No
     df.to_csv(csv_path, index=False)
 
     # Generate plot
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+    _fig, axes = plt.subplots(2, 1, figsize=(12, 8))
 
     ax1 = axes[0]
     valid_df = df.dropna(subset=["rotation"])
@@ -219,7 +218,7 @@ def analyze_shifts(pipeline_dir, output_dir, resolution=10.0, slice_ids=None):
         result["issues"].append(f"Large cumulative drift: {total_drift:.0f} pixels")
 
     # Generate plot
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    _fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     ax1 = axes[0, 0]
     ax1.scatter(df["x_shift_mm"], df["y_shift_mm"], c=df["moving_id"], cmap="viridis", alpha=0.7)
@@ -276,7 +275,7 @@ def generate_summary_report(results, output_dir):
     ]
 
     # Rotation Analysis
-    if "rotation" in results and results["rotation"]:
+    if results.get("rotation"):
         rot = results["rotation"]
         lines.extend(
             [
@@ -297,7 +296,7 @@ def generate_summary_report(results, output_dir):
             lines.append("")
 
     # Shifts Analysis
-    if "shifts" in results and results["shifts"]:
+    if results.get("shifts"):
         sh = results["shifts"]
         lines.extend(
             [
@@ -327,9 +326,9 @@ def generate_summary_report(results, output_dir):
     )
 
     all_issues = []
-    if "rotation" in results and results["rotation"]:
+    if results.get("rotation"):
         all_issues.extend(results["rotation"].get("issues", []))
-    if "shifts" in results and results["shifts"]:
+    if results.get("shifts"):
         all_issues.extend(results["shifts"].get("issues", []))
 
     if not all_issues:
@@ -350,14 +349,14 @@ def generate_summary_report(results, output_dir):
     # Generate recommendations based on findings
     recommendations = []
 
-    if "rotation" in results and results["rotation"]:
+    if results.get("rotation"):
         rot = results["rotation"]
         if abs(rot["cumulative_rotation"]) > 2:
             recommendations.append("Consider enabling rotation correction in registration (registration_transform='euler')")
         if rot["max_abs_rotation"] > 5:
             recommendations.append("Check slice quality - large rotations may indicate degraded slices")
 
-    if "shifts" in results and results["shifts"]:
+    if results.get("shifts"):
         sh = results["shifts"]
         if sh["n_outliers"] > 3:
             recommendations.append("Review outlier slices - may need exclusion or manual adjustment")
@@ -429,7 +428,7 @@ def main():
     print(f"Results saved to: {output_dir}")
 
     all_issues = []
-    for key, val in results.items():
+    for _key, val in results.items():
         if val and "issues" in val:
             all_issues.extend(val["issues"])
 

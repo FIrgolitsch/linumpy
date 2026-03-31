@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Uses the BaSiC algorithm to estimate and compensate illumination inhomogeneities in a mosaic grid"""
 
@@ -85,7 +84,7 @@ def main():
     # Apply shading correction.
     # epsilon = 1e-6
     epsilon = 0.0
-    for tile, pos in zip(tiles, tile_pos):
+    for tile, pos in zip(tiles, tile_pos, strict=False):
         if np.all(tile == 0):  # Ignoring empty tiles
             continue
         fixed_tile = (tile.astype(np.float64) - darkfield) / (flatfield + epsilon)

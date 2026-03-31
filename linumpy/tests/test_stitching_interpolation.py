@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/stitching/interpolation.py"""
 
 import numpy as np
@@ -127,7 +126,7 @@ def test_assess_degraded_slice_quality_perfect_quality():
     """If degraded == reference, quality score should be near 1."""
     rng = np.random.default_rng(10)
     vol = (rng.random((8, 16, 16)) * 100.0).astype(np.float32)
-    score, metrics = assess_degraded_slice_quality(vol, vol, vol)
+    score, _metrics = assess_degraded_slice_quality(vol, vol, vol)
     assert 0.0 <= score <= 1.0
     # Perfect match → quality near 1
     assert score > 0.8
@@ -139,7 +138,7 @@ def test_assess_degraded_slice_quality_zeros_degrade_score():
     before = (rng.random((8, 16, 16)) * 100.0 + 1.0).astype(np.float32)
     after = (rng.random((8, 16, 16)) * 100.0 + 1.0).astype(np.float32)
     degraded = np.zeros_like(before)
-    score, metrics = assess_degraded_slice_quality(degraded, before, after)
+    score, _metrics = assess_degraded_slice_quality(degraded, before, after)
     assert 0.0 <= score <= 1.0
     assert score < 0.5
 

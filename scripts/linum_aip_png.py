@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Compute an Average Intensity Projection (AIP) from a 3D mosaic grid and save as PNG.
 

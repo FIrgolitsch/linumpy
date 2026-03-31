@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Generate a slice configuration file for controlling which slices are used
 in the 3D reconstruction pipeline.
@@ -100,7 +99,7 @@ def get_slice_ids_from_shifts(shifts_file: Path) -> list:
     """Extract slice IDs from an existing shifts_xy.csv file."""
     slice_ids = set()
 
-    with open(shifts_file, "r") as f:
+    with open(shifts_file) as f:
         reader = csv.DictReader(f)
         for row in reader:
             # Handle both int and float string formats (e.g., '0' or '0.0')
@@ -162,7 +161,11 @@ def detect_galvo_for_slices(tiles_dir: Path, slice_ids: list, threshold: float =
 
 
 def write_slice_config(
-    output_file: Path, slice_ids: list, exclude_ids: list = None, galvo_results: dict = None, first_slice_excludes: list = None
+    output_file: Path,
+    slice_ids: list,
+    exclude_ids: list | None = None,
+    galvo_results: dict | None = None,
+    first_slice_excludes: list | None = None,
 ):
     """Write the slice configuration file.
 

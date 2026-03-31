@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Generate Average Intensity Projection (AIP) PNG previews from mosaic grid OME-Zarr files.
 
 GPU-accelerated version using CuPy for the tile averaging computation.

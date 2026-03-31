@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Align a 3D brain volume to RAS orientation using rigid registration to the Allen atlas.
@@ -13,7 +12,6 @@ directly to the zarr file (resampling) or stored in OME-Zarr metadata.
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -126,7 +124,7 @@ def _build_arg_parser():
 def create_registration_progress_callback(
     max_iterations: int,
     n_resolution_levels: int = 3,
-    pbar: Optional[tqdm] = None,
+    pbar: tqdm | None = None,
     registration_start_step: int = 0,
     registration_steps: int = 0,
 ):
@@ -243,7 +241,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
     if not zattrs_path.exists():
         raise FileNotFoundError(f".zattrs not found: {zarr_path}")
 
-    with open(zattrs_path, "r", encoding="utf-8") as f:
+    with open(zattrs_path, encoding="utf-8") as f:
         metadata = json.load(f)
 
     affine_transform = {"type": "affine", "affine": affine_matrix.flatten().tolist()}
@@ -254,7 +252,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
 
     for dataset in multiscales[0].get("datasets", []):
         existing = dataset.get("coordinateTransformations", [])
-        dataset["coordinateTransformations"] = [affine_transform] + existing
+        dataset["coordinateTransformations"] = [affine_transform, *existing]
 
     with open(zattrs_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
@@ -267,7 +265,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
 # =============================================================================
 
 
-def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
+def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> list[float] | None:
     """
     Extract pyramid resolution levels from OME-Zarr metadata.
 
@@ -287,9 +285,9 @@ def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
             continue
 
         try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
+            with open(metadata_path, encoding="utf-8") as f:
                 metadata = json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             continue
 
         multiscales = metadata.get("multiscales", [])
@@ -319,7 +317,7 @@ def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
 
 
 def compute_centered_reference_and_transform(
-    moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: Optional[tuple] = None
+    moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: tuple | None = None
 ) -> tuple[sitk.Image, sitk.Transform]:
     """
     Compute a reference image and modified transform that centers the output volume.
@@ -404,13 +402,13 @@ def apply_transform_to_zarr(
     input_path: str,
     output_path: str,
     transform: sitk.Transform,
-    chunks: Optional[tuple] = None,
-    n_levels: Optional[int] = None,
-    pyramid_resolutions: Optional[list] = None,
+    chunks: tuple | None = None,
+    n_levels: int | None = None,
+    pyramid_resolutions: list | None = None,
     make_isotropic: bool = True,
-    orientation_permutation: Optional[tuple] = None,
-    orientation_flips: Optional[tuple] = None,
-    pbar: Optional[tqdm] = None,
+    orientation_permutation: tuple | None = None,
+    orientation_flips: tuple | None = None,
+    pbar: tqdm | None = None,
 ):
     """
     Apply transform to zarr file by resampling into RAS-aligned space.
@@ -588,15 +586,15 @@ Example:
 
 def create_alignment_preview(
     input_path: str,
-    output_path: Optional[str],
+    output_path: str | None,
     transform: sitk.Transform,
     resolution: tuple,
     preview_path: str,
     allen_resolution: int = DEFAULT_ALLEN_RESOLUTION,
     level: int = 0,
-    orientation_permutation: Optional[tuple] = None,
-    orientation_flips: Optional[tuple] = None,
-    pbar: Optional[tqdm] = None,
+    orientation_permutation: tuple | None = None,
+    orientation_flips: tuple | None = None,
+    pbar: tqdm | None = None,
 ):
     """Create preview comparing original, aligned, and Allen template.
 
@@ -620,7 +618,7 @@ def create_alignment_preview(
 
     # Load aligned volume from output file, or compute it
     if output_path and Path(output_path).exists():
-        vol_aligned, aligned_res = read_omezarr(output_path, level=level)
+        vol_aligned, _aligned_res = read_omezarr(output_path, level=level)
         vol_aligned = np.asarray(vol_aligned[:])
     else:
         # Compute aligned volume using the transform
@@ -732,8 +730,8 @@ def create_orientation_preview(
     input_path: str,
     preview_path: str,
     level: int = 0,
-    orientation_permutation: Optional[tuple] = None,
-    orientation_flips: Optional[tuple] = None,
+    orientation_permutation: tuple | None = None,
+    orientation_flips: tuple | None = None,
     initial_rotation_deg: tuple = (0.0, 0.0, 0.0),
 ):
     """

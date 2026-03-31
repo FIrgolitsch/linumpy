@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Analyze rotation patterns from acquisition XY shifts data.
 
@@ -384,7 +383,7 @@ def generate_report(analysis, reg_comparison, output_dir):
 
 def generate_plots(df, angles, angular_velocity, cumulative_rotation, reg_df, output_dir):
     """Generate visualization plots."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    _fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     slice_ids = df["moving_id"].values
 

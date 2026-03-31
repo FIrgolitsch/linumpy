@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Crop a 3D OME-Zarr volume to a specified depth below the water/tissue interface.
@@ -79,7 +78,7 @@ def main():
     print(f"Average surface depth: {avg_iface} voxels")
 
     # Compute number of Z-slices for desired depth (um / um-per-voxel)
-    depth_px = int(round(args.depth / resolution_um))
+    depth_px = round(args.depth / resolution_um)
     print(f"Cropping depth: {depth_px} voxels ({args.depth} um)")
 
     # Compute end index for cropping

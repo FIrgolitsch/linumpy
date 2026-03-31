@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Generate a quality report from pipeline metrics.
 
@@ -17,7 +16,6 @@ import zipfile
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import linumpy._thread_config  # noqa: F401
 
@@ -129,7 +127,7 @@ def format_value(value, precision: int = 4) -> str:
     return str(value)
 
 
-def sort_steps(aggregated: Dict) -> Dict:
+def sort_steps(aggregated: dict) -> dict:
     """Sort pipeline steps in logical execution order."""
 
     def step_key(step_name):
@@ -171,7 +169,7 @@ def parse_issue(issue_str: str) -> dict:
     return {"source": source, "metric": metric, "raw": issue_str, "value": None, "threshold": None}
 
 
-def group_issues(issues: List[str]) -> List[dict]:
+def group_issues(issues: list[str]) -> list[dict]:
     """
     Group issues by metric name.
 
@@ -201,7 +199,7 @@ def group_issues(issues: List[str]) -> List[dict]:
     return result
 
 
-def separate_metrics_by_type(metrics_list: List[Dict]) -> Tuple[dict, dict]:
+def separate_metrics_by_type(metrics_list: list[dict]) -> tuple[dict, dict]:
     """
     Separate metrics into quality metrics and info/parameter fields.
 
@@ -233,7 +231,7 @@ def separate_metrics_by_type(metrics_list: List[Dict]) -> Tuple[dict, dict]:
                 quality_metrics[name]["entries"].append({"value": value, "status": status})
 
     # Determine if each info field is constant across all files
-    for name, info in info_fields.items():
+    for _name, info in info_fields.items():
         vals = info["values"]
         try:
             numeric = [v for v in vals if isinstance(v, (int, float))]
@@ -249,7 +247,7 @@ def separate_metrics_by_type(metrics_list: List[Dict]) -> Tuple[dict, dict]:
     return quality_metrics, info_fields
 
 
-def generate_sparkline_svg(values: list, statuses: Optional[List[str]] = None, width: int = 160, height: int = 36) -> str:
+def generate_sparkline_svg(values: list, statuses: list[str] | None = None, width: int = 160, height: int = 36) -> str:
     """Generate an inline SVG bar-chart sparkline for a list of values."""
     numeric = [(i, v) for i, v in enumerate(values) if isinstance(v, (int, float))]
     if len(numeric) < 2:
@@ -284,7 +282,7 @@ def generate_sparkline_svg(values: list, statuses: Optional[List[str]] = None, w
 
 def generate_trend_line_svg(
     values: list,
-    labels: Optional[List[str]] = None,
+    labels: list[str] | None = None,
     width: int = 420,
     height: int = 90,
     show_trend: bool = True,
@@ -346,7 +344,7 @@ def generate_trend_line_svg(
     )
 
 
-def compute_cross_slice_trends(aggregated: Dict[str, List[Dict]]) -> Dict:
+def compute_cross_slice_trends(aggregated: dict[str, list[dict]]) -> dict:
     """
     Compute cross-slice aggregate trends from aggregated metrics.
 
@@ -456,7 +454,7 @@ def compute_cross_slice_trends(aggregated: Dict[str, List[Dict]]) -> Dict:
 # =============================================================================
 
 
-def discover_diagnostic_data(input_dir: Path) -> Dict[str, dict]:
+def discover_diagnostic_data(input_dir: Path) -> dict[str, dict]:
     """
     Discover diagnostic outputs in the pipeline output directory.
 
@@ -469,7 +467,7 @@ def discover_diagnostic_data(input_dir: Path) -> Dict[str, dict]:
     """
     import json as _json
 
-    diagnostics: Dict[str, dict] = {}
+    diagnostics: dict[str, dict] = {}
 
     diag_dir = input_dir / "diagnostics"
     if not diag_dir.exists():
@@ -532,8 +530,8 @@ def discover_diagnostic_data(input_dir: Path) -> Dict[str, dict]:
 
 
 def discover_images(
-    input_dir: Path, overview_png: Optional[Path] = None, annotated_png: Optional[Path] = None
-) -> Dict[str, List[Path]]:
+    input_dir: Path, overview_png: Path | None = None, annotated_png: Path | None = None
+) -> dict[str, list[Path]]:
     """
     Discover preview images in the pipeline output directory.
 
@@ -543,7 +541,7 @@ def discover_images(
       'common_space_preview'  – common-space alignment previews
       'diag_*'                – images found in diagnostics/ subdirs
     """
-    images: Dict[str, List[Path]] = {
+    images: dict[str, list[Path]] = {
         "overview": [],
         "stitch_preview": [],
         "common_space_preview": [],
@@ -587,7 +585,7 @@ def discover_images(
     return images
 
 
-def image_to_data_uri(path: Path, max_width: Optional[int] = None) -> str:
+def image_to_data_uri(path: Path, max_width: int | None = None) -> str:
     """Encode a PNG image as a base64 data URI, optionally resizing."""
     if max_width and _PIL_AVAILABLE:
         with _PILImage.open(path) as img:
@@ -605,7 +603,7 @@ def image_to_data_uri(path: Path, max_width: Optional[int] = None) -> str:
 
 
 def render_image_gallery_html(
-    images: List[Path], mode: str = "embed", category: str = "images", label: str = "Preview Images", max_width: int = 380
+    images: list[Path], mode: str = "embed", category: str = "images", label: str = "Preview Images", max_width: int = 380
 ) -> str:
     """
     Render a collapsible image gallery section.
@@ -644,7 +642,7 @@ def render_image_gallery_html(
 """
 
 
-def generate_zip_bundle(html: str, images: Dict[str, List[Path]], output_path: Path) -> None:
+def generate_zip_bundle(html: str, images: dict[str, list[Path]], output_path: Path) -> None:
     """Bundle the HTML report and all image files into a zip archive."""
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("index.html", html)
@@ -653,7 +651,7 @@ def generate_zip_bundle(html: str, images: Dict[str, List[Path]], output_path: P
                 zf.write(p, f"previews/{category}/{p.name}")
 
 
-def compute_overall_status(aggregated: Dict[str, List[Dict]]) -> tuple:
+def compute_overall_status(aggregated: dict[str, list[dict]]) -> tuple:
     """
     Compute overall status counts from aggregated metrics.
 
@@ -674,7 +672,7 @@ def compute_overall_status(aggregated: Dict[str, List[Dict]]) -> tuple:
     return all_statuses, error_count, warning_count, ok_count
 
 
-def get_step_status(metrics_list: List[Dict]) -> str:
+def get_step_status(metrics_list: list[dict]) -> str:
     """Get the overall status for a step based on its metrics."""
     step_statuses = [m.get("overall_status", "unknown") for m in metrics_list]
     if "error" in step_statuses:
@@ -684,7 +682,7 @@ def get_step_status(metrics_list: List[Dict]) -> str:
     return "ok"
 
 
-def collect_issues(metrics_list: List[Dict]) -> tuple:
+def collect_issues(metrics_list: list[dict]) -> tuple:
     """
     Collect all warnings and errors from a metrics list.
 
@@ -704,7 +702,7 @@ def collect_issues(metrics_list: List[Dict]) -> tuple:
     return all_warnings, all_errors
 
 
-def _render_grouped_issues_html(grouped: List[dict], color_class: str, label: str) -> str:
+def _render_grouped_issues_html(grouped: list[dict], color_class: str, label: str) -> str:
     """Render a collapsible grouped-issues section in HTML."""
     total = sum(g["count"] for g in grouped)
     html = f"""
@@ -738,15 +736,15 @@ def _render_grouped_issues_html(grouped: List[dict], color_class: str, label: st
 
 
 def generate_html_report(
-    aggregated: Dict[str, List[Dict]],
+    aggregated: dict[str, list[dict]],
     title: str,
     verbose: bool = False,
-    images: Optional[Dict[str, List[Path]]] = None,
+    images: dict[str, list[Path]] | None = None,
     image_mode: str = "embed",
     max_overview_width: int = 900,
     max_thumb_width: int = 380,
-    trends: Optional[Dict] = None,
-    diagnostics: Optional[Dict] = None,
+    trends: dict | None = None,
+    diagnostics: dict | None = None,
 ) -> str:
     """Generate an HTML report from aggregated metrics."""
     aggregated = sort_steps(aggregated)
@@ -1199,7 +1197,7 @@ def generate_html_report(
             "Red dashed lines show the linear trend.</p>\n"
         )
         html += '        <div class="trends-grid">\n'
-        for trend_key, trend in trends.items():
+        for _trend_key, trend in trends.items():
             html += '            <div class="trend-card">\n'
             html += f'                <div class="trend-card-header">{trend["label"]}</div>\n'
             html += f'                <div class="trend-card-desc">{trend["description"]}</div>\n'
@@ -1461,7 +1459,7 @@ def generate_html_report(
     return html
 
 
-def generate_text_report(aggregated: Dict[str, List[Dict]], title: str, verbose: bool = False) -> str:
+def generate_text_report(aggregated: dict[str, list[dict]], title: str, verbose: bool = False) -> str:
     """Generate a plain text report from aggregated metrics."""
     aggregated = sort_steps(aggregated)
 
@@ -1605,7 +1603,7 @@ def main():
     print(f"Found {sum(len(v) for v in aggregated.values())} metrics files across {len(aggregated)} pipeline steps")
 
     # Discover preview images — only for zip bundles; HTML is always image-free
-    images: Dict[str, List[Path]] = {}
+    images: dict[str, list[Path]] = {}
     if output_format == "zip" and not args.no_images:
         images = discover_images(input_dir, overview_png=args.overview_png, annotated_png=args.annotated_png)
         total_imgs = sum(len(v) for v in images.values())

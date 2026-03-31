@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Slice interpolation utilities for missing or degraded serial sections.
 

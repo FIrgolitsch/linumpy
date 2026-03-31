@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for linumpy/preproc/normalization.py"""
 
 import numpy as np
@@ -32,7 +31,7 @@ def _make_tissue_vol(shape=(10, 32, 32)):
 
 def test_get_agarose_mask_shape():
     vol = _make_tissue_vol((8, 32, 32))
-    mask, threshold = get_agarose_mask(vol)
+    mask, _threshold = get_agarose_mask(vol)
     assert mask.shape == (32, 32)
 
 
@@ -64,7 +63,7 @@ def test_get_agarose_mask_low_intensity_is_agarose():
 def test_normalize_volume_output_shape():
     vol = _make_tissue_vol((6, 24, 24))
     mask, _ = get_agarose_mask(vol)
-    result, thresholds = normalize_volume(vol.copy(), mask)
+    result, _thresholds = normalize_volume(vol.copy(), mask)
     assert result.shape == vol.shape
 
 
@@ -151,7 +150,7 @@ def test_chunk_boundaries_per_plane():
 
 def test_build_cdf_normalized():
     values = np.random.default_rng(0).random(1000).astype(np.float64)
-    bins, cdf = _build_cdf(values, n_bins=100)
+    _bins, cdf = _build_cdf(values, n_bins=100)
     # CDF must be non-decreasing and last value == 1
     assert cdf[-1] == pytest.approx(1.0)
     assert np.all(np.diff(cdf) >= 0)
@@ -172,7 +171,7 @@ def test_build_cdf_bin_count():
 def test_compute_scale_factors_shape():
     rng = np.random.default_rng(5)
     vol = rng.random((20, 16, 16)).astype(np.float32)
-    sf, raw, smoothed, bounds = compute_scale_factors(
+    sf, _raw, _smoothed, _bounds = compute_scale_factors(
         vol, n_serial_slices=4, smooth_sigma=1.0, percentile=90.0, min_scale=0.5, max_scale=2.0
     )
     assert sf.shape == (20,)

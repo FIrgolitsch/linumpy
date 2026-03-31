@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Analyze tile dilation/scaling by comparing expected vs actual tile positions.
 
@@ -93,10 +92,10 @@ def estimate_scale_factors(expected, actual):
     from scipy import stats
 
     # Y direction (rows)
-    slope_y, intercept_y, r_y, p_y, se_y = stats.linregress(expected[:, 0], actual[:, 0])
+    slope_y, intercept_y, r_y, _p_y, _se_y = stats.linregress(expected[:, 0], actual[:, 0])
 
     # X direction (cols)
-    slope_x, intercept_x, r_x, p_x, se_x = stats.linregress(expected[:, 1], actual[:, 1])
+    slope_x, intercept_x, r_x, _p_x, _se_x = stats.linregress(expected[:, 1], actual[:, 1])
 
     return {
         "scale_y": slope_y,
@@ -309,7 +308,7 @@ def main():
 
     # Load mosaic grid to get tile shape
     logger.info(f"Loading mosaic grid metadata from {input_file}")
-    volume, resolution = read_omezarr(str(input_file), level=0)
+    volume, _resolution = read_omezarr(str(input_file), level=0)
     tile_shape = volume.chunks
 
     nx = volume.shape[1] // tile_shape[1]

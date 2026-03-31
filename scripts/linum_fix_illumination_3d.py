@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Detect and fix the lateral illumination inhomogeneities for each
@@ -128,7 +127,7 @@ def process_tile(params: dict):
             # Apply correction and reconstruct complex result with original signs
             tiles_corrected = [
                 (t_real * s_real) + 1j * (t_imag * s_imag)
-                for t_real, t_imag, s_real, s_imag in zip(tiles_real_corr, tiles_imag_corr, sign_real, sign_imag)
+                for t_real, t_imag, s_real, s_imag in zip(tiles_real_corr, tiles_imag_corr, sign_real, sign_imag, strict=False)
             ]
         else:
             # Process normally if tiles are real

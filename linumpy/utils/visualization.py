@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Volume visualization utilities.
 
@@ -7,7 +6,6 @@ Consolidated from linum_screenshot_omezarr.py and linum_screenshot_omezarr_annot
 
 import re
 from pathlib import Path
-from typing import List, Optional
 
 import numpy as np
 
@@ -15,9 +13,9 @@ import numpy as np
 def save_orthogonal_views(
     image,
     out_path: str,
-    z_slice: int = None,
-    x_slice: int = None,
-    y_slice: int = None,
+    z_slice: int | None = None,
+    x_slice: int | None = None,
+    y_slice: int | None = None,
     cmap: str = "magma",
     percentile_max: float = 99.9,
 ) -> None:
@@ -73,7 +71,7 @@ def save_orthogonal_views(
     plt.close(fig)
 
 
-def estimate_n_slices_from_zarr(zarr_path: str) -> Optional[int]:
+def estimate_n_slices_from_zarr(zarr_path: str) -> int | None:
     """Try to estimate number of input slices from OME-Zarr metadata.
 
     Checks custom metadata fields, multiscales metadata, sibling slice files
@@ -133,7 +131,7 @@ def add_z_slice_labels(
     label_every: int = 1,
     show_lines: bool = False,
     side: str = "left",
-    slice_ids: Optional[List[str]] = None,
+    slice_ids: list[str] | None = None,
 ) -> None:
     """Add Z-slice index labels on the side of a coronal/sagittal view.
 
@@ -259,16 +257,16 @@ def _panel_labels_from_orientation(orientation: str):
 def save_annotated_views(
     image,
     out_path: str,
-    n_input_slices: int = None,
-    x_slice: int = None,
-    y_slice: int = None,
+    n_input_slices: int | None = None,
+    x_slice: int | None = None,
+    y_slice: int | None = None,
     font_size: int = 7,
     label_every: int = 1,
     show_lines: bool = False,
-    slice_ids: Optional[List[str]] = None,
-    zarr_path: str = None,
-    orientation: str = None,
-    voxel_size: list = None,
+    slice_ids: list[str] | None = None,
+    zarr_path: str | None = None,
+    orientation: str | None = None,
+    voxel_size: list | None = None,
 ) -> None:
     """Save anatomically-labelled orthogonal views with Z-slice index annotations.
 

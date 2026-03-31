@@ -144,8 +144,8 @@ def _resize_gpu(image, output_shape, order, anti_aliasing):
     img_gpu = cp.asarray(image if image.dtype == np.float32 else image.astype(np.float32))
 
     # Scale factors: input/output for Gaussian sigma, output/input for zoom.
-    scale_factors = tuple(i / o for i, o in zip(image.shape, output_shape))
-    zoom_factors = tuple(o / i for i, o in zip(image.shape, output_shape))
+    scale_factors = tuple(i / o for i, o in zip(image.shape, output_shape, strict=False))
+    zoom_factors = tuple(o / i for i, o in zip(image.shape, output_shape, strict=False))
 
     # Anti-aliasing: single fused Gaussian call with per-axis sigma vector,
     # replacing N sequential per-axis kernel launches.
@@ -166,8 +166,8 @@ def _resize_cpu(image, output_shape, order, anti_aliasing):
 
     img = image if image.dtype == np.float32 else image.astype(np.float32)
 
-    scale_factors = tuple(i / o for i, o in zip(image.shape, output_shape))
-    zoom_factors = tuple(o / i for i, o in zip(image.shape, output_shape))
+    scale_factors = tuple(i / o for i, o in zip(image.shape, output_shape, strict=False))
+    zoom_factors = tuple(o / i for i, o in zip(image.shape, output_shape, strict=False))
 
     if anti_aliasing:
         sigmas = [(f - 1) / 2 if f > 1 else 0.0 for f in scale_factors]
@@ -230,7 +230,7 @@ def resample_volume(volume, current_spacing, target_spacing, order=1, use_gpu=Tr
         Resampled volume
     """
     # Compute new shape
-    scale_factors = tuple(c / t for c, t in zip(current_spacing, target_spacing))
-    new_shape = tuple(int(s * f) for s, f in zip(volume.shape, scale_factors))
+    scale_factors = tuple(c / t for c, t in zip(current_spacing, target_spacing, strict=False))
+    new_shape = tuple(int(s * f) for s, f in zip(volume.shape, scale_factors, strict=False))
 
     return resize(volume, new_shape, order=order, anti_aliasing=True, use_gpu=use_gpu)

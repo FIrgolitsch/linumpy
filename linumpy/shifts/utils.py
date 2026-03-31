@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 XY shift utilities for serial-section alignment.
 
@@ -6,13 +5,11 @@ Consolidated from linum_stack_motor_only.py, linum_stack_slices_motor.py,
 and linum_align_mosaics_3d_from_shifts.py.
 """
 
-from typing import Dict, List, Tuple
-
 import numpy as np
 import pandas as pd
 
 
-def load_shifts_csv(shifts_path) -> Tuple[Dict, List]:
+def load_shifts_csv(shifts_path) -> tuple[dict, list]:
     """Load shifts CSV and build cumulative shift lookup.
 
     The shifts file contains pairwise shifts: fixed_id -> moving_id in mm.
@@ -56,7 +53,7 @@ def load_shifts_csv(shifts_path) -> Tuple[Dict, List]:
     return cumsum, all_ids
 
 
-def detect_shift_units(resolution) -> Tuple[float, float]:
+def detect_shift_units(resolution) -> tuple[float, float]:
     """Detect whether resolution is in mm or µm and return (res_x_um, res_y_um).
 
     OME-Zarr resolution can be reported in either mm (OME-NGFF standard)
@@ -87,7 +84,7 @@ def detect_shift_units(resolution) -> Tuple[float, float]:
     return res_x_um, res_y_um
 
 
-def convert_shifts_to_pixels(cumsum_mm: Dict, resolution_um: float) -> Dict:
+def convert_shifts_to_pixels(cumsum_mm: dict, resolution_um: float) -> dict:
     """Convert mm cumulative shifts to pixel shifts.
 
     Parameters
@@ -106,7 +103,7 @@ def convert_shifts_to_pixels(cumsum_mm: Dict, resolution_um: float) -> Dict:
     return {slice_id: (dx_mm * mm_to_px, dy_mm * mm_to_px) for slice_id, (dx_mm, dy_mm) in cumsum_mm.items()}
 
 
-def center_shifts(cumsum_px: Dict, slice_ids: List) -> Dict:
+def center_shifts(cumsum_px: dict, slice_ids: list) -> dict:
     """Center shifts around the middle slice.
 
     Subtracts the middle slice's cumulative shift from all slices,
@@ -299,10 +296,10 @@ def filter_outlier_shifts(
 def correct_tile_offset_shifts(
     shifts_df: pd.DataFrame,
     tile_fov_x_mm: float,
-    tile_fov_y_mm: float = None,
+    tile_fov_y_mm: float | None = None,
     tolerance: float = 0.05,
     min_step_mm: float = 0.0,
-) -> Tuple[pd.DataFrame, List[int]]:
+) -> tuple[pd.DataFrame, list[int]]:
     """Correct pairwise shifts that are spurious integer multiples of an artifact step.
 
     The XY shifts file records ``xmin_mm[fixed] - xmin_mm[moving]``, where
@@ -375,7 +372,7 @@ def correct_tile_offset_shifts(
 
         # Check X component
         if tile_fov_x_mm > 0:
-            nx = int(round(dx / tile_fov_x_mm))
+            nx = round(dx / tile_fov_x_mm)
             if nx != 0 and abs(dx - nx * tile_fov_x_mm) / tile_fov_x_mm < tolerance:
                 offset_x_mm = nx * tile_fov_x_mm
                 if "x_shift" in df.columns and abs(dx) > 1e-9:
@@ -386,7 +383,7 @@ def correct_tile_offset_shifts(
         # Check Y component
         if tile_fov_y_mm > 0:
             dy_cur = df.loc[idx, "y_shift_mm"]  # may differ from dy if X was corrected
-            ny = int(round(dy_cur / tile_fov_y_mm))
+            ny = round(dy_cur / tile_fov_y_mm)
             if ny != 0 and abs(dy_cur - ny * tile_fov_y_mm) / tile_fov_y_mm < tolerance:
                 offset_y_mm = ny * tile_fov_y_mm
                 if "y_shift" in df.columns and abs(dy) > 1e-9:
@@ -523,7 +520,7 @@ def filter_step_outliers(
     return df
 
 
-def build_cumulative_shifts(shifts_df: pd.DataFrame, selected_slice_ids: List, resolution, center_drift: bool = True) -> Dict:
+def build_cumulative_shifts(shifts_df: pd.DataFrame, selected_slice_ids: list, resolution, center_drift: bool = True) -> dict:
     """Build cumulative pixel shifts for selected slices.
 
     Handles skipped slices by accumulating intermediate steps.

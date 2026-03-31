@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Compensate the tissue attenuation using a precomputed attenuation
 bias field.

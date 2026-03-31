@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Diagnostic script for linumpy 3D reconstruction pipeline performance.
 
@@ -1014,7 +1013,7 @@ except Exception as e:
             wrong_version = None
 
             # Check all names (including alternates for case variations)
-            names_to_check = [lib] + alt_names
+            names_to_check = [lib, *alt_names]
 
             for check_path in check_paths:
                 for name in names_to_check:
@@ -1130,7 +1129,7 @@ except Exception as e:
             print("  JAX 0.4.23's CUDA 12 plugin needs CUDA 12 libraries (.so.12).")
             print("")
             print("  Found wrong versions:")
-            for needed, have, pkg in found_wrong_version:
+            for needed, have, _pkg in found_wrong_version:
                 print(f"    - Need {needed}, have {have}")
             print("")
             print("  RECOMMENDED FIX (automated):")

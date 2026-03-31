@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Metrics module for collecting and saving quality metrics from pipeline steps.
 
@@ -15,7 +14,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -48,7 +47,7 @@ class PipelineMetrics:
     """
 
     # Quality thresholds for common metrics (can be overridden)
-    DEFAULT_THRESHOLDS = {
+    DEFAULT_THRESHOLDS: ClassVar[dict] = {
         # Mean squared error of the registration transform (normalized, unitless)
         "registration_error": {"warning": 0.05, "error": 0.15},
         # Euclidean magnitude of the estimated translation vector (pixels)
@@ -87,7 +86,7 @@ class PipelineMetrics:
         "interface_max_depth_fraction": {"error": 0.5},
     }
 
-    def __init__(self, step_name: str, output_dir: Optional[str] = None):
+    def __init__(self, step_name: str, output_dir: str | None = None):
         """
         Initialize metrics collector.
 
@@ -100,19 +99,19 @@ class PipelineMetrics:
         """
         self.step_name = step_name
         self.output_dir = Path(output_dir) if output_dir else None
-        self.metrics: Dict[str, Any] = {}
-        self.warnings: List[str] = []
-        self.errors: List[str] = []
+        self.metrics: dict[str, Any] = {}
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
         self.timestamp = datetime.now().isoformat()
 
     def add_metric(
         self,
         name: str,
         value: Any,
-        unit: Optional[str] = None,
-        threshold_name: Optional[str] = None,
-        custom_thresholds: Optional[Dict] = None,
-        description: Optional[str] = None,
+        unit: str | None = None,
+        threshold_name: str | None = None,
+        custom_thresholds: dict | None = None,
+        description: str | None = None,
     ):
         """
         Add a metric with optional quality assessment.
@@ -158,7 +157,7 @@ class PipelineMetrics:
 
         self.metrics[name] = metric_entry
 
-    def add_info(self, name: str, value: Any, description: Optional[str] = None):
+    def add_info(self, name: str, value: Any, description: str | None = None):
         """
         Add informational data (not quality-assessed).
 
@@ -188,7 +187,7 @@ class PipelineMetrics:
             return "warning"
         return "ok"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """
         Convert metrics to dictionary format.
 
@@ -206,7 +205,7 @@ class PipelineMetrics:
             "errors": self.errors,
         }
 
-    def save(self, filename: Optional[str] = None) -> Path:
+    def save(self, filename: str | None = None) -> Path:
         """
         Save metrics to JSON file.
 
@@ -255,9 +254,9 @@ def collect_normalization_metrics(
     agarose_mask: np.ndarray,
     otsu_threshold: float,
     background_thresholds: np.ndarray,
-    output_path: Union[str, Path],
-    input_path: Optional[str] = None,
-    params: Optional[Dict] = None,
+    output_path: str | Path,
+    input_path: str | None = None,
+    params: dict | None = None,
 ) -> PipelineMetrics:
     """
     Collect metrics for intensity normalization step.
@@ -325,13 +324,13 @@ def collect_normalization_metrics(
 def collect_xy_transform_metrics(
     transform: np.ndarray,
     tile_pairs_used: int,
-    tile_shape: Tuple[int, int],
+    tile_shape: tuple[int, int],
     residuals: np.ndarray,
-    output_path: Union[str, Path],
-    input_paths: Optional[List[str]] = None,
-    params: Optional[Dict] = None,
-    n_tiles_x: Optional[int] = None,
-    n_tiles_y: Optional[int] = None,
+    output_path: str | Path,
+    input_paths: list[str] | None = None,
+    params: dict | None = None,
+    n_tiles_x: int | None = None,
+    n_tiles_y: int | None = None,
 ) -> PipelineMetrics:
     """
     Collect metrics for XY transform estimation step.
@@ -449,10 +448,10 @@ def collect_pairwise_registration_metrics(
     rotation_deg: float,
     best_z_index: int,
     expected_z_index: int,
-    output_path: Union[str, Path],
-    fixed_path: Optional[str] = None,
-    moving_path: Optional[str] = None,
-    params: Optional[Dict] = None,
+    output_path: str | Path,
+    fixed_path: str | None = None,
+    moving_path: str | None = None,
+    params: dict | None = None,
     z_correlation: float = 0.0,
 ) -> PipelineMetrics:
     """
@@ -557,11 +556,11 @@ def collect_interface_crop_metrics(
     crop_depth_px: int,
     start_idx: int,
     end_idx: int,
-    input_shape: Tuple[int, ...],
-    output_shape: Tuple[int, ...],
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
     resolution_um: float,
-    output_path: Union[str, Path],
-    input_path: Optional[str] = None,
+    output_path: str | Path,
+    input_path: str | None = None,
     padding_needed: bool = False,
 ) -> PipelineMetrics:
     """
@@ -636,8 +635,8 @@ def collect_interface_crop_metrics(
 def collect_psf_compensation_metrics(
     psf: np.ndarray,
     agarose_coverage: float,
-    output_path: Union[str, Path],
-    input_path: Optional[str] = None,
+    output_path: str | Path,
+    input_path: str | None = None,
     fit_gaussian: bool = False,
 ) -> PipelineMetrics:
     """
@@ -701,11 +700,11 @@ def collect_psf_compensation_metrics(
 
 
 def collect_stack_metrics(
-    output_shape: Tuple[int, ...],
+    output_shape: tuple[int, ...],
     z_offsets: np.ndarray,
     num_slices: int,
-    resolution: List[float],
-    output_path: Union[str, Path],
+    resolution: list[float],
+    output_path: str | Path,
     blend_enabled: bool = False,
     normalize_enabled: bool = False,
 ) -> PipelineMetrics:
@@ -772,12 +771,12 @@ def collect_stack_metrics(
 
 
 def collect_stitch_3d_metrics(
-    input_shape: Tuple[int, ...],
-    output_shape: Tuple[int, ...],
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
     num_tiles: int,
-    resolution: List[float],
-    output_path: Union[str, Path],
-    input_path: Optional[str] = None,
+    resolution: list[float],
+    output_path: str | Path,
+    input_path: str | None = None,
     blending_method: str = "diffusion",
 ) -> PipelineMetrics:
     """
@@ -835,7 +834,7 @@ def collect_stitch_3d_metrics(
 # =============================================================================
 
 
-def load_metrics(filepath: Union[str, Path]) -> Dict:
+def load_metrics(filepath: str | Path) -> dict:
     """
     Load metrics from a JSON file.
 
@@ -849,11 +848,11 @@ def load_metrics(filepath: Union[str, Path]) -> Dict:
     dict
         Loaded metrics dictionary.
     """
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         return json.load(f)
 
 
-def aggregate_metrics(metrics_dir: Union[str, Path], pattern: str = "*_metrics.json") -> Dict[str, List[Dict]]:
+def aggregate_metrics(metrics_dir: str | Path, pattern: str = "*_metrics.json") -> dict[str, list[dict]]:
     """
     Aggregate all metrics files from a directory.
 
@@ -870,7 +869,7 @@ def aggregate_metrics(metrics_dir: Union[str, Path], pattern: str = "*_metrics.j
         Dictionary with step names as keys and lists of metrics as values.
     """
     metrics_dir = Path(metrics_dir)
-    aggregated: Dict[str, List[Dict]] = {}
+    aggregated: dict[str, list[dict]] = {}
 
     for metrics_file in sorted(metrics_dir.rglob(pattern)):
         try:
@@ -886,7 +885,7 @@ def aggregate_metrics(metrics_dir: Union[str, Path], pattern: str = "*_metrics.j
     return aggregated
 
 
-def compute_summary_statistics(metrics_list: List[Dict]) -> Dict:
+def compute_summary_statistics(metrics_list: list[dict]) -> dict:
     """
     Compute summary statistics for a list of metrics from the same step.
 
@@ -904,8 +903,8 @@ def compute_summary_statistics(metrics_list: List[Dict]) -> Dict:
         return {}
 
     # Collect all numerical values per metric name
-    numerical_values: Dict[str, List[float]] = {}
-    statuses: List[str] = []
+    numerical_values: dict[str, list[float]] = {}
+    statuses: list[str] = []
 
     for m in metrics_list:
         statuses.append(m.get("overall_status", "unknown"))
@@ -917,7 +916,7 @@ def compute_summary_statistics(metrics_list: List[Dict]) -> Dict:
                 numerical_values[name].append(float(value))
 
     # Compute statistics
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "count": len(metrics_list),
         "status_counts": {"ok": statuses.count("ok"), "warning": statuses.count("warning"), "error": statuses.count("error")},
     }

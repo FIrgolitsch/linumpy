@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 GPU-accelerated slice quality assessment for 3D mosaic grids.
 
@@ -29,7 +28,7 @@ import argparse
 import csv
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -108,7 +107,7 @@ def _build_arg_parser():
     return p
 
 
-def get_mosaic_files(directory: Path) -> Dict[int, Path]:
+def get_mosaic_files(directory: Path) -> dict[int, Path]:
     """Find all mosaic grid files and extract slice IDs."""
     pattern = r".*z(\d+).*\.ome\.zarr$"
     mosaics = {}
@@ -123,10 +122,10 @@ def get_mosaic_files(directory: Path) -> Dict[int, Path]:
     return dict(sorted(mosaics.items()))
 
 
-def read_existing_config(config_path: Path) -> Dict[int, Dict[str, Any]]:
+def read_existing_config(config_path: Path) -> dict[int, dict[str, Any]]:
     """Read an existing slice configuration file."""
     config = {}
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
             slice_id = int(row["slice_id"])
@@ -136,10 +135,10 @@ def read_existing_config(config_path: Path) -> Dict[int, Dict[str, Any]]:
 
 def write_slice_config_with_quality(
     output_file: Path,
-    slice_ids: List[int],
-    quality_results: Dict[int, Dict[str, Any]],
-    exclude_ids: List[int],
-    existing_config: Optional[Dict[int, Dict[str, Any]]] = None,
+    slice_ids: list[int],
+    quality_results: dict[int, dict[str, Any]],
+    exclude_ids: list[int],
+    existing_config: dict[int, dict[str, Any]] | None = None,
 ):
     """Write the slice configuration file with quality metrics."""
     with open(output_file, "w", newline="") as f:
@@ -256,7 +255,7 @@ def main():
 
     # Load volumes
     print(f"\nLoading slices (pyramid_level={args.pyramid_level})...")
-    volumes: Dict[int, np.ndarray] = {}
+    volumes: dict[int, np.ndarray] = {}
     for slice_id in tqdm(slice_ids, desc="Loading slices"):
         try:
             vol, _ = read_omezarr(mosaic_files[slice_id], level=args.pyramid_level)
@@ -277,7 +276,7 @@ def main():
 
     # Assess quality
     print(f"\nAssessing slice quality (GPU={'enabled' if use_gpu else 'disabled'})...")
-    quality_results: Dict[int, Dict[str, Any]] = {}
+    quality_results: dict[int, dict[str, Any]] = {}
 
     # Select quality function based on GPU availability
     quality_func = assess_slice_quality_gpu if use_gpu else assess_slice_quality

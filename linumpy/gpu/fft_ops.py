@@ -51,7 +51,7 @@ def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
 
     # Extend images by 1/4 of their size (padding)
     new_shape = tuple(int(s * 1.25) for s in vol_shape)
-    pad_size = tuple((int(np.ceil(0.5 * (n - s))),) * 2 for s, n in zip(vol_shape, new_shape))
+    pad_size = tuple((int(np.ceil(0.5 * (n - s))),) * 2 for s, n in zip(vol_shape, new_shape, strict=False))
 
     vol1_p = cp.pad(vol1_gpu, pad_size, mode="reflect")
     vol2_p = cp.pad(vol2_gpu, pad_size, mode="reflect")
@@ -98,7 +98,7 @@ def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
 
     for indices in coordinates_cpu:
         deltas = []
-        for idx, s in zip(indices, vol1_p.shape):
+        for idx, s in zip(indices, vol1_p.shape, strict=False):
             deltas.append(int(-idx + s / 2))
 
         # Check bounds

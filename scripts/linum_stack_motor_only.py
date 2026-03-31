@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Stack slices into a 3D volume using only motor positions (no pairwise registration).
 
@@ -116,7 +115,7 @@ def generate_preview(volume, output_path):
     try:
         import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        _fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
         # Middle slices in each dimension
         z_mid = volume.shape[0] // 2
@@ -153,7 +152,7 @@ def generate_preview_from_slice(slice_2d, output_path):
     try:
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+        _fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
         # Normalize for display
         vmin = np.percentile(slice_2d[slice_2d > 0], 1) if np.any(slice_2d > 0) else 0
@@ -188,7 +187,7 @@ def generate_preview_from_zarr(zarr_output, output_path):
         xz_slice = np.array(zarr_output[:, y_mid, :])  # XZ at middle Y
         yz_slice = np.array(zarr_output[:, :, x_mid])  # YZ at middle X
 
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        _fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
         # Normalize each slice for display
         def normalize_slice(s):
@@ -265,12 +264,12 @@ def main():
 
     # Load shifts
     logger.info(f"Loading shifts from {shifts_path}")
-    cumsum_mm, all_shift_ids = load_shifts_csv(shifts_path)
+    cumsum_mm, _all_shift_ids = load_shifts_csv(shifts_path)
 
     # Get resolution from first slice
     # NOTE: read_omezarr returns resolution in MILLIMETERS (OME-NGFF standard)
     first_slice_id = sorted(slice_files.keys())[0]
-    first_vol, first_res = read_omezarr(str(slice_files[first_slice_id]), level=0)
+    _first_vol, first_res = read_omezarr(str(slice_files[first_slice_id]), level=0)
 
     # Resolution: res is [z, y, x] in mm from OME-NGFF, convert to µm
     res_x_mm = first_res[-1] if len(first_res) >= 3 else first_res[0]

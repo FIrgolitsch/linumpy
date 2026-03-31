@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Aggregate dilation analysis results from multiple slices.
 
@@ -63,7 +62,7 @@ def load_dilation_results(input_dir, pattern):
 
     results = []
     for json_file in json_files:
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             data = json.load(f)
             # Extract slice ID from path if not in data
             if data.get("slice_id") is None:

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Estimate the affine transform used to compute tile positions in a 2D mosaic grid.
@@ -205,12 +204,12 @@ def main():
 
                     # Loop over neighborhood tiles
                     neighbors, tiles = mosaic.get_neighbors_around_tile(i, j)
-                    for n, t in zip(neighbors, tiles):
+                    for _n, t in zip(neighbors, tiles, strict=False):
                         r = t[0] - i
                         c = t[1] - j
 
                         # Extract overlap
-                        o1, o2, p1, p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
+                        o1, o2, p1, _p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
 
                         # Check if one of the overlap is empty
                         o1_empty = np.sum(o1 <= thresh) > max_empty_fraction * o1.size

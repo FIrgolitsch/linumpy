@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Benchmark GPU vs CPU performance for linumpy operations.
 
@@ -320,7 +319,7 @@ def benchmark_real_data(input_path, iterations=3):
     from linumpy.io.zarr import read_omezarr
 
     print(f"\nLoading real data from: {input_path}")
-    vol, res = read_omezarr(input_path, level=0)
+    vol, _res = read_omezarr(input_path, level=0)
 
     # Load a manageable chunk
     chunk_size = min(100, vol.shape[0])

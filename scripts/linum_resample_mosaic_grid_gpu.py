@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Resample a mosaic grid to a new isotropic resolution.
@@ -68,7 +67,7 @@ def rescale_gpu(image, scale, order=1, use_gpu=True):
         scale = tuple(scale)
 
     # Compute output shape
-    output_shape = tuple(int(round(s * sc)) for s, sc in zip(image.shape, scale))
+    output_shape = tuple(round(s * sc) for s, sc in zip(image.shape, scale, strict=False))
 
     # Use GPU-accelerated resize
     return resize(image, output_shape, order=order, anti_aliasing=True, use_gpu=use_gpu)
@@ -168,7 +167,7 @@ def main():
     print(f"  Scale factor: {scaling_factor}")
 
     # Compute output tile shape analytically — no need to load a tile just for shape info.
-    out_tile_shape = tuple(int(round(s * sc)) for s, sc in zip(tile_shape, scaling_factor))
+    out_tile_shape = tuple(round(s * sc) for s, sc in zip(tile_shape, scaling_factor, strict=False))
 
     nx = vol.shape[1] // tile_shape[1]
     ny = vol.shape[2] // tile_shape[2]

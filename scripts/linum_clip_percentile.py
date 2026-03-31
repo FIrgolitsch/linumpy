@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Clip .ome.zarr volume intensities between lower and upper percentile.
 """

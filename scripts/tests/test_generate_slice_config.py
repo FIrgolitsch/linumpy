@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding:utf-8 -*-
 import csv
 
 
@@ -27,7 +26,7 @@ def test_from_shifts_file(script_runner, tmp_path):
     assert output.exists()
 
     # Verify the content
-    with open(output, "r") as f:
+    with open(output) as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 
@@ -66,7 +65,7 @@ def test_from_shifts_file_with_exclude(script_runner, tmp_path):
     assert output.exists()
 
     # Verify the content
-    with open(output, "r") as f:
+    with open(output) as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 

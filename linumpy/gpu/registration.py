@@ -272,7 +272,7 @@ def apply_transform_gpu(image, transform, use_gpu=True):
 
     if use_gpu and GPU_AVAILABLE and _is_affine_transform(transform):
         # Extract affine matrix and use GPU
-        matrix, offset = _sitk_transform_to_matrix(transform, image.shape)
+        matrix, _offset = _sitk_transform_to_matrix(transform, image.shape)
         return affine_transform(image, matrix, use_gpu=True)
     else:
         # Fall back to SimpleITK

@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 """Collection of functions to fix intensity-related artefacts in raw data"""
 
 import itertools
@@ -787,7 +786,7 @@ def splitAline(data, mask):
     z_list = list()
     this_aline = list()
     this_z = list()
-    for elem, m, z in zip(data, mask, list(range(len(data)))):
+    for elem, m, z in zip(data, mask, list(range(len(data))), strict=False):
         if m:
             this_aline.append(elem)
             this_z.append(z)
@@ -835,7 +834,7 @@ def getAlineAttenuation(vol, k=1, mask=None):
     zList = np.array_split(z, k)
     attn_vol = np.zeros((nx, ny, k))
 
-    for z, ik in zip(zList, list(range(k))):
+    for z, ik in zip(zList, list(range(k)), strict=False):
         # Selecting a subsample
         this_vol = vol[:, :, z[0] : z[-1]]
         if mask is not None:
@@ -845,7 +844,7 @@ def getAlineAttenuation(vol, k=1, mask=None):
         Alines = np.split(this_vol.flatten(), nx * ny)
         if mask is not None:
             mask_Alines = np.split(this_mask.flatten(), nx * ny)
-            for A, M, ii in zip(Alines, mask_Alines, list(range(nx * ny))):
+            for A, M, ii in zip(Alines, mask_Alines, list(range(nx * ny)), strict=False):
                 Alines[ii] = A[M]
 
         # Process each Alines in parallel
@@ -987,10 +986,10 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
         mask = getInterfaceMask(vol)
 
     # Split the volume into Alines and Alines portions.
-    print(("Splitting volume into Alines portions (using %d processors)" % (nproc)))
+    print(f"Splitting volume into Alines portions (using {nproc} processors)")
     Alines = np.split(vol.flatten(), nx * ny)
     Alines_mask = np.split(mask.flatten(), nx * ny)
-    Alines_to_Split = list(zip(Alines, Alines_mask))
+    Alines_to_Split = list(zip(Alines, Alines_mask, strict=False))
     nAlines = len(Alines)
 
     # Process each Alines in parallel
@@ -1007,11 +1006,11 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
     print(("Number of Alines portions : ", pCount))
 
     # Compute the attenuation for each aline portions
-    print(("Computing attenuation for each Aline portion (using %d processors)" % (nproc)))
+    print(f"Computing attenuation for each Aline portion (using {nproc} processors)")
     aline_portions = list()
     z_portions = list()
     portion_idx = list()
-    for foo, idx in zip(result, list(range(nAlines))):
+    for foo, idx in zip(result, list(range(nAlines)), strict=False):
         aline_portions.extend(foo[0])
         z_portions.extend(foo[1])
         portion_idx.extend([idx] * len(foo[0]))
@@ -1024,7 +1023,7 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
     # Reshape attenuation as an Aline list # TODO : Paralléliser cette boucle.
     print("Reshape attenuation as an Aline list")
     aline_attn = [np.zeros((nz,)) for i in range(nAlines)]
-    for idx, z, mu in zip(portion_idx, z_portions, result):
+    for idx, z, mu in zip(portion_idx, z_portions, result, strict=False):
         aline_attn[idx][z] = mu
 
     # portion_idx = np.array(portion_idx)
@@ -1513,7 +1512,7 @@ def get_vignette(vol, returnParams=False, mask_z=None, method="gauss"):
             w_list.append(f_opt(popt.x, img, pos))
 
     optimized_vignetteParams = np.median(np.array(params_list), axis=0)
-    print((np.array(params_list)))
+    print(np.array(params_list))
     print(optimized_vignetteParams)
 
     if returnParams:

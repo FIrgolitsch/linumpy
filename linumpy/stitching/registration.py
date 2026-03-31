@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import random
 
@@ -75,7 +74,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
     deltasList = list()
     for indices in coordinates:
         deltas = list()
-        for idx, s in zip(indices, vol1_p.shape):
+        for idx, s in zip(indices, vol1_p.shape, strict=False):
             deltas.append(int(-idx + s / 2))
 
         # Check if it is outside the original image
@@ -441,7 +440,7 @@ def register_2d_images_sitk(
     elif metric.lower() == "mi":
         R.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
     else:
-        raise ValueError("Unknown metric: {}".format(metric))
+        raise ValueError(f"Unknown metric: {metric}")
 
     # Use smaller step size when we have an initial translation estimate (to avoid drifting away)
     if initial_step is None:
@@ -464,7 +463,7 @@ def register_2d_images_sitk(
     elif method == "translation":
         sitk_transform = sitk.TranslationTransform(2)
     else:
-        raise ValueError("Unknown method: {}".format(method))
+        raise ValueError(f"Unknown method: {method}")
 
     # Initialize transform - use provided translation or centered initializer
     if initial_translation is not None:
@@ -507,7 +506,7 @@ def register_2d_images_sitk(
         elif method == "affine":
             transform_3d = sitk.AffineTransform(3)
             translation = out_transform.GetTranslation()
-            transform_3d.SetCenter(out_transform.GetCenter() + (0.0,))
+            transform_3d.SetCenter((*out_transform.GetCenter(), 0.0))
             transform_3d.SetTranslation([translation[0], translation[1], 0.0])
             matrix_2d = out_transform.GetMatrix()
             matrix_3d = np.zeros((3, 3))
@@ -515,7 +514,7 @@ def register_2d_images_sitk(
             matrix_3d[2, 2] = 1.0
             transform_3d.SetMatrix(matrix_3d.flatten().tolist())
         else:
-            raise ValueError("Unknown method: {}".format(method))
+            raise ValueError(f"Unknown method: {method}")
         out_transform = transform_3d
 
     return out_transform, stop_condition, error
@@ -815,11 +814,11 @@ def estimate_mosaic_transform(mosaics, max_empty_fraction=0.9, n_samples=512, se
                     break
 
                 neighbors, tiles = mosaic.get_neighbors_around_tile(i, j)
-                for n, t in zip(neighbors, tiles):
+                for _n, t in zip(neighbors, tiles, strict=False):
                     r = t[0] - i
                     c = t[1] - j
 
-                    o1, o2, p1, p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
+                    o1, o2, p1, _p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
 
                     o1_empty = np.sum(o1 <= thresh) > max_empty_fraction * o1.size
                     o2_empty = np.sum(o2 <= thresh) > max_empty_fraction * o2.size

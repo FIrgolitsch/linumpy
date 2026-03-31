@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Using xy shifts file, bring all mosaics in `in_mosaics_dir` to a common space. Each
 volume is resampled to a common shape and its content is translated following the
@@ -87,7 +86,7 @@ def _build_arg_parser():
 def load_slice_config(config_path):
     """Load slice configuration and return set of slice IDs to use."""
     slices_to_use = set()
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
             slice_id = int(row["slice_id"])

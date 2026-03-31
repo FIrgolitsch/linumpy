@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 Methods to download data from the Allen Institute
 """
@@ -296,9 +294,9 @@ def register_3d_rigid_to_allen(
     fixed_center = np.array(fixed_image.TransformContinuousIndexToPhysicalPoint(fixed_center_idx))
 
     # Translation to align brain centre with Allen centre (ensures initial overlap).
-    # ITK transform maps fixed→moving: T(p) = R(p − c) + c + t
+    # ITK transform maps fixed→moving: T(p) = R(p - c) + c + t
     # For identity rotation and c=fixed_center: T(fixed_center) = fixed_center + t
-    # We need T(fixed_center) = original_moving_center, so t = moving_center − fixed_center.
+    # We need T(fixed_center) = original_moving_center, so t = moving_center - fixed_center.
     translation = tuple(original_moving_center - fixed_center)
 
     # Set center of rotation to fixed image center

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Estimate the inter-slice XY shifts from tile stage positions.
 
@@ -79,7 +78,7 @@ def main():
         max_workers=n_processes,
     )
 
-    xmin_mm, xmax_mm, ymin_mm, ymax_mm, tile_resolutions, grid_shapes = zip(*results)
+    xmin_mm, xmax_mm, ymin_mm, ymax_mm, tile_resolutions, grid_shapes = zip(*results, strict=False)
 
     # Compute the shift between slices in mm.
     # For each axis, compare both boundaries (min and max).  Mosaic expansion

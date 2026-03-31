@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """Convert 3D OCT tiles to a 2D mosaic grid
 
@@ -54,7 +53,7 @@ def _build_arg_parser():
     return p
 
 
-def get_volume(filename: str, config: dict = None) -> np.ndarray:
+def get_volume(filename: str, config: dict | None = None) -> np.ndarray:
     """Load and preprocess an OCT volume
 
     Parameters
@@ -174,7 +173,7 @@ def main():
     tile_size = (tile_size[0], tile_size[1])
     tile_pos_px = []
     for i in range(len(tiles_pos)):
-        mx, my, mz = tiles_pos[i]
+        mx, my, _mz = tiles_pos[i]
         rmin = (mx - mx_min) * tile_size[0]
         rmax = rmin + tile_size[0]
         cmin = (my - my_min) * tile_size[1]

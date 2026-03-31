@@ -30,13 +30,12 @@ import subprocess
 import sys
 import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 __all__ = [
-    "setup_jax_cuda_env",
-    "get_cuda12_ld_path",
-    "check_patchelf_needed",
     "apply_patchelf_fix",
+    "check_patchelf_needed",
+    "get_cuda12_ld_path",
+    "setup_jax_cuda_env",
     "verify_jax_cuda",
 ]
 
@@ -46,7 +45,7 @@ def get_site_packages() -> str:
     return site.getsitepackages()[0]
 
 
-def get_cuda12_ld_path(include_existing: bool = True) -> Tuple[str, List[str]]:
+def get_cuda12_ld_path(include_existing: bool = True) -> tuple[str, list[str]]:
     """
     Build LD_LIBRARY_PATH for CUDA 12 compatible libraries.
 
@@ -121,7 +120,7 @@ def get_cuda12_ld_path(include_existing: bool = True) -> Tuple[str, List[str]]:
     return new_ld_path, cuda_paths
 
 
-def check_patchelf_needed() -> Tuple[bool, Optional[str]]:
+def check_patchelf_needed() -> tuple[bool, str | None]:
     """
     Check if patchelf fix is needed for JAX CUDA plugin.
 
@@ -238,7 +237,8 @@ def setup_jax_cuda_env(
             warnings.warn(
                 "JAX is already imported. setup_jax_cuda_env() should be called "
                 "BEFORE importing JAX for LD_LIBRARY_PATH changes to take effect. "
-                "You may need to restart the Python process."
+                "You may need to restart the Python process.",
+                stacklevel=2,
             )
 
     # Build and set LD_LIBRARY_PATH
@@ -252,7 +252,8 @@ def setup_jax_cuda_env(
                 "      nvidia-cusolver nvidia-cufft nvidia-cusparse \\\n"
                 "      nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 \\\n"
                 "      nvidia-nvjitlink-cu12 nvidia-cudnn-cu12\n"
-                "Or run: source scripts/fix_jax_cuda_plugin.sh"
+                "Or run: source scripts/fix_jax_cuda_plugin.sh",
+                stacklevel=2,
             )
         return False
 
@@ -265,7 +266,7 @@ def setup_jax_cuda_env(
 
     # Check and apply patchelf fix if needed
     if auto_patchelf:
-        needs_fix, plugin_path = check_patchelf_needed()
+        needs_fix, _plugin_path = check_patchelf_needed()
         if needs_fix:
             if verbose:
                 print("Applying patchelf fix...")
@@ -274,7 +275,8 @@ def setup_jax_cuda_env(
                 warnings.warn(
                     "Could not apply patchelf fix. JAX CUDA may fail with "
                     "'cannot enable executable stack' error. "
-                    "Install patchelf: sudo apt install patchelf"
+                    "Install patchelf: sudo apt install patchelf",
+                    stacklevel=2,
                 )
 
     return True

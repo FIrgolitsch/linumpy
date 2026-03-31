@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Analyze pairwise registration transforms to detect rotation drift and alignment issues.
 
@@ -344,7 +343,7 @@ def generate_report(df, analysis, correlation, output_dir):
 
 def generate_plots(df, output_dir):
     """Generate visualization plots."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    _fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     # 1. Per-slice rotation
     ax1 = axes[0, 0]

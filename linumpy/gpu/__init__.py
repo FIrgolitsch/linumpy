@@ -84,14 +84,14 @@ if not _GPU_DISABLED_BY_ENV:
                 GPU_AVAILABLE = False
 
         except cp.cuda.runtime.CUDARuntimeError as e:
-            warnings.warn(f"CuPy installed but CUDA not available: {e}")
+            warnings.warn(f"CuPy installed but CUDA not available: {e}", stacklevel=2)
             CUPY_AVAILABLE = True
             GPU_AVAILABLE = False
 
     except ImportError:
         pass
 else:
-    warnings.warn("GPU disabled via LINUMPY_USE_GPU environment variable")
+    warnings.warn("GPU disabled via LINUMPY_USE_GPU environment variable", stacklevel=2)
 
 
 def get_array_module(use_gpu: bool = True):
@@ -348,7 +348,7 @@ def select_gpu(device_id: int, verbose: bool = True):
 
     # Update module globals
     with cp.cuda.Device(device_id):
-        free, total = cp.cuda.runtime.memGetInfo()
+        _free, total = cp.cuda.runtime.memGetInfo()
         device = cp.cuda.Device(device_id)
         name = device.name if hasattr(device, "name") else f"GPU {device_id}"
 
@@ -406,23 +406,23 @@ from linumpy.gpu.cuda_env import (  # noqa: E402
 
 # Expose key components
 __all__ = [
-    "GPU_AVAILABLE",
     "CUPY_AVAILABLE",
+    "GPU_AVAILABLE",
     "GPU_DEVICE_NAME",
     "GPU_MEMORY_GB",
+    "apply_patchelf_fix",
+    "check_patchelf_needed",
     "get_array_module",
-    "to_gpu",
-    "to_cpu",
+    "get_cuda12_ld_path",
     "gpu_info",
-    "print_gpu_info",
     "list_gpus",
+    "print_gpu_info",
+    "print_gpu_status",
     "select_best_gpu",
     "select_gpu",
-    "print_gpu_status",
     # CUDA environment setup for JAX
     "setup_jax_cuda_env",
-    "get_cuda12_ld_path",
-    "check_patchelf_needed",
-    "apply_patchelf_fix",
+    "to_cpu",
+    "to_gpu",
     "verify_jax_cuda",
 ]

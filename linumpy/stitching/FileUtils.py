@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """Defines various classes to manage the slicer data, subjects and studies."""
 
@@ -10,6 +9,7 @@ import logging
 import os
 import pickle as pcl
 import re
+import typing
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,7 +32,7 @@ class Subject:
     subj_id = "None"
     data_dir = "None"
     result_dir = "None"
-    data = list()
+    data: typing.ClassVar[list] = []
 
     def __init__(self, new_id):
         """Subject class constructor"""
@@ -41,9 +41,9 @@ class Subject:
     def __str__(self):
         object_str = (
             "Subject object with attributes :\n"
-            + "  - subj_id : '%s'\n" % (self.subj_id)
-            + "  - datadir : '%s'\n" % (self.data_dir)
-            + "  - result_dir : '%s'\n" % (self.result_dir)
+            + f"  - subj_id : '{self.subj_id}'\n"
+            + f"  - datadir : '{self.data_dir}'\n"
+            + f"  - result_dir : '{self.result_dir}'\n"
             + "  - acqinfo : "
             + str(self.info)
             + "\n"
@@ -102,9 +102,9 @@ class Subject:
         return self.info
 
     def display(self):
-        logger.info("Id: {}".format(self.subj_id))
-        logger.info("Data Dir: {}".format(self.data_dir))
-        logger.info("Result Dir: {}".format(self.result_dir))
+        logger.info(f"Id: {self.subj_id}")
+        logger.info(f"Data Dir: {self.data_dir}")
+        logger.info(f"Result Dir: {self.result_dir}")
 
     def checkForVolumes(self):
         nx = self.info["nStepX"]
@@ -195,10 +195,11 @@ class Study:
 
     study_id = "None"
     result_dir = "None"
-    categories = defaultdict(list)
+    categories: typing.ClassVar[dict] = {}
 
     def __init__(self, new_id):
         self.study_id = new_id
+        self.categories = defaultdict(list)
 
     def setResultDir(self, result_dir):
         """Sets output data directory for this study
@@ -246,8 +247,8 @@ class Study:
         OUTPUT
             None
         """
-        logger.info("Study Id: {}".format(self.study_id))
-        logger.info("Result Dir: {}".format(self.result_dir))
+        logger.info(f"Study Id: {self.study_id}")
+        logger.info(f"Result Dir: {self.result_dir}")
         logger.info(list(self.categories.items()))
 
     def __getstate__(self):
@@ -271,7 +272,7 @@ class Study:
 
     def __setstate__(self, state):
         """To control how this class is loaded by pickle"""
-        categories, subjectCategory, subjects, study_members = state
+        _categories, subjectCategory, subjects, study_members = state
         nSubjects = len(subjectCategory)
 
         self.categories = defaultdict(list)
@@ -308,11 +309,13 @@ class SlicerData:
         name="data",
         prototype="volume_x%02.0f_y%02.0f_z%02.0f",
         extension=".bin",
-        volshape=[512, 512, 120],
+        volshape=None,
         pixelFormat="float32",
         detect_data=False,
     ):
         """Creating a new data object"""
+        if volshape is None:
+            volshape = [512, 512, 120]
         self.datadir = datadir
 
         # Try to detect the data information
@@ -342,17 +345,17 @@ class SlicerData:
     def __str__(self):
         object_str = (
             f"<{__class__.__name__}> object with attributes :\n"
-            + "  - name : '%s'\n" % (self.name)
-            + "  - datadir : '%s'\n" % (self.datadir)
-            + "  - prototype : '%s'\n" % (self.prototype)
-            + "  - extension : '%s'\n" % (self.extension)
+            + f"  - name : '{self.name}'\n"
+            + f"  - datadir : '{self.datadir}'\n"
+            + f"  - prototype : '{self.prototype}'\n"
+            + f"  - extension : '{self.extension}'\n"
             + "  - volshape : "
             + str(self.volshape)
             + "\n"
             + "  - gridshape : "
             + str(self.gridshape)
             + "\n"
-            + "  - format : '%s'\n" % (self.format)
+            + f"  - format : '{self.format}'\n"
             + "  - resolution : "
             + str(self.resolution)
             + "\n"
@@ -377,7 +380,7 @@ class SlicerData:
     def set_gridOrigin(self, origin):
         """To define the mosaic grid origin as either: 'top-right', 'top-left', 'down-right' or 'down-left"""
         valid_origins = ["top-left", "top-right", "bottom-right", "bottom-left"]
-        assert origin in valid_origins, "Unknown origin. Must be one of these: {}".format(valid_origins)
+        assert origin in valid_origins, f"Unknown origin. Must be one of these: {valid_origins}"
         self.grid_origin = origin
         if origin == "top-left":
             gridOrigin = (0, 0, 0)
@@ -462,10 +465,10 @@ class SlicerData:
             if self.extension in [".nii", ".nii.gz"]:
                 data_io.save_nifti(filename, vol, pixelFormat=self.format)
             else:
-                logger.info("Volume save is not implemented yet for extension '%s'" % self.extension)
+                logger.info(f"Volume save is not implemented yet for extension '{self.extension}'")
                 raise NotImplementedError
         else:
-            logger.info("This file already exists : '%s'" % (filename))
+            logger.info(f"This file already exists : '{filename}'")
 
     def volumeIterator(self, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all volumes
@@ -640,7 +643,7 @@ class SlicerData:
         sList, tList = topology.topoIterator(topo, root=origin, method=method)
 
         # Loop over source and target list
-        for source, target in zip(sList, tList):
+        for source, target in zip(sList, tList, strict=False):
             pos1 = (source[0], source[1], z)
             pos2 = (target[0], target[1], z)
             if returnPosOnly:
@@ -796,18 +799,18 @@ def dataSniffer(datadir: str) -> dict:
     # Detect extension
     extension = this_extension
 
-    logger.info("Xrange: {}".format((minX, maxX)))
-    logger.info("Yrange: {}".format((minY, maxY)))
-    logger.info("Zrange: {}".format((minZ, maxZ)))
-    logger.info("Detected grid shape: {}".format(gridshape))
-    logger.info("Detected extensions: {}".format(extension))
+    logger.info(f"Xrange: {(minX, maxX)}")
+    logger.info(f"Yrange: {(minY, maxY)}")
+    logger.info(f"Zrange: {(minZ, maxZ)}")
+    logger.info(f"Detected grid shape: {gridshape}")
+    logger.info(f"Detected extensions: {extension}")
 
     # Creating a file prototype
     idxFormat = "%d"
     if min(lengthPos) >= 2:
         idxFormat = f"%0{min(lengthPos)}.0f"
-    prototype = list(prefix)[0] + idxFormat + list(bXY)[0] + idxFormat + list(bYZ)[0] + idxFormat + list(suffix)[0]
-    logger.info("Generated file prototype: {}".format(prototype))
+    prototype = next(iter(prefix)) + idxFormat + next(iter(bXY)) + idxFormat + next(iter(bYZ)) + idxFormat + next(iter(suffix))
+    logger.info(f"Generated file prototype: {prototype}")
 
     # Detect missing files
     data_mask = np.zeros(gridshape, dtype=bool)
@@ -819,7 +822,7 @@ def dataSniffer(datadir: str) -> dict:
                     data_mask[x - minX, y - minY, z - minZ] = True
 
     nVols = gridshape[0] * gridshape[1] * gridshape[2]
-    logger.info("There are {}/{} missing files in this grid.".format(nVols - data_mask.sum(), nVols))
+    logger.info(f"There are {nVols - data_mask.sum()}/{nVols} missing files in this grid.")
 
     # Creating the output dict
     data_info = dict()

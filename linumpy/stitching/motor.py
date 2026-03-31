@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Motor-position-based tile placement for mosaic stitching.
 
@@ -6,7 +5,6 @@ Consolidated from linum_stitch_3d_refined.py and linum_stitch_motor_only.py.
 """
 
 import logging
-from typing import List, Tuple
 
 import numpy as np
 
@@ -217,7 +215,7 @@ def compute_registration_refinements(
     return refinements
 
 
-def estimate_affine_from_pairs(pairs: list, tile_shape: tuple, overlap_fraction: float) -> Tuple[np.ndarray, dict]:
+def estimate_affine_from_pairs(pairs: list, tile_shape: tuple, overlap_fraction: float) -> tuple[np.ndarray, dict]:
     """Estimate a 2x2 affine displacement model from neighbor tile correlations.
 
     Fits the Lefebvre et al. (2017) motor displacement model using
@@ -343,7 +341,7 @@ def _extract_displacement_params(transform: np.ndarray, tile_shape: tuple, overl
     }
 
 
-def compute_affine_positions(nx: int, ny: int, transform: np.ndarray) -> List[Tuple[int, int]]:
+def compute_affine_positions(nx: int, ny: int, transform: np.ndarray) -> list[tuple[int, int]]:
     """Compute tile positions using a 2x2 affine displacement model.
 
     This is the corrected version of :func:`compute_motor_positions` that
@@ -367,11 +365,11 @@ def compute_affine_positions(nx: int, ny: int, transform: np.ndarray) -> List[Tu
     for i in range(nx):
         for j in range(ny):
             pos = transform @ np.array([i, j], dtype=float)
-            positions.append((int(round(pos[0])), int(round(pos[1]))))
+            positions.append((round(pos[0]), round(pos[1])))
     return positions
 
 
-def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple, transform: np.ndarray) -> Tuple[int, int, int]:
+def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple, transform: np.ndarray) -> tuple[int, int, int]:
     """Compute the output mosaic shape from affine tile positions.
 
     With off-diagonal terms, tiles may extend beyond what the diagonal model
@@ -451,7 +449,7 @@ def apply_blend_shift_refinement(tile: np.ndarray, refinements_for_tile: list, o
     return shifted
 
 
-def compare_motor_vs_registration(motor_positions: list, reg_positions: list, output_path: str = None) -> dict:
+def compare_motor_vs_registration(motor_positions: list, reg_positions: list, output_path: str | None = None) -> dict:
     """Compare motor-based positions with registration-based positions.
 
     Used diagnostically to identify stage calibration issues (systematic offset,

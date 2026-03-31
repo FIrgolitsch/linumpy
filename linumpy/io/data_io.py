@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# -*- coding: utf-8 -*-
 """This modules contains all methods related to I/O for the slicer data.
 
 .. moduleauthor:: Joël Lefebvre <joel.lefebvre@polymtl.ca>
@@ -25,7 +24,7 @@ def listSlicesInDir(directory, extension=".nii", returnIndices=False):
     zlist = getSliceListIndices(slice_list)
 
     # Sort
-    tmp = sorted(zip(zlist, slice_list))
+    tmp = sorted(zip(zlist, slice_list, strict=False))
     slice_list = [elem[1] for elem in tmp]
     zlist = [elem[0] for elem in tmp]
     if returnIndices:
@@ -76,7 +75,7 @@ def load_volume(
 
     filename = os.path.join(
         directory,
-        prefix + "_" + "x%02.0f" % (pos[0]) + "_" + "y%02.0f" % (pos[1]) + "_" + "z%02.0f" % (pos[2]) + suffix + extension,
+        prefix + "_" + f"x{pos[0]:02.0f}" + "_" + f"y{pos[1]:02.0f}" + "_" + f"z{pos[2]:02.0f}" + suffix + extension,
     )
     return load_volumeByFilename(filename, vol_shape, precision)
 

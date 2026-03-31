@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Simplified pairwise registration for motor-position-based reconstruction.
 
@@ -119,8 +118,8 @@ def main():
     logger.info(f"Using Z resolution: {res_z_mm} mm ({res_z_mm * 1000:.2f} µm)")
 
     # Calculate interval in voxels: slicing_interval_mm / res_z_mm
-    interval_vox = int(round(args.slicing_interval_mm / res_z_mm))
-    search_vox = int(round(args.search_range_mm / res_z_mm))
+    interval_vox = round(args.slicing_interval_mm / res_z_mm)
+    search_vox = round(args.search_range_mm / res_z_mm)
 
     # The overlap region is at the bottom of fixed volume
     # The match should be near: fixed_vol.shape[0] - interval_vox + moving_z_index
@@ -213,7 +212,7 @@ def main():
         resampler.SetInterpolator(sitk.sitkLinear)
         registered = sitk.GetArrayFromImage(resampler.Execute(moving_sitk))
 
-        fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+        _fig, axes = plt.subplots(2, 2, figsize=(12, 12))
 
         axes[0, 0].imshow(fixed_norm, cmap="gray")
         axes[0, 0].set_title(f"Fixed (z={best_z})")
