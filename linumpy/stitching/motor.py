@@ -73,10 +73,16 @@ def compute_registration_refinements(volume: np.ndarray,
                                      nx: int, ny: int,
                                      overlap_fraction: float,
                                      max_refinement_px: float = 10.0) -> dict:
-    """Compute sub-pixel refinements by phase-correlating overlapping tile regions.
+    """Correlate neighboring tiles within a slice to measure displacement errors.
 
-    Does not change tile positions — computes how much the blending transition
-    should be adjusted for smoother seams at tile boundaries.
+    Phase-correlates overlapping regions of adjacent tiles (horizontal and
+    vertical neighbors) to measure the difference between expected and actual
+    tile positions.  Returns both clamped residuals for blend refinement and
+    unclamped absolute displacements for fitting the affine displacement model
+    (Lefebvre et al. 2017, Eqs 1-6).
+
+    Note: this operates on tiles *within a single slice* — it is entirely
+    separate from the Z-slice pairwise registration (``linum_register_pairwise.py``).
 
     Parameters
     ----------
@@ -89,11 +95,15 @@ def compute_registration_refinements(volume: np.ndarray,
     overlap_fraction : float
         Expected overlap fraction (0-1).
     max_refinement_px : float
-        Maximum allowed refinement shift. Larger shifts are clamped.
+        Maximum residual shift retained for blend refinement. Larger residuals
+        are clamped. Does not affect the absolute displacements in 'pairs'.
 
     Returns
     -------
-    dict with keys 'horizontal', 'vertical', 'stats'.
+    dict with keys 'horizontal', 'vertical', 'pairs', 'stats'.
+        'pairs' is a list of dicts with keys 'row_delta', 'col_delta',
+        'measured_dy', 'measured_dx' — the absolute observed pixel
+        displacements used for affine model estimation.
     """
     from linumpy.stitching.registration import pairWisePhaseCorrelation
 
@@ -101,9 +111,14 @@ def compute_registration_refinements(volume: np.ndarray,
     overlap_y = int(tile_height * overlap_fraction)
     overlap_x = int(tile_width * overlap_fraction)
 
+    # Expected step sizes (what a diagonal model would predict)
+    step_y = tile_height * (1.0 - overlap_fraction)
+    step_x = tile_width * (1.0 - overlap_fraction)
+
     refinements = {
         'horizontal': {},
         'vertical': {},
+        'pairs': [],  # absolute displacements for affine estimation
         'stats': {
             'total_pairs': 0,
             'valid_pairs': 0,
@@ -116,7 +131,8 @@ def compute_registration_refinements(volume: np.ndarray,
     all_shifts = []
     z_mid = volume.shape[0] // 2
 
-    # Horizontal refinements (between columns)
+    # Horizontal refinements (between columns: tile (i,j) → (i,j+1))
+    # The expected displacement is (0, step_x); registration measures residual
     for i in range(nx):
         for j in range(ny - 1):
             r1_start = i * tile_height
@@ -133,6 +149,17 @@ def compute_registration_refinements(volume: np.ndarray,
             refinements['stats']['total_pairs'] += 1
             try:
                 dy, dx = pairWisePhaseCorrelation(overlap1, overlap2)
+
+                # Store absolute displacement for affine estimation (unclamped)
+                # Horizontal pair: row_delta=0, col_delta=1
+                # Measured position = expected_step + residual
+                refinements['pairs'].append({
+                    'row_delta': 0,
+                    'col_delta': 1,
+                    'measured_dy': float(dy),       # cross-axis residual
+                    'measured_dx': float(step_x + dx),  # along-axis: step + residual
+                })
+
                 magnitude = np.sqrt(dx**2 + dy**2)
                 if magnitude > max_refinement_px:
                     scale = max_refinement_px / magnitude
@@ -146,7 +173,8 @@ def compute_registration_refinements(volume: np.ndarray,
             except Exception as e:
                 logger.debug(f"Registration failed for h-pair ({i},{j})-({i},{j+1}): {e}")
 
-    # Vertical refinements (between rows)
+    # Vertical refinements (between rows: tile (i,j) → (i+1,j))
+    # The expected displacement is (step_y, 0); registration measures residual
     for i in range(nx - 1):
         for j in range(ny):
             r1_end = (i + 1) * tile_height
@@ -163,6 +191,16 @@ def compute_registration_refinements(volume: np.ndarray,
             refinements['stats']['total_pairs'] += 1
             try:
                 dy, dx = pairWisePhaseCorrelation(overlap1, overlap2)
+
+                # Store absolute displacement for affine estimation (unclamped)
+                # Vertical pair: row_delta=1, col_delta=0
+                refinements['pairs'].append({
+                    'row_delta': 1,
+                    'col_delta': 0,
+                    'measured_dy': float(step_y + dy),  # along-axis: step + residual
+                    'measured_dx': float(dx),            # cross-axis residual
+                })
+
                 magnitude = np.sqrt(dx**2 + dy**2)
                 if magnitude > max_refinement_px:
                     scale = max_refinement_px / magnitude
@@ -181,6 +219,204 @@ def compute_registration_refinements(volume: np.ndarray,
         refinements['stats']['max_refinement'] = float(np.max(all_shifts))
 
     return refinements
+
+
+def estimate_affine_from_pairs(pairs: list, tile_shape: tuple,
+                               overlap_fraction: float) -> Tuple[np.ndarray, dict]:
+    """Estimate a 2x2 affine displacement model from neighbor tile correlations.
+
+    Fits the Lefebvre et al. (2017) motor displacement model using
+    least-squares on the absolute (step + residual) displacements returned
+    by :func:`compute_registration_refinements`.
+
+    Note: this uses phase correlation between *neighboring tiles within a
+    single slice*, not the Z-slice pairwise registration that appears
+    elsewhere in the pipeline.
+
+    The model is: ``pixel_pos = A @ [i, j]^T`` where *A* is a general 2x2
+    matrix.  Off-diagonal terms capture the scan-to-stage rotation (θ) and
+    the non-perpendicularity of the motor axes (φ).
+
+    Parameters
+    ----------
+    pairs : list of dict
+        Each dict has 'row_delta', 'col_delta', 'measured_dy', 'measured_dx'.
+    tile_shape : tuple
+        Tile dimensions (z, height, width).
+    overlap_fraction : float
+        Expected overlap fraction (for diagnostics only).
+
+    Returns
+    -------
+    transform : np.ndarray
+        Fitted 2×2 affine matrix mapping tile index to pixel position.
+    diagnostics : dict
+        Extracted displacement model parameters (θ, φ, Ox, Oy) and fit
+        residual statistics.
+    """
+    if not pairs:
+        # Fallback to diagonal model
+        step_y = tile_shape[1] * (1.0 - overlap_fraction)
+        step_x = tile_shape[2] * (1.0 - overlap_fraction)
+        transform = np.array([[step_y, 0.0], [0.0, step_x]])
+        return transform, {'fallback': True, 'reason': 'no pairs'}
+
+    n = len(pairs)
+    # System:  A_mat @ x = b_vec
+    # For each pair, row_delta and col_delta give the tile index offset,
+    # measured_dy and measured_dx give the observed pixel displacement.
+    # We solve for the 4 elements of the 2x2 transform:
+    #   [row_delta, col_delta, 0,         0        ] [a]   [measured_dy]
+    #   [0,         0,         row_delta, col_delta ] [b] = [measured_dx]
+    #                                                  [c]
+    #                                                  [d]
+    a_mat = np.zeros((2 * n, 4))
+    b_vec = np.zeros((2 * n, 1))
+    for idx, p in enumerate(pairs):
+        r, c = p['row_delta'], p['col_delta']
+        a_mat[2 * idx, :] = [r, c, 0, 0]
+        b_vec[2 * idx, 0] = p['measured_dy']
+        a_mat[2 * idx + 1, :] = [0, 0, r, c]
+        b_vec[2 * idx + 1, 0] = p['measured_dx']
+
+    result = np.linalg.lstsq(a_mat, b_vec, rcond=None)
+    transform = result[0].reshape((2, 2))
+    residuals = result[1] if len(result[1]) > 0 else np.array([0.0])
+
+    # Extract Lefebvre displacement model parameters for diagnostics
+    diagnostics = _extract_displacement_params(transform, tile_shape,
+                                               overlap_fraction)
+    diagnostics['n_pairs'] = n
+    diagnostics['lstsq_residual'] = float(np.sum(residuals))
+    diagnostics['fallback'] = False
+
+    return transform, diagnostics
+
+
+def _extract_displacement_params(transform: np.ndarray, tile_shape: tuple,
+                                 overlap_fraction: float) -> dict:
+    """Extract Lefebvre motor model parameters from a 2x2 affine transform.
+
+    Given the fitted transform ``A`` where ``pixel_pos = A @ [i, j]^T``,
+    extract the scan-to-stage rotation θ, the non-perpendicularity angle φ,
+    and the effective overlap fractions Ox, Oy.
+
+    References: Lefebvre et al. 2017, Eqs 3–6.
+
+    Parameters
+    ----------
+    transform : np.ndarray
+        2×2 affine matrix.
+    tile_shape : tuple
+        Tile dimensions (z, height, width).
+    overlap_fraction : float
+        Expected overlap fraction (for comparison).
+
+    Returns
+    -------
+    dict with 'theta_deg', 'phi_deg', 'Ox_fraction', 'Oy_fraction',
+    'off_diagonal_px'.
+    """
+    a, b = transform[0, 0], transform[0, 1]
+    c, d = transform[1, 0], transform[1, 1]
+    tile_h, tile_w = tile_shape[1], tile_shape[2]
+
+    # θ: rotation between scanning and stage reference frames
+    # From vertical displacements: tan(θ) = -c / a  (Eq 3)
+    theta_rad = np.arctan2(-c, a) if abs(a) > 1e-6 else 0.0
+
+    # φ: non-perpendicularity between motor X and Y axes
+    # From horizontal displacements: tan(φ - θ) = -b / d  (Eq 4 rearranged)
+    phi_minus_theta = np.arctan2(-b, d) if abs(d) > 1e-6 else 0.0
+    phi_rad = phi_minus_theta + theta_rad
+
+    # Effective overlap fractions
+    # Ox = 1 - |vertical step along row axis| / tile_height
+    vertical_step = np.sqrt(a**2 + c**2)
+    Ox_fraction = 1.0 - vertical_step / tile_h
+
+    # Oy = 1 - |horizontal step along col axis| / tile_width
+    horizontal_step = np.sqrt(b**2 + d**2)
+    Oy_fraction = 1.0 - horizontal_step / tile_w
+
+    return {
+        'theta_deg': float(np.degrees(theta_rad)),
+        'phi_deg': float(np.degrees(phi_rad)),
+        'Ox_fraction': float(Ox_fraction),
+        'Oy_fraction': float(Oy_fraction),
+        'expected_overlap': float(overlap_fraction),
+        'off_diagonal_px': [float(b), float(c)],
+        'transform': transform.tolist(),
+    }
+
+
+def compute_affine_positions(nx: int, ny: int,
+                             transform: np.ndarray) -> List[Tuple[int, int]]:
+    """Compute tile positions using a 2x2 affine displacement model.
+
+    This is the corrected version of :func:`compute_motor_positions` that
+    accounts for scan-to-stage rotation (θ) and non-perpendicular motor
+    axes (φ) via the off-diagonal terms in the transform matrix.
+
+    Parameters
+    ----------
+    nx, ny : int
+        Number of tiles in each direction.
+    transform : np.ndarray
+        2×2 affine matrix mapping tile index (i, j) to pixel position
+        (row_px, col_px).
+
+    Returns
+    -------
+    positions : list of (int, int)
+        Pixel positions for each tile, row-major order.
+    """
+    positions = []
+    for i in range(nx):
+        for j in range(ny):
+            pos = transform @ np.array([i, j], dtype=float)
+            positions.append((int(round(pos[0])), int(round(pos[1]))))
+    return positions
+
+
+def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple,
+                                transform: np.ndarray) -> Tuple[int, int, int]:
+    """Compute the output mosaic shape from affine tile positions.
+
+    With off-diagonal terms, tiles may extend beyond what the diagonal model
+    predicts.  This computes the bounding box over all tile corner positions.
+
+    Parameters
+    ----------
+    nx, ny : int
+        Number of tiles in each direction.
+    tile_shape : tuple
+        Tile dimensions (z, height, width).
+    transform : np.ndarray
+        2×2 affine matrix.
+
+    Returns
+    -------
+    (nz, output_height, output_width) : tuple of int
+    """
+    nz = tile_shape[0]
+    tile_h, tile_w = tile_shape[1], tile_shape[2]
+
+    # Check all four corner tiles
+    corners = [(0, 0), (nx - 1, 0), (0, ny - 1), (nx - 1, ny - 1)]
+    max_row, max_col = 0, 0
+    min_row, min_col = 0, 0
+    for i, j in corners:
+        pos = transform @ np.array([i, j], dtype=float)
+        # Tile occupies [pos[0], pos[0]+tile_h) x [pos[1], pos[1]+tile_w)
+        min_row = min(min_row, pos[0])
+        min_col = min(min_col, pos[1])
+        max_row = max(max_row, pos[0] + tile_h)
+        max_col = max(max_col, pos[1] + tile_w)
+
+    output_height = int(np.ceil(max_row - min_row))
+    output_width = int(np.ceil(max_col - min_col))
+    return (nz, output_height, output_width)
 
 
 def apply_blend_shift_refinement(tile: np.ndarray,
