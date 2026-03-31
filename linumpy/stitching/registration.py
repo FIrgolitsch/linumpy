@@ -692,7 +692,9 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
         transform = sitk.TranslationTransform(2)
 
     reg = sitk.ImageRegistrationMethod()
-    reg.SetMetricAsCorrelation()
+    reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    reg.SetMetricSamplingStrategy(reg.RANDOM)
+    reg.SetMetricSamplingPercentage(0.20)
     reg.SetOptimizerAsGradientDescent(
         learningRate=1.0, numberOfIterations=200,
         convergenceMinimumValue=1e-6, convergenceWindowSize=10
