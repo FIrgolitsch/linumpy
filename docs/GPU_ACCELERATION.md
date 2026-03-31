@@ -144,23 +144,12 @@ linum_diagnose_pipeline.py --benchmark
 | GPU Script | CPU Equivalent | Typical Speedup |
 |------------|----------------|-----------------|
 | `linum_estimate_transform_gpu.py` | `linum_estimate_transform.py` | 8-47x |
-| `linum_create_masks_gpu.py` | `linum_create_masks.py` | 7-67x |
 | `linum_create_mosaic_grid_3d_gpu.py` | `linum_create_mosaic_grid_3d.py` | 5-12x |
 | `linum_resample_mosaic_grid_gpu.py` | `linum_resample_mosaic_grid.py` | 5-12x |
 | `linum_normalize_intensities_per_slice_gpu.py` | `linum_normalize_intensities_per_slice.py` | 4-10x |
 | `linum_fix_illumination_3d_gpu.py` | `linum_fix_illumination_3d.py` | 2-5x |
 | `linum_assess_slice_quality_gpu.py` | `linum_assess_slice_quality.py` | 3-8x |
 | `linum_aip_gpu.py` | `linum_aip_png.py` | ≤1x (mean projection; transfer overhead dominates for typical sizes) |
-
-### Usage
-
-```bash
-# Use GPU (default)
-linum_create_masks_gpu.py input.ome.zarr output.ome.zarr
-
-# Disable GPU (force CPU)
-linum_create_masks_gpu.py input.ome.zarr output.ome.zarr --no-use_gpu
-```
 
 ---
 

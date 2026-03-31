@@ -485,28 +485,6 @@ GUI for manual slice transform estimation.
 linum_estimate_slices_transforms_gui.py <slices_dir>
 ```
 
-### linum_create_masks.py
-
-Create binary masks for registration. Masks are saved with pyramid levels matching the input image.
-
-```bash
-linum_create_masks.py <input.ome.zarr> <output.ome.zarr> \
-    --sigma <sigma> \
-    --selem_radius <radius> \
-    --min_size <size> \
-    [--normalize] \
-    [--n_levels <levels>] \
-    [--preview <path.png>]
-```
-
-**Options:**
-- `--sigma`: Gaussian smoothing sigma (default: 5.0)
-- `--selem_radius`: Structuring element radius (default: 1)
-- `--min_size`: Minimum object size in pixels (default: 100)
-- `--normalize`: Normalize image before processing
-- `--n_levels`: Number of pyramid levels (default: matches input image)
-- `--preview`: Path to save a preview PNG for visual verification
-
 ### linum_register_pairwise.py
 
 Perform pairwise registration between consecutive slices to compute small rotation and Z-overlap corrections. This is the primary registration script used by the motor-based reconstruction pipeline. It **does not** compute large XY translations (those are handled by motor positions from `shifts_xy.csv`).
@@ -993,22 +971,6 @@ linum_estimate_transform_gpu.py <input_images> <output.npy> [--use_gpu] [-v]
 | `--n_samples` | Max tile pairs for optimization |
 | `--use_gpu/--no-use_gpu` | Enable/disable GPU |
 
-### linum_create_masks_gpu.py
-
-GPU-accelerated tissue mask creation.
-
-```bash
-linum_create_masks_gpu.py <input.ome.zarr> <output.ome.zarr> [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--sigma` | Gaussian smoothing sigma (default: 5.0) |
-| `--selem_radius` | Structuring element radius (default: 1) |
-| `--min_size` | Minimum object size (default: 100) |
-| `--normalize` | Normalize before processing |
-| `--use_gpu/--no-use_gpu` | Enable/disable GPU |
-
 ### linum_create_mosaic_grid_3d_gpu.py
 
 GPU-accelerated mosaic grid creation with galvo detection.
@@ -1059,7 +1021,6 @@ linum_generate_mosaic_aips_gpu.py <mosaics_dir> <output_dir> \
 | GPU Script | CPU Equivalent | Accelerated Operations |
 |------------|----------------|------------------------|
 | `linum_estimate_transform_gpu.py` | `linum_estimate_transform.py` | FFT (9-47x), phase correlation (8-16x) |
-| `linum_create_masks_gpu.py` | `linum_create_masks.py` | Gaussian filter (7-20x), binary morphology (7-67x) |
 | `linum_create_mosaic_grid_3d_gpu.py` | `linum_create_mosaic_grid_3d.py` | Resize (5-12x) |
 | `linum_resample_mosaic_grid_gpu.py` | `linum_resample_mosaic_grid.py` | Resize (5-12x) |
 | `linum_normalize_intensities_per_slice_gpu.py` | `linum_normalize_intensities_per_slice.py` | Normalization (4-10x) |

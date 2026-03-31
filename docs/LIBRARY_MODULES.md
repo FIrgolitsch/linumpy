@@ -504,7 +504,6 @@ Collect, save, and aggregate quality metrics from pipeline steps.
 ```python
 from linumpy.utils.metrics import (
     PipelineMetrics,
-    collect_mask_metrics,
     collect_normalization_metrics,
     collect_xy_transform_metrics,
     collect_pairwise_registration_metrics,
@@ -523,7 +522,6 @@ metrics.add_metric('error', 0.05, unit='pixels', threshold_name='registration_er
 metrics.save()
 
 # Use step-specific collectors (recommended - simpler)
-collect_mask_metrics(mask, input_vol, output_path, input_path, params={'sigma': 5.0})
 collect_normalization_metrics(vol, agarose_mask, otsu_thresh, bg_thresh, output_path)
 collect_pairwise_registration_metrics(error, tx, ty, rot, best_z, expected_z, output_path)
 
@@ -683,8 +681,7 @@ Image segmentation tools.
 
 ```python
 from linumpy.segmentation import (
-    segment_tissue,
-    create_mask
+    segment_tissue
 )
 ```
 
