@@ -177,7 +177,7 @@ docs = [
 [dependency-groups]
 dev = [
     "ruff>=0.11",
-    "ty>=0.0.1a7",
+    "ty>=0.0.27",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-console-scripts",
@@ -229,5 +229,40 @@ section-order = ["future", "thread-config", "standard-library", "third-party", "
 # Use default (black-compatible) formatting
 
 # --- ty ---
+[tool.ty.src]
+# Type-check the library only; scripts are CLI entry points, not public API.
+include = ["linumpy"]
+
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.rules]
+# Keep all default error-level rules active.
+# Downgrade rules that are too noisy for a partially-annotated codebase:
+possibly-unresolved-reference = "warn"
+
+[tool.ty.analysis]
+# Optional GPU deps — not installed in the standard dev env.
+# Using replace-imports-with-any so downstream attribute/subscript access
+# on the imported module is typed as Any rather than causing cascading errors.
+replace-imports-with-any = ["cupy.**", "cupyx.**", "numba.**"]
+
+# --- ty overrides ---
+
+# Relax rules in test files
+[[tool.ty.overrides]]
+include = ["linumpy/tests/**", "**/test_*.py"]
+
+[tool.ty.overrides.rules]
+possibly-unresolved-reference = "ignore"
+unresolved-attribute = "ignore"
+
+# GPU modules use conditional imports and duck-typed array backends;
+# many attribute/subscript errors are false positives even with cupy→Any.
+[[tool.ty.overrides]]
+include = ["linumpy/gpu/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "warn"
+not-subscriptable = "warn"
+invalid-assignment = "warn"
