@@ -63,12 +63,6 @@ def _build_arg_parser():
     ref_group.add_argument('--max_translation_px', type=float, default=20.0,
                            help='Maximum translation refinement in pixels [%(default)s]')
 
-    # Masks
-    p.add_argument('--use_masks', action='store_true', help='Use tissue masks')
-    p.add_argument('--fixed_mask', type=str, default=None)
-    p.add_argument('--moving_mask', type=str, default=None)
-    p.add_argument('--mask_mode', choices=['multiply', 'none'], default='multiply')
-
     # Output
     p.add_argument('--out_transform', default='transform.tfm')
     p.add_argument('--out_offsets', default='offsets.txt')
@@ -115,13 +109,6 @@ def main():
     moving_slice = np.array(moving_vol[args.moving_z_index])
     moving_norm = normalize(moving_slice)
 
-    # Load masks if provided
-    fixed_mask = None
-    moving_mask = None
-    if args.use_masks and args.moving_mask:
-        moving_mask_vol, _ = read_omezarr(args.moving_mask)
-        moving_mask = np.array(moving_mask_vol[args.moving_z_index]) > 0
-
     # Calculate expected Z position
     # The moving slice (top of moving volume) should match near the BOTTOM of fixed volume
     # expected_z is where in fixed_vol we expect to find a match for moving_slice
@@ -152,7 +139,7 @@ def main():
     logger.info(f"Searching for match near z={expected_z} in fixed volume (search ±{search_vox})")
 
     # Find best Z match
-    best_z, z_correlation = find_best_z(fixed_vol, moving_slice, expected_z, search_vox, moving_mask)
+    best_z, z_correlation = find_best_z(fixed_vol, moving_slice, expected_z, search_vox)
 
     logger.info(f"Best Z match: {best_z} (expected: {expected_z}, correlation: {z_correlation:.4f})")
 
@@ -165,20 +152,13 @@ def main():
     fixed_slice = np.array(fixed_vol[best_z])
     fixed_norm = normalize(fixed_slice)
 
-    # Load fixed mask
-    if args.use_masks and args.fixed_mask:
-        fixed_mask_vol, _ = read_omezarr(args.fixed_mask)
-        fixed_mask = np.array(fixed_mask_vol[best_z]) > 0
-
     # Compute refinement
     logger.info(f"Computing refinement (rotation={args.enable_rotation})...")
     tx, ty, angle_deg, metric = register_refinement(
         fixed_norm, moving_norm,
         enable_rotation=args.enable_rotation,
         max_rotation_deg=args.max_rotation_deg,
-        max_translation_px=args.max_translation_px,
-        fixed_mask=fixed_mask,
-        moving_mask=moving_mask
+        max_translation_px=args.max_translation_px
     )
 
     logger.info(f"Refinement: tx={tx:.2f}px, ty={ty:.2f}px, rot={angle_deg:.3f}°")

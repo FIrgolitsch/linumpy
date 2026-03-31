@@ -568,8 +568,7 @@ def apply_transform(moving_image, transform):
 
 
 def find_best_z(fixed_vol, moving_slice: np.ndarray,
-                expected_z: int, search_range: int,
-                mask=None):
+                expected_z: int, search_range: int):
     """Find the Z-index in fixed_vol that best matches moving_slice.
 
     Uses normalized cross-correlation in the center region.
@@ -584,8 +583,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray,
         Expected Z-index in fixed_vol for the match.
     search_range : int
         Search +/-search_range around expected_z.
-    mask : np.ndarray or None
-        Optional 2D tissue mask applied to correlation.
 
     Returns
     -------
@@ -613,9 +610,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray,
         pmax = float(np.percentile(moving_roi[valid_mov], 95))
         moving_roi = np.clip((moving_roi - pmin) / max(pmax - pmin, 1e-8), 0, 1)
 
-    if mask is not None:
-        moving_roi = moving_roi * mask[roi].astype(np.float32)
-
     moving_norm = (moving_roi - moving_roi.mean()) / (moving_roi.std() + 1e-8)
 
     best_z = expected_z
@@ -630,9 +624,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray,
             pmax = float(np.percentile(fixed_roi[valid_fix], 95))
             fixed_roi = np.clip((fixed_roi - pmin) / max(pmax - pmin, 1e-8), 0, 1)
 
-        if mask is not None:
-            fixed_roi = fixed_roi * mask[roi].astype(np.float32)
-
         fixed_norm = (fixed_roi - fixed_roi.mean()) / (fixed_roi.std() + 1e-8)
         corr = float(np.mean(fixed_norm * moving_norm))
 
@@ -646,8 +637,7 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray,
 def register_refinement(fixed: np.ndarray, moving: np.ndarray,
                         enable_rotation: bool = True,
                         max_rotation_deg: float = 5.0,
-                        max_translation_px: float = 20.0,
-                        fixed_mask=None, moving_mask=None):
+                        max_translation_px: float = 20.0):
     """Compute small rotation and translation refinement using SimpleITK.
 
     Parameters
@@ -660,8 +650,6 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
         Maximum allowed rotation in degrees.
     max_translation_px : float
         Maximum allowed translation in pixels.
-    fixed_mask, moving_mask : np.ndarray or None
-        Optional tissue masks multiplied into images before registration.
 
     Returns
     -------
@@ -678,11 +666,8 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
     if fixed_std < 0.01 or moving_std < 0.01:
         return 0.0, 0.0, 0.0, 0.0
 
-    fixed_masked = fixed * fixed_mask.astype(np.float32) if fixed_mask is not None else fixed
-    moving_masked = moving * moving_mask.astype(np.float32) if moving_mask is not None else moving
-
-    fixed_sitk = sitk.GetImageFromArray(fixed_masked.astype(np.float32))
-    moving_sitk = sitk.GetImageFromArray(moving_masked.astype(np.float32))
+    fixed_sitk = sitk.GetImageFromArray(fixed.astype(np.float32))
+    moving_sitk = sitk.GetImageFromArray(moving.astype(np.float32))
 
     if enable_rotation:
         transform = sitk.Euler2DTransform()
