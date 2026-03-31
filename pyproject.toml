@@ -193,7 +193,7 @@ target-version = "py312"
 line-length = 127
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+select = ["E", "F", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE"]
 # Scientific codebase: these Unicode characters are intentional
 allowed-confusables = ["–", "×", "σ", "ℹ"]
 
