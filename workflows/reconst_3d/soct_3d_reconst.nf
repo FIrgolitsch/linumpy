@@ -592,45 +592,17 @@ process interpolate_missing_slice {
 // Registration Processes
 // -----------------------------------------------------------------------------
 
-process create_registration_masks {
-    publishDir "${params.output}/${task.process}", mode: 'copy'
-
-    input:
-    tuple val(slice_id), path(image)
-
-    output:
-    path("mask_slice_z${slice_id}.ome.zarr"), emit: masks
-    path("mask_slice_z${slice_id}_preview.png"), optional: true, emit: previews
-    path("*_metrics.json"), optional: true, emit: metrics
-
-    script:
-    def script_name = params.use_gpu ? "linum_create_masks_gpu.py" : "linum_create_masks.py"
-    def gpu_flag = params.use_gpu ? "--use_gpu" : ""
-    def normalize_flag = params.mask_normalize ? "--normalize" : ""
-    def preview_flag = params.mask_preview ? "--preview mask_slice_z${slice_id}_preview.png" : ""
-    def fill_holes_opt = params.mask_fill_holes ? "--fill_holes ${params.mask_fill_holes}" : ""
-    """
-    ${script_name} ${image} mask_slice_z${slice_id}.ome.zarr \
-        --sigma ${params.mask_smoothing_sigma} \
-        --selem_radius ${params.selem_radius} \
-        --min_size ${params.min_size} \
-        ${normalize_flag} ${fill_holes_opt} ${preview_flag} ${gpu_flag}
-    """
-}
-
 process register_pairwise {
     publishDir "${params.output}/${task.process}", mode: 'copy'
 
     input:
-    tuple path(fixed_vol), path(moving_vol), path(moving_mask, stageAs: 'moving_mask*'), path(fixed_mask, stageAs: 'fixed_mask*')
+    tuple path(fixed_vol), path(moving_vol)
 
     output:
     path "*"
 
     script:
     def rotation_flag = params.registration_transform == 'translation' ? "--no_rotation" : "--enable_rotation"
-    def mask_opts = params.create_registration_masks ?
-        "--use_masks --moving_mask ${moving_mask} --fixed_mask ${fixed_mask}" : ""
     """
     dirname=\$(basename ${moving_vol} .ome.zarr)
     linum_register_pairwise.py ${fixed_vol} ${moving_vol} \$dirname \
@@ -639,7 +611,7 @@ process register_pairwise {
         --moving_z_index ${params.moving_slice_first_index} \
         --max_rotation_deg ${params.registration_max_rotation} \
         --max_translation_px ${params.registration_max_translation} \
-        ${rotation_flag} ${mask_opts}
+        ${rotation_flag}
     """
 }
 
@@ -1167,28 +1139,6 @@ workflow {
         .map { list -> list.size() > 1 ? list.subList(1, list.size()) : [] }
         .flatten()
     pairs = fixed_slices.merge(moving_slices)
-
-    if (params.create_registration_masks) {
-        mask_input = all_slices.flatten().map { toSliceTuple(it) }
-        create_registration_masks(mask_input)
-
-        all_masks = create_registration_masks.out.masks
-            .collect()
-            .map { list -> list.sort { it.getName() } }
-
-        fixed_masks = all_masks
-            .map { list -> list.size() > 1 ? list.subList(0, list.size() - 1) : [] }
-            .flatten()
-        moving_masks = all_masks
-            .map { list -> list.size() > 1 ? list.subList(1, list.size()) : [] }
-            .flatten()
-
-        pairs = pairs
-            .merge(moving_masks) { a, b -> tuple(a[0], a[1], b) }
-            .merge(fixed_masks) { a, b -> tuple(a[0], a[1], a[2], b) }
-    } else {
-        pairs = pairs.map { a, b -> tuple(a, b, [], []) }
-    }
 
     register_pairwise(pairs)
 
