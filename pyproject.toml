@@ -193,7 +193,9 @@ target-version = "py312"
 line-length = 127
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+# Scientific codebase: these Unicode characters are intentional
+allowed-confusables = ["–", "×", "σ", "ℹ"]
 
 [tool.ruff.lint.per-file-ignores]
 # These scripts must import linumpy._thread_config (or preload CUDA libs)
