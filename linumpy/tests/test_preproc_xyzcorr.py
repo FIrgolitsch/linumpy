@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for detect_interface_z and crop_below_interface in linumpy/preproc/xyzcorr.py"""
+
 import numpy as np
 import pytest
 
@@ -23,6 +24,7 @@ def _make_vol_with_interface(n_z=60, n_x=16, n_y=16, interface_z=20):
 # ---------------------------------------------------------------------------
 # detect_interface_z
 # ---------------------------------------------------------------------------
+
 
 def test_detect_interface_z_returns_int():
     vol = _make_vol_with_interface()
@@ -63,6 +65,7 @@ def test_detect_interface_z_empty_volume():
 # crop_below_interface
 # ---------------------------------------------------------------------------
 
+
 def _make_zxy_vol(n_z=60, n_x=16, n_y=16, interface_z=20):
     """Return (Z, X, Y) volume as produced by read_omezarr."""
     vol_xyz = _make_vol_with_interface(n_z=n_z, n_x=n_x, n_y=n_y, interface_z=interface_z)
@@ -82,9 +85,7 @@ def test_crop_below_interface_output_shape_depth():
     depth_um = 50.0
     expected_depth_px = int(round(depth_um / resolution_um))  # 10
     vol_zxy = _make_zxy_vol(n_z=80, interface_z=10)
-    vol_crop, _ = crop_below_interface(vol_zxy, depth_um=depth_um,
-                                       resolution_um=resolution_um,
-                                       crop_before_interface=True)
+    vol_crop, _ = crop_below_interface(vol_zxy, depth_um=depth_um, resolution_um=resolution_um, crop_before_interface=True)
     assert vol_crop.shape[0] == pytest.approx(expected_depth_px, abs=1)
 
 
@@ -107,12 +108,8 @@ def test_crop_below_interface_returns_interface_index():
 def test_crop_below_interface_crop_before():
     """With crop_before_interface=True the start is shifted to the interface."""
     vol_zxy = _make_zxy_vol(n_z=80, n_x=16, n_y=16, interface_z=20)
-    vol_crop_after, iface = crop_below_interface(
-        vol_zxy, depth_um=50.0, resolution_um=5.0,
-        crop_before_interface=False)
-    vol_crop_before, _ = crop_below_interface(
-        vol_zxy, depth_um=50.0, resolution_um=5.0,
-        crop_before_interface=True)
+    vol_crop_after, iface = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, crop_before_interface=False)
+    vol_crop_before, _ = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, crop_before_interface=True)
     # crop_before removes voxels above the interface → fewer Z voxels
     assert vol_crop_before.shape[0] <= vol_crop_after.shape[0]
 
@@ -120,14 +117,14 @@ def test_crop_below_interface_crop_before():
 def test_crop_below_interface_percentile_clip_runs():
     """percentile_clip parameter should not raise."""
     vol_zxy = _make_zxy_vol()
-    vol_crop, _ = crop_below_interface(
-        vol_zxy, depth_um=50.0, resolution_um=5.0, percentile_clip=99.0)
+    vol_crop, _ = crop_below_interface(vol_zxy, depth_um=50.0, resolution_um=5.0, percentile_clip=99.0)
     assert vol_crop.shape[1] > 0
 
 
 # ---------------------------------------------------------------------------
 # Regression tests for interface detection edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_detect_interface_z_small_tissue_coverage():
     """Interface must be detected when tissue covers only ~15% of XY."""
@@ -139,9 +136,7 @@ def test_detect_interface_z_small_tissue_coverage():
     rng = np.random.default_rng(42)
     vol += rng.random((n_x, n_y, n_z)).astype(np.float32) * 2.0
     result = detect_interface_z(vol, sigma_xy=1.0, sigma_z=1.0)
-    assert abs(result - interface_z) <= 10, (
-        f"Expected interface near {interface_z}, got {result}"
-    )
+    assert abs(result - interface_z) <= 10, f"Expected interface near {interface_z}, got {result}"
 
 
 def test_detect_interface_z_no_wrap_artifact():
@@ -155,6 +150,4 @@ def test_detect_interface_z_no_wrap_artifact():
     rng = np.random.default_rng(7)
     vol += rng.random((n_x, n_y, n_z)).astype(np.float32) * 2.0
     result = detect_interface_z(vol, sigma_xy=1.0, sigma_z=1.0)
-    assert result > 5, (
-        f"Interface falsely detected near z=0 ({result}), expected near {interface_z}"
-    )
+    assert result > 5, f"Interface falsely detected near z=0 ({result}), expected near {interface_z}"

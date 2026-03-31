@@ -3,8 +3,8 @@
 
 import random
 
-import SimpleITK as sitk
 import numpy as np
+import SimpleITK as sitk
 from skimage.exposure import match_histograms
 from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu
@@ -12,9 +12,7 @@ from skimage.filters import threshold_otsu
 from linumpy.stitching.stitch_utils import getOverlap
 
 
-def pairWisePhaseCorrelation(
-        vol1, vol2, nPeaks=8, returnCC=False
-):  # TODO: Test for 3D images
+def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Test for 3D images
     """Find the translation between image pairs using phase correlation and cross-correlation.
     Parameters
     ----------
@@ -126,7 +124,7 @@ def pairWisePhaseCorrelation(
         ov1, ov2, _, _ = getOverlap(vol1, vol2, pos1, this_delta)
         try:
             corr = crossCorrelation(ov1, ov2)
-        except:
+        except Exception:
             corr = 0
         corrScore.append(corr)
 
@@ -174,14 +172,12 @@ def crossCorrelation(vol1, vol2, mask=None):
         return 0.0  # The mask is empty
 
     try:  # Using the WNCC, i.e. using a weighted sum instead of an average.
-        covAB = np.sum(
-            (vol1 - np.sum(vol1 * mask)) * (vol2 - np.sum(vol2 * mask)) * mask
-        )
+        covAB = np.sum((vol1 - np.sum(vol1 * mask)) * (vol2 - np.sum(vol2 * mask)) * mask)
         sA = np.sqrt(np.sum((vol1 - np.sum(vol1 * mask)) ** 2.0 * mask))
         sB = np.sqrt(np.sum((vol2 - np.sum(vol2 * mask)) ** 2.0 * mask))
 
         return covAB / float(sA * sB)
-    except:
+    except Exception:
         return 0.0
 
 
@@ -228,14 +224,14 @@ def applyHanningWindow(im, padshape):
 
 
 def ITKRegistration(
-        vol1,
-        vol2,
-        offset=(0, 0, 0),
-        metric="MSQ",
-        verbose=False,
-        matchHistograms=False,
-        maskFixed=None,
-        maskMoving=None,
+    vol1,
+    vol2,
+    offset=(0, 0, 0),
+    metric="MSQ",
+    verbose=False,
+    matchHistograms=False,
+    maskFixed=None,
+    maskMoving=None,
 ):
     """Uses ITK::ImageRegistrationMethod.MutualInformation
 
@@ -328,7 +324,6 @@ def ITKRegistration(
 
 
 def align_images_sitk(im1, im2):
-
     # Parameters
     learning_rate = 4.0
     min_step = 0.01
@@ -339,8 +334,9 @@ def align_images_sitk(im1, im2):
 
     R = sitk.ImageRegistrationMethod()
     R.SetMetricAsCorrelation()
-    R.SetOptimizerAsRegularStepGradientDescent(learning_rate, min_step, max_iteration, relaxationFactor=0.5,
-                                               gradientMagnitudeTolerance=1e-9)
+    R.SetOptimizerAsRegularStepGradientDescent(
+        learning_rate, min_step, max_iteration, relaxationFactor=0.5, gradientMagnitudeTolerance=1e-9
+    )
     R.SetInitialTransform(sitk.TranslationTransform(fixed.GetDimension()))
     R.SetInterpolator(sitk.sitkLinear)
 
@@ -353,12 +349,21 @@ def align_images_sitk(im1, im2):
     return deltas, m
 
 
-def register_2d_images_sitk(ref_image, moving_image, method='euler',
-                            metric='MSE', max_iterations=2500,
-                            min_step=1e-12, grad_mag_tol=1e-12,
-                            fixed_mask=None, moving_mask=None,
-                            return_3d_transform=False, verbose=False,
-                            initial_translation=None, initial_step=None):
+def register_2d_images_sitk(
+    ref_image,
+    moving_image,
+    method="euler",
+    metric="MSE",
+    max_iterations=2500,
+    min_step=1e-12,
+    grad_mag_tol=1e-12,
+    fixed_mask=None,
+    moving_mask=None,
+    return_3d_transform=False,
+    verbose=False,
+    initial_translation=None,
+    initial_step=None,
+):
     """
     Register 2D `moving_image` to `ref_image`.
 
@@ -427,13 +432,13 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
         moving_sitk_mask = sitk.GetImageFromArray(moving_mask.astype(np.uint8))
         R.SetMetricMovingMask(moving_sitk_mask)
 
-    if metric.lower() == 'mse':
+    if metric.lower() == "mse":
         R.SetMetricAsMeanSquares()
-    elif metric.lower() == 'cc':
+    elif metric.lower() == "cc":
         R.SetMetricAsCorrelation()
-    elif metric.lower() == 'antscc':
+    elif metric.lower() == "antscc":
         R.SetMetricAsANTSNeighborhoodCorrelation(radius=20)
-    elif metric.lower() == 'mi':
+    elif metric.lower() == "mi":
         R.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
     else:
         raise ValueError("Unknown metric: {}".format(metric))
@@ -444,8 +449,7 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
     else:
         step_size = initial_step
 
-    R.SetOptimizerAsRegularStepGradientDescent(step_size, min_step, max_iterations,
-                                               0.5, grad_mag_tol)
+    R.SetOptimizerAsRegularStepGradientDescent(step_size, min_step, max_iterations, 0.5, grad_mag_tol)
     R.SetShrinkFactorsPerLevel([4, 2, 1])
     R.SetSmoothingSigmasPerLevel([3, 2, 1])
 
@@ -453,11 +457,11 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
     # determines the scale of each parameter in the optimizer
     R.SetOptimizerScalesFromIndexShift()
 
-    if method == 'euler':
+    if method == "euler":
         sitk_transform = sitk.Euler2DTransform()
-    elif method == 'affine':
+    elif method == "affine":
         sitk_transform = sitk.AffineTransform(2)
-    elif method == 'translation':
+    elif method == "translation":
         sitk_transform = sitk.TranslationTransform(2)
     else:
         raise ValueError("Unknown method: {}".format(method))
@@ -466,20 +470,16 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
     if initial_translation is not None:
         # Set center to image center
         center = [fixed_sitk_image.GetWidth() / 2.0, fixed_sitk_image.GetHeight() / 2.0]
-        if method == 'euler':
+        if method == "euler":
             sitk_transform.SetCenter(center)
             sitk_transform.SetTranslation(initial_translation)
-        elif method == 'affine':
+        elif method == "affine":
             sitk_transform.SetCenter(center)
             sitk_transform.SetTranslation(initial_translation)
-        elif method == 'translation':
+        elif method == "translation":
             sitk_transform.SetOffset(initial_translation)
     else:
-        sitk_transform = sitk.CenteredTransformInitializer(
-            fixed_sitk_image,
-            moving_sitk_image,
-            sitk_transform
-        )
+        sitk_transform = sitk.CenteredTransformInitializer(fixed_sitk_image, moving_sitk_image, sitk_transform)
 
     R.SetInitialTransform(sitk_transform)
 
@@ -492,7 +492,7 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
     error = R.GetMetricValue()
 
     if return_3d_transform:
-        if method == 'euler':
+        if method == "euler":
             angle_rad = out_transform.GetAngle()
             center_of_rotation = out_transform.GetCenter()
             translation = out_transform.GetTranslation()
@@ -500,11 +500,11 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
             transform_3d.SetCenter([center_of_rotation[0], center_of_rotation[1], 0.0])
             transform_3d.SetRotation(0.0, 0.0, angle_rad)
             transform_3d.SetTranslation([translation[0], translation[1], 0.0])
-        elif method == 'translation':
+        elif method == "translation":
             translation = out_transform.GetOffset()
             transform_3d = sitk.TranslationTransform(3)
             transform_3d.SetOffset([translation[0], translation[1], 0.0])
-        elif method == 'affine':
+        elif method == "affine":
             transform_3d = sitk.AffineTransform(3)
             translation = out_transform.GetTranslation()
             transform_3d.SetCenter(out_transform.GetCenter() + (0.0,))
@@ -522,12 +522,10 @@ def register_2d_images_sitk(ref_image, moving_image, method='euler',
 
 
 def command_iteration(method):
-    """ Callback invoked when the optimization has an iteration """
+    """Callback invoked when the optimization has an iteration"""
     if method.GetOptimizerIteration() == 0:
         print("Estimated Scales: ", method.GetOptimizerScales())
-    print(f"{method.GetOptimizerIteration():3} "
-          + f"= {method.GetMetricValue():7.5f} "
-          + f": {method.GetOptimizerPosition()}")
+    print(f"{method.GetOptimizerIteration():3} " + f"= {method.GetMetricValue():7.5f} " + f": {method.GetOptimizerPosition()}")
 
 
 def apply_transform(moving_image, transform):
@@ -567,8 +565,7 @@ def apply_transform(moving_image, transform):
     return out
 
 
-def find_best_z(fixed_vol, moving_slice: np.ndarray,
-                expected_z: int, search_range: int):
+def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_range: int):
     """Find the Z-index in fixed_vol that best matches moving_slice.
 
     Uses normalized cross-correlation in the center region.
@@ -634,10 +631,13 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray,
     return max(0, min(nz - 1, best_z)), best_corr
 
 
-def register_refinement(fixed: np.ndarray, moving: np.ndarray,
-                        enable_rotation: bool = True,
-                        max_rotation_deg: float = 5.0,
-                        max_translation_px: float = 20.0):
+def register_refinement(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    enable_rotation: bool = True,
+    max_rotation_deg: float = 5.0,
+    max_translation_px: float = 20.0,
+):
     """Compute small rotation and translation refinement using SimpleITK.
 
     Parameters
@@ -681,8 +681,7 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
     reg.SetMetricSamplingStrategy(reg.RANDOM)
     reg.SetMetricSamplingPercentage(0.20)
     reg.SetOptimizerAsGradientDescent(
-        learningRate=1.0, numberOfIterations=200,
-        convergenceMinimumValue=1e-6, convergenceWindowSize=10
+        learningRate=1.0, numberOfIterations=200, convergenceMinimumValue=1e-6, convergenceWindowSize=10
     )
     reg.SetOptimizerScalesFromPhysicalShift()
     reg.SetInitialTransform(transform, inPlace=False)
@@ -694,7 +693,7 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
         final = reg.Execute(fixed_sitk, moving_sitk)
         metric = reg.GetMetricValue()
 
-        inner = final.GetNthTransform(0) if final.GetName() == 'CompositeTransform' else final
+        inner = final.GetNthTransform(0) if final.GetName() == "CompositeTransform" else final
 
         if enable_rotation:
             euler = sitk.Euler2DTransform(inner)
@@ -714,8 +713,8 @@ def register_refinement(fixed: np.ndarray, moving: np.ndarray,
 
         return tx, ty, angle_deg, metric
 
-    except Exception as e:
-        return 0.0, 0.0, 0.0, float('inf')
+    except Exception:
+        return 0.0, 0.0, 0.0, float("inf")
 
 
 def create_transform(tx: float, ty: float, angle_deg: float, center):

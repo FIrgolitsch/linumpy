@@ -4,6 +4,7 @@
 
 Consolidated from linum_stack_slices_motor.py and linum_stack_motor_only.py.
 """
+
 import logging
 from typing import Optional, Tuple
 
@@ -58,13 +59,13 @@ def enforce_z_consistency(
     conf = confidence_per_slice or {}
     corrections = []
 
-    for field in ('overlap_voxels', 'blend_overlap_voxels'):
+    for field in ("overlap_voxels", "blend_overlap_voxels"):
         values = np.array([float(m[field]) for m in z_matches])
         median_val = float(np.median(values))
         threshold = outlier_threshold_frac * max(median_val, 1.0)
 
         for i, match in enumerate(z_matches):
-            slice_id = match.get('moving_id', i)
+            slice_id = match.get("moving_id", i)
 
             # Protect high-confidence registrations from correction
             if conf.get(slice_id, 0.5) >= confidence_protect_threshold:
@@ -83,21 +84,21 @@ def enforce_z_consistency(
 
             new_val = int(np.median(neighbor_vals)) if neighbor_vals else int(median_val)
             match[field] = new_val
-            corrections.append({
-                'moving_id': slice_id,
-                'field': field,
-                'old_value': old_val,
-                'new_value': new_val,
-            })
+            corrections.append(
+                {
+                    "moving_id": slice_id,
+                    "field": field,
+                    "old_value": old_val,
+                    "new_value": new_val,
+                }
+            )
 
     return z_matches, corrections
 
 
-def find_z_overlap(fixed_vol: np.ndarray,
-                   moving_vol: np.ndarray,
-                   slicing_interval_mm: float,
-                   search_range_mm: float,
-                   resolution_um: float) -> Tuple[int, float]:
+def find_z_overlap(
+    fixed_vol: np.ndarray, moving_vol: np.ndarray, slicing_interval_mm: float, search_range_mm: float, resolution_um: float
+) -> Tuple[int, float]:
     """Find optimal Z-overlap between consecutive slices using cross-correlation.
 
     Searches around the expected overlap for the best normalized
@@ -128,8 +129,7 @@ def find_z_overlap(fixed_vol: np.ndarray,
     search_range_vox = int((search_range_mm * 1000) / resolution_um)
 
     min_overlap = max(1, expected_overlap_vox - search_range_vox)
-    max_overlap = min(fixed_vol.shape[0], moving_vol.shape[0],
-                      expected_overlap_vox + search_range_vox)
+    max_overlap = min(fixed_vol.shape[0], moving_vol.shape[0], expected_overlap_vox + search_range_vox)
 
     if min_overlap >= max_overlap:
         return expected_overlap_vox, 0.0
@@ -157,11 +157,9 @@ def find_z_overlap(fixed_vol: np.ndarray,
     return best_overlap, best_corr
 
 
-def apply_2d_transform(image_2d: np.ndarray,
-                       transform,
-                       rotation_only: bool = False,
-                       max_rotation_deg: float = 1.0,
-                       override_rotation=None) -> np.ndarray:
+def apply_2d_transform(
+    image_2d: np.ndarray, transform, rotation_only: bool = False, max_rotation_deg: float = 1.0, override_rotation=None
+) -> np.ndarray:
     """Apply a SimpleITK 2D/3D transform to a single 2D image (Z-slice).
 
     Parameters
@@ -187,7 +185,7 @@ def apply_2d_transform(image_2d: np.ndarray,
     sitk_img = sitk.GetImageFromArray(image_2d.astype(np.float32))
 
     if transform.GetDimension() == 3:
-        if isinstance(transform, sitk.Euler3DTransform) or transform.GetName() == 'Euler3DTransform':
+        if isinstance(transform, sitk.Euler3DTransform) or transform.GetName() == "Euler3DTransform":
             params = transform.GetParameters()
             angle = params[2] if len(params) > 2 else 0
             tx = params[3] if len(params) > 3 else 0
@@ -215,7 +213,7 @@ def apply_2d_transform(image_2d: np.ndarray,
             tx, ty = 0, 0
     else:
         tfm_2d = transform
-        if rotation_only and hasattr(tfm_2d, 'SetTranslation'):
+        if rotation_only and hasattr(tfm_2d, "SetTranslation"):
             tfm_2d.SetTranslation([0, 0])
         angle = 0
         tx, ty = 0, 0
@@ -238,11 +236,9 @@ def apply_2d_transform(image_2d: np.ndarray,
     return sitk.GetArrayFromImage(result)
 
 
-def apply_transform_to_volume(vol: np.ndarray,
-                               transform,
-                               rotation_only: bool = False,
-                               max_rotation_deg: float = 1.0,
-                               override_rotation=None) -> np.ndarray:
+def apply_transform_to_volume(
+    vol: np.ndarray, transform, rotation_only: bool = False, max_rotation_deg: float = 1.0, override_rotation=None
+) -> np.ndarray:
     """Apply a 2D transform to each Z-slice of a volume.
 
     Parameters
@@ -265,15 +261,11 @@ def apply_transform_to_volume(vol: np.ndarray,
     """
     result = np.zeros_like(vol)
     for z in range(vol.shape[0]):
-        result[z] = apply_2d_transform(vol[z], transform, rotation_only,
-                                       max_rotation_deg, override_rotation)
+        result[z] = apply_2d_transform(vol[z], transform, rotation_only, max_rotation_deg, override_rotation)
     return result
 
 
-def apply_xy_shift(vol: np.ndarray,
-                   dx_px: float,
-                   dy_px: float,
-                   output_shape: Tuple[int, int]):
+def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: Tuple[int, int]):
     """Compute destination region for placing a shifted volume.
 
     Returns the (possibly cropped) volume data and destination coordinates
@@ -319,8 +311,7 @@ def apply_xy_shift(vol: np.ndarray,
     return None, None
 
 
-def blend_overlap_z(fixed_region: np.ndarray,
-                    moving_region: np.ndarray) -> np.ndarray:
+def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray) -> np.ndarray:
     """Blend overlapping Z-region using a cosine (Hann) ramp along Z-axis.
 
     The weight ramp has zero slope at both endpoints, so there is no abrupt
@@ -367,9 +358,7 @@ def blend_overlap_z(fixed_region: np.ndarray,
     return blended
 
 
-def blend_overlap_xy(existing: np.ndarray,
-                     new_data: np.ndarray,
-                     method: str = 'none') -> np.ndarray:
+def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "none") -> np.ndarray:
     """Blend overlapping XY regions for motor-only stacking.
 
     Parameters
@@ -386,26 +375,26 @@ def blend_overlap_xy(existing: np.ndarray,
     np.ndarray
         Blended result.
     """
-    if method == 'none':
+    if method == "none":
         mask = new_data != 0
         existing[mask] = new_data[mask]
         return existing
-    elif method == 'average':
+    elif method == "average":
         both_valid = (existing != 0) & (new_data != 0)
         only_new = (existing == 0) & (new_data != 0)
         existing[both_valid] = (existing[both_valid] + new_data[both_valid]) / 2
         existing[only_new] = new_data[only_new]
         return existing
-    elif method == 'max':
+    elif method == "max":
         return np.maximum(existing, new_data)
-    elif method == 'feather':
-        return blend_overlap_xy(existing, new_data, 'average')
+    elif method == "feather":
+        return blend_overlap_xy(existing, new_data, "average")
     return existing
 
 
-def refine_z_blend_overlap(existing: np.ndarray,
-                            moving_overlap: np.ndarray,
-                            max_refinement_px: float) -> Tuple[np.ndarray, float]:
+def refine_z_blend_overlap(
+    existing: np.ndarray, moving_overlap: np.ndarray, max_refinement_px: float
+) -> Tuple[np.ndarray, float]:
     """Find and apply a small XY shift to align moving_overlap with existing before blending.
 
     Uses 2D phase correlation on Z-projected overlap regions to detect residual
@@ -428,6 +417,7 @@ def refine_z_blend_overlap(existing: np.ndarray,
         Shift magnitude applied (pixels), or 0.0 if not applied.
     """
     from scipy.ndimage import shift as ndi_shift
+
     from linumpy.stitching.registration import pairWisePhaseCorrelation
 
     fixed_2d = np.mean(existing, axis=0).astype(np.float32)
@@ -453,6 +443,5 @@ def refine_z_blend_overlap(existing: np.ndarray,
         logger.debug(f"Z-blend refinement rejected: {magnitude:.2f} px > max {max_refinement_px} px")
         return moving_overlap, 0.0
 
-    refined = ndi_shift(moving_overlap.astype(np.float32), [0, dy, dx],
-                        order=0, mode='nearest')
+    refined = ndi_shift(moving_overlap.astype(np.float32), [0, dy, dx], order=0, mode="nearest")
     return refined, magnitude

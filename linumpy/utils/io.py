@@ -18,7 +18,7 @@ def get_available_cpus():
     total_cpus = multiprocessing.cpu_count()
 
     # Check for explicit max CPUs limit
-    max_cpus = os.environ.get('LINUMPY_MAX_CPUS')
+    max_cpus = os.environ.get("LINUMPY_MAX_CPUS")
     if max_cpus is not None:
         try:
             max_cpus = int(max_cpus)
@@ -27,7 +27,7 @@ def get_available_cpus():
             pass
 
     # Check for reserved CPUs
-    reserved = os.environ.get('LINUMPY_RESERVED_CPUS')
+    reserved = os.environ.get("LINUMPY_RESERVED_CPUS")
     if reserved is not None:
         try:
             reserved = int(reserved)
@@ -62,31 +62,36 @@ def parse_processes_arg(n_processes):
 
 
 def add_processes_arg(parser):
-    a = parser.add_argument('--n_processes', type=int, default=1,
-                            help='Number of processes to use. -1 to use '
-                                 'all cores [%(default)s].')
+    a = parser.add_argument(
+        "--n_processes", type=int, default=1, help="Number of processes to use. -1 to use all cores [%(default)s]."
+    )
     return a
 
 
 def add_overwrite_arg(parser):
-    parser.add_argument(
-        '-f', dest='overwrite', action='store_true', help='Force overwriting of the output files.')
+    parser.add_argument("-f", dest="overwrite", action="store_true", help="Force overwriting of the output files.")
 
 
 def assert_output_exists(output, parser, args):
     if os.path.exists(output):
         if not args.overwrite:
-            parser.error(f'Output {output} exists. Use -f to overwrite.')
+            parser.error(f"Output {output} exists. Use -f to overwrite.")
         elif os.path.isdir(output):  # remove the directory if it exists
             shutil.rmtree(output)
 
 
 def add_verbose_arg(parser):
-    parser.add_argument('-v', default="WARNING", const='INFO', nargs='?',
-                        choices=['DEBUG', 'INFO', 'WARNING'], dest='verbose',
-                        help='Produces verbose output depending on '
-                             'the provided level. \nDefault level is warning, '
-                             'default when using -v is info.')
+    parser.add_argument(
+        "-v",
+        default="WARNING",
+        const="INFO",
+        nargs="?",
+        choices=["DEBUG", "INFO", "WARNING"],
+        dest="verbose",
+        help="Produces verbose output depending on "
+        "the provided level. \nDefault level is warning, "
+        "default when using -v is info.",
+    )
 
 
 def detect_shift_units(resolution):

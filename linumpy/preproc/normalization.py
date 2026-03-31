@@ -12,10 +12,9 @@ from typing import Tuple
 import numpy as np
 
 
-def normalize_volume(vol: np.ndarray,
-                     agarose_mask: np.ndarray,
-                     percentile_max: float = 99.9,
-                     min_contrast_fraction: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
+def normalize_volume(
+    vol: np.ndarray, agarose_mask: np.ndarray, percentile_max: float = 99.9, min_contrast_fraction: float = 0.1
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Normalize volume intensities based on agarose background.
 
@@ -125,8 +124,8 @@ def _smooth_weighted(values: np.ndarray, sigma: float) -> np.ndarray:
     from scipy.ndimage import gaussian_filter1d
 
     weights = (values > 0).astype(np.float64)
-    smoothed_v = gaussian_filter1d(values * weights, sigma=sigma, mode='reflect')
-    smoothed_w = gaussian_filter1d(weights, sigma=sigma, mode='reflect')
+    smoothed_v = gaussian_filter1d(values * weights, sigma=sigma, mode="reflect")
+    smoothed_w = gaussian_filter1d(weights, sigma=sigma, mode="reflect")
     out = np.where(smoothed_w > 1e-6, smoothed_v / smoothed_w, 0.0)
     return out
 
@@ -143,12 +142,9 @@ def _chunk_boundaries(n_z: int, n_serial_slices):
     return list(zip(starts, ends))
 
 
-def compute_scale_factors(vol: np.ndarray,
-                          n_serial_slices,
-                          smooth_sigma: float,
-                          percentile: float,
-                          min_scale: float,
-                          max_scale: float):
+def compute_scale_factors(
+    vol: np.ndarray, n_serial_slices, smooth_sigma: float, percentile: float, min_scale: float, max_scale: float
+):
     """Compute per-Z-plane linear scale factors for percentile-based normalization.
 
     Corrects slow acquisition drift (focus changes, laser power) between
@@ -178,10 +174,7 @@ def compute_scale_factors(vol: np.ndarray,
     bounds = _chunk_boundaries(n_z, n_serial_slices)
     n_chunks = len(bounds)
 
-    raw_metrics = np.array([
-        _robust_percentile(vol[s:e], percentile)
-        for s, e in bounds
-    ])
+    raw_metrics = np.array([_robust_percentile(vol[s:e], percentile) for s, e in bounds])
 
     smoothed = _smooth_weighted(raw_metrics, sigma=smooth_sigma)
 
@@ -221,11 +214,9 @@ def _build_cdf(values: np.ndarray, n_bins: int):
     return bin_centers, cdf
 
 
-def _match_chunk_to_reference(chunk: np.ndarray,
-                               ref_bins: np.ndarray,
-                               ref_cdf: np.ndarray,
-                               n_bins: int,
-                               tissue_threshold: float = 0.0) -> np.ndarray:
+def _match_chunk_to_reference(
+    chunk: np.ndarray, ref_bins: np.ndarray, ref_cdf: np.ndarray, n_bins: int, tissue_threshold: float = 0.0
+) -> np.ndarray:
     """Map chunk intensities to match the reference CDF.
 
     Only voxels above tissue_threshold are mapped; background stays unchanged.
@@ -245,10 +236,7 @@ def _match_chunk_to_reference(chunk: np.ndarray,
     return result.reshape(chunk.shape)
 
 
-def apply_histogram_matching(vol: np.ndarray,
-                             n_serial_slices,
-                             n_bins: int,
-                             tissue_threshold: float = 0.0) -> np.ndarray:
+def apply_histogram_matching(vol: np.ndarray, n_serial_slices, n_bins: int, tissue_threshold: float = 0.0) -> np.ndarray:
     """Apply per-section histogram matching to a global reference distribution.
 
     Corrects section-to-section intensity drift while preserving relative contrast
@@ -278,7 +266,6 @@ def apply_histogram_matching(vol: np.ndarray,
     ref_bins, ref_cdf = _build_cdf(tissue_all.astype(np.float64), n_bins)
 
     bounds = _chunk_boundaries(vol.shape[0], n_serial_slices)
-    n_chunks = len(bounds)
 
     out = np.empty_like(vol)
     for i, (s, e) in enumerate(bounds):

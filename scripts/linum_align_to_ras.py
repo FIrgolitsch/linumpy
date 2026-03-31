@@ -10,28 +10,27 @@ directly to the zarr file (resampling) or stored in OME-Zarr metadata.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 import json
 from pathlib import Path
 from typing import Optional
 
-import SimpleITK as sitk
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import SimpleITK as sitk
 from tqdm.auto import tqdm
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.io import allen
-from linumpy.io.zarr import read_omezarr, AnalysisOmeZarrWriter
+from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.utils.orientation import (
-    parse_orientation_code,
     apply_orientation_transform,
+    parse_orientation_code,
     reorder_resolution,
 )
 
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use("Agg")  # Non-interactive backend
 
 # Constants
 DEFAULT_ALLEN_RESOLUTION = 100
@@ -41,79 +40,79 @@ DEFAULT_METRIC = "MI"
 
 def _build_arg_parser():
     """Build the command-line argument parser."""
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
-    )
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("input_zarr", help="Input OME-Zarr file from 3D reconstruction pipeline")
     p.add_argument("output_zarr", help="Output OME-Zarr file (RAS-aligned)")
     p.add_argument(
-        "--allen-resolution", type=int, default=DEFAULT_ALLEN_RESOLUTION,
+        "--allen-resolution",
+        type=int,
+        default=DEFAULT_ALLEN_RESOLUTION,
         choices=allen.AVAILABLE_RESOLUTIONS,
-        help=f"Allen atlas resolution in micron (default: {DEFAULT_ALLEN_RESOLUTION})"
+        help=f"Allen atlas resolution in micron (default: {DEFAULT_ALLEN_RESOLUTION})",
     )
     p.add_argument(
-        "--metric", type=str, default=DEFAULT_METRIC,
+        "--metric",
+        type=str,
+        default=DEFAULT_METRIC,
         choices=["MI", "MSE", "CC", "AntsCC"],
-        help=f"Registration metric (default: {DEFAULT_METRIC})"
+        help=f"Registration metric (default: {DEFAULT_METRIC})",
     )
     p.add_argument(
-        "--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS,
-        help=f"Maximum registration iterations (default: {DEFAULT_MAX_ITERATIONS})"
+        "--max-iterations",
+        type=int,
+        default=DEFAULT_MAX_ITERATIONS,
+        help=f"Maximum registration iterations (default: {DEFAULT_MAX_ITERATIONS})",
     )
     p.add_argument(
-        "--store-transform-only", action="store_true",
-        help="Store transform in metadata only (don't resample volume)"
+        "--store-transform-only", action="store_true", help="Store transform in metadata only (don't resample volume)"
+    )
+    p.add_argument("--level", type=int, default=0, help="Pyramid level to use for registration (default: 0 = full resolution)")
+    p.add_argument("--chunks", type=int, nargs=3, default=None, help="Chunk size for output zarr (default: use input chunks)")
+    p.add_argument(
+        "--n-levels", type=int, default=None, help="Number of pyramid levels for output (default: use Allen atlas resolutions)"
     )
     p.add_argument(
-        "--level", type=int, default=0,
-        help="Pyramid level to use for registration (default: 0 = full resolution)"
-    )
-    p.add_argument(
-        "--chunks", type=int, nargs=3, default=None,
-        help="Chunk size for output zarr (default: use input chunks)"
-    )
-    p.add_argument(
-        "--n-levels", type=int, default=None,
-        help="Number of pyramid levels for output (default: use Allen atlas resolutions)"
-    )
-    p.add_argument(
-        "--pyramid_resolutions", type=float, nargs="+", default=None,
+        "--pyramid_resolutions",
+        type=float,
+        nargs="+",
+        default=None,
         help="Target pyramid resolution levels in µm (e.g. 10 25 50 100).\n"
-             "If omitted, inherits levels from input zarr metadata or uses Allen resolutions."
+        "If omitted, inherits levels from input zarr metadata or uses Allen resolutions.",
     )
-    p.add_argument("--make_isotropic", action="store_true", default=True,
-                   help="Resample to isotropic voxels at each pyramid level.")
+    p.add_argument(
+        "--make_isotropic", action="store_true", default=True, help="Resample to isotropic voxels at each pyramid level."
+    )
     p.add_argument("--no_isotropic", dest="make_isotropic", action="store_false")
     p.add_argument("--verbose", action="store_true", help="Print registration progress")
+    p.add_argument("--preview", type=str, default=None, help="Generate preview image showing alignment comparison")
     p.add_argument(
-        "--preview", type=str, default=None,
-        help="Generate preview image showing alignment comparison"
+        "--input-orientation",
+        type=str,
+        default=None,
+        help="Input volume orientation code (3 letters: R/L, A/P, S/I)\nExamples: 'RAS' (Allen), 'LPI', 'PIR'",
     )
     p.add_argument(
-        "--input-orientation", type=str, default=None,
-        help="Input volume orientation code (3 letters: R/L, A/P, S/I)\n"
-             "Examples: 'RAS' (Allen), 'LPI', 'PIR'"
-    )
-    p.add_argument(
-        "--initial-rotation", type=float, nargs=3, default=[0.0, 0.0, 0.0],
+        "--initial-rotation",
+        type=float,
+        nargs=3,
+        default=[0.0, 0.0, 0.0],
         metavar=("RX", "RY", "RZ"),
-        help="Initial rotation angles in degrees (Rx, Ry, Rz).\n"
-             "Use to provide initial orientation hint for registration."
+        help="Initial rotation angles in degrees (Rx, Ry, Rz).\nUse to provide initial orientation hint for registration.",
     )
+    p.add_argument("--preview-only", action="store_true", help="Only generate preview of input volume (no registration)")
     p.add_argument(
-        "--preview-only", action="store_true",
-        help="Only generate preview of input volume (no registration)"
-    )
-    p.add_argument(
-        "--orientation-preview", type=str, default=None,
+        "--orientation-preview",
+        type=str,
+        default=None,
         metavar="PATH",
         help="Save a 3-panel preview of the volume after --input-orientation and\n"
-             "--initial-rotation are applied. Use to verify these parameters\n"
-             "before committing to a full registration run."
+        "--initial-rotation are applied. Use to verify these parameters\n"
+        "before committing to a full registration run.",
     )
     p.add_argument(
-        "--orientation-preview-only", action="store_true",
-        help="Generate --orientation-preview and exit without running registration."
+        "--orientation-preview-only",
+        action="store_true",
+        help="Generate --orientation-preview and exit without running registration.",
     )
     return p
 
@@ -129,7 +128,7 @@ def create_registration_progress_callback(
     n_resolution_levels: int = 3,
     pbar: Optional[tqdm] = None,
     registration_start_step: int = 0,
-    registration_steps: int = 0
+    registration_steps: int = 0,
 ):
     """
     Create a progress callback for registration.
@@ -183,6 +182,7 @@ def create_registration_progress_callback(
 # Transform utilities
 # =============================================================================
 
+
 def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
     """
     Convert SimpleITK transform to 4x4 affine matrix.
@@ -207,11 +207,13 @@ def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
         cx, cy, cz = np.cos([rx, ry, rz])
         sx, sy, sz = np.sin([rx, ry, rz])
 
-        R = np.array([
-            [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
-            [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
-            [-sy, cy * sx, cy * cx]
-        ])
+        R = np.array(
+            [
+                [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+                [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+                [-sy, cy * sx, cy * cx],
+            ]
+        )
 
         matrix = np.eye(4)
         matrix[:3, :3] = R
@@ -229,12 +231,7 @@ def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
         raise ValueError(f"Unsupported transform type: {type(transform)}")
 
     # Permute from SimpleITK (X, Y, Z) to our (Z, X, Y) ordering
-    permute = np.array([
-        [0, 0, 1, 0],
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 0, 1]
-    ])
+    permute = np.array([[0, 0, 1, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
     return permute @ matrix @ permute.T
 
 
@@ -246,23 +243,20 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
     if not zattrs_path.exists():
         raise FileNotFoundError(f".zattrs not found: {zarr_path}")
 
-    with open(zattrs_path, 'r', encoding='utf-8') as f:
+    with open(zattrs_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    affine_transform = {
-        "type": "affine",
-        "affine": affine_matrix.flatten().tolist()
-    }
+    affine_transform = {"type": "affine", "affine": affine_matrix.flatten().tolist()}
 
-    multiscales = metadata.get('multiscales', [])
+    multiscales = metadata.get("multiscales", [])
     if not multiscales:
         raise ValueError("No multiscales entry found in metadata")
 
-    for dataset in multiscales[0].get('datasets', []):
-        existing = dataset.get('coordinateTransformations', [])
-        dataset['coordinateTransformations'] = [affine_transform] + existing
+    for dataset in multiscales[0].get("datasets", []):
+        existing = dataset.get("coordinateTransformations", [])
+        dataset["coordinateTransformations"] = [affine_transform] + existing
 
-    with open(zattrs_path, 'w', encoding='utf-8') as f:
+    with open(zattrs_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     print(f"Stored affine transform in metadata: {zattrs_path}")
@@ -271,6 +265,7 @@ def store_transform_in_metadata(zarr_path: str, transform: sitk.Transform):
 # =============================================================================
 # Resolution utilities
 # =============================================================================
+
 
 def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
     """
@@ -292,22 +287,22 @@ def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
             continue
 
         try:
-            with open(metadata_path, 'r', encoding='utf-8') as f:
+            with open(metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
         except (json.JSONDecodeError, IOError):
             continue
 
-        multiscales = metadata.get('multiscales', [])
+        multiscales = metadata.get("multiscales", [])
         if not multiscales:
             continue
 
         resolutions = []
-        for dataset in multiscales[0].get('datasets', []):
-            transforms = dataset.get('coordinateTransformations', [])
+        for dataset in multiscales[0].get("datasets", []):
+            transforms = dataset.get("coordinateTransformations", [])
             for tr in transforms:
-                if tr.get('type') == 'scale' and 'scale' in tr:
+                if tr.get("type") == "scale" and "scale" in tr:
                     # Get finest spatial dimension, convert mm to µm
-                    scale = tr['scale'][-3:]
+                    scale = tr["scale"][-3:]
                     res_um = min(float(s) for s in scale) * 1000
                     resolutions.append(res_um)
                     break
@@ -322,10 +317,9 @@ def get_pyramid_resolutions_from_zarr(zarr_path: Path) -> Optional[list[float]]:
 # Core processing functions
 # =============================================================================
 
+
 def compute_centered_reference_and_transform(
-    moving_sitk: sitk.Image,
-    transform: sitk.Transform,
-    output_spacing: Optional[tuple] = None
+    moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: Optional[tuple] = None
 ) -> tuple[sitk.Image, sitk.Transform]:
     """
     Compute a reference image and modified transform that centers the output volume.
@@ -355,9 +349,14 @@ def compute_centered_reference_and_transform(
     # Get corners of the moving image in physical coordinates
     size = moving_sitk.GetSize()
     corners = [
-        (0, 0, 0), (size[0]-1, 0, 0), (0, size[1]-1, 0), (0, 0, size[2]-1),
-        (size[0]-1, size[1]-1, 0), (size[0]-1, 0, size[2]-1),
-        (0, size[1]-1, size[2]-1), (size[0]-1, size[1]-1, size[2]-1),
+        (0, 0, 0),
+        (size[0] - 1, 0, 0),
+        (0, size[1] - 1, 0),
+        (0, 0, size[2] - 1),
+        (size[0] - 1, size[1] - 1, 0),
+        (size[0] - 1, 0, size[2] - 1),
+        (0, size[1] - 1, size[2] - 1),
+        (size[0] - 1, size[1] - 1, size[2] - 1),
     ]
 
     # Map brain corners to FIXED/RAS space.
@@ -396,7 +395,7 @@ def compute_centered_reference_and_transform(
     # SimpleITK CompositeTransform applies transforms in the order added (first = first applied).
     composite = sitk.CompositeTransform(3)
     composite.AddTransform(shift_transform)  # output → fixed
-    composite.AddTransform(transform)         # fixed → moving
+    composite.AddTransform(transform)  # fixed → moving
 
     return ref, composite
 
@@ -411,7 +410,7 @@ def apply_transform_to_zarr(
     make_isotropic: bool = True,
     orientation_permutation: Optional[tuple] = None,
     orientation_flips: Optional[tuple] = None,
-    pbar: Optional[tqdm] = None
+    pbar: Optional[tqdm] = None,
 ):
     """
     Apply transform to zarr file by resampling into RAS-aligned space.
@@ -439,6 +438,7 @@ def apply_transform_to_zarr(
     pbar : tqdm, optional
         Progress bar
     """
+
     def update_pbar():
         if pbar:
             pbar.update(1)
@@ -448,7 +448,7 @@ def apply_transform_to_zarr(
     # read the level-0 spacing from the file to get the correct physical extent.
     vol_zarr, level0_resolution = read_omezarr(input_path, level=0)
     if chunks is None:
-        chunks = getattr(vol_zarr, 'chunks', None)
+        chunks = getattr(vol_zarr, "chunks", None)
 
     vol = np.asarray(vol_zarr[:])
     original_dtype = vol.dtype
@@ -494,11 +494,7 @@ def apply_transform_to_zarr(
 
     # Write output
     writer = AnalysisOmeZarrWriter(
-        output_path,
-        shape=transformed.shape,
-        chunk_shape=chunks,
-        dtype=transformed.dtype,
-        overwrite=True
+        output_path, shape=transformed.shape, chunk_shape=chunks, dtype=transformed.dtype, overwrite=True
     )
     writer[:] = transformed
 
@@ -512,8 +508,7 @@ def apply_transform_to_zarr(
             target_resolutions = get_pyramid_resolutions_from_zarr(Path(input_path))
             if target_resolutions is None:
                 target_resolutions = list(allen.AVAILABLE_RESOLUTIONS)
-        writer.finalize(list(resolution), target_resolutions_um=target_resolutions,
-                        make_isotropic=make_isotropic)
+        writer.finalize(list(resolution), target_resolutions_um=target_resolutions, make_isotropic=make_isotropic)
 
     update_pbar()
 
@@ -521,6 +516,7 @@ def apply_transform_to_zarr(
 # =============================================================================
 # Preview generation
 # =============================================================================
+
 
 def create_input_preview(input_path: str, output_path: str, level: int = 0):
     """Create preview of input volume to help determine orientation."""
@@ -534,29 +530,28 @@ def create_input_preview(input_path: str, output_path: str, level: int = 0):
     vmin, vmax = np.percentile(vol, [1, 99])
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 14))
-    fig.suptitle(f'Input Volume Preview\nShape: {vol.shape} (Z, X, Y), Resolution: {resolution} mm',
-                 fontsize=14, y=0.98)
+    fig.suptitle(f"Input Volume Preview\nShape: {vol.shape} (Z, X, Y), Resolution: {resolution} mm", fontsize=14, y=0.98)
 
     # Axial slice (dim0 midpoint)
-    axes[0, 0].imshow(vol[z_mid, :, :].T, cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[0, 0].set_title('Slice at dim0 midpoint\nShows: dim1 × dim2')
-    axes[0, 0].set_xlabel('dim1 →')
-    axes[0, 0].set_ylabel('dim2 →')
+    axes[0, 0].imshow(vol[z_mid, :, :].T, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[0, 0].set_title("Slice at dim0 midpoint\nShows: dim1 × dim2")
+    axes[0, 0].set_xlabel("dim1 →")
+    axes[0, 0].set_ylabel("dim2 →")
 
     # Sagittal slice (dim1 midpoint)
-    axes[0, 1].imshow(vol[::-1, x_mid, :], cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[0, 1].set_title('Slice at dim1 midpoint\nShows: dim2 × dim0')
-    axes[0, 1].set_xlabel('dim2 →')
-    axes[0, 1].set_ylabel('dim0 →')
+    axes[0, 1].imshow(vol[::-1, x_mid, :], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[0, 1].set_title("Slice at dim1 midpoint\nShows: dim2 × dim0")
+    axes[0, 1].set_xlabel("dim2 →")
+    axes[0, 1].set_ylabel("dim0 →")
 
     # Coronal slice (dim2 midpoint)
-    axes[1, 0].imshow(vol[::-1, :, y_mid], cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[1, 0].set_title('Slice at dim2 midpoint\nShows: dim1 × dim0')
-    axes[1, 0].set_xlabel('dim1 →')
-    axes[1, 0].set_ylabel('dim0 →')
+    axes[1, 0].imshow(vol[::-1, :, y_mid], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[1, 0].set_title("Slice at dim2 midpoint\nShows: dim1 × dim0")
+    axes[1, 0].set_xlabel("dim1 →")
+    axes[1, 0].set_ylabel("dim0 →")
 
     # Help text
-    axes[1, 1].axis('off')
+    axes[1, 1].axis("off")
     help_text = """
 ORIENTATION GUIDE (Allen Atlas = RAS+)
 
@@ -574,12 +569,19 @@ Example:
   dim0→Superior, dim1→Anterior, dim2→Right
   → orientation code = 'SAR'
 """
-    axes[1, 1].text(0.02, 0.98, help_text, transform=axes[1, 1].transAxes,
-                    fontsize=10, verticalalignment='top', fontfamily='monospace',
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    axes[1, 1].text(
+        0.02,
+        0.98,
+        help_text,
+        transform=axes[1, 1].transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Input preview saved to: {output_path}")
 
@@ -594,7 +596,7 @@ def create_alignment_preview(
     level: int = 0,
     orientation_permutation: Optional[tuple] = None,
     orientation_flips: Optional[tuple] = None,
-    pbar: Optional[tqdm] = None
+    pbar: Optional[tqdm] = None,
 ):
     """Create preview comparing original, aligned, and Allen template.
 
@@ -602,6 +604,7 @@ def create_alignment_preview(
     The Allen template is shown for reference but may not spatially align
     with the brain volume since we're not placing it in Allen coordinate space.
     """
+
     def update_pbar():
         if pbar:
             pbar.update(1)
@@ -632,7 +635,6 @@ def create_alignment_preview(
         resampler.SetTransform(centered_transform)
         transformed_sitk = resampler.Execute(vol_sitk)
         vol_aligned = np.transpose(sitk.GetArrayFromImage(transformed_sitk), (0, 2, 1))
-        aligned_res = resolution
     update_pbar()
 
     # Load Allen template at native resolution for reference
@@ -683,39 +685,38 @@ def create_alignment_preview(
 
     # Create figure
     fig, axes = plt.subplots(3, 3, figsize=(18, 18))
-    fig.suptitle('Alignment Preview: Original vs Aligned vs Allen Template (Reference)', fontsize=16)
+    fig.suptitle("Alignment Preview: Original vs Aligned vs Allen Template (Reference)", fontsize=16)
 
-    plane_names = ['Axial (XY)', 'Sagittal (XZ)', 'Coronal (YZ)']
+    plane_names = ["Axial (XY)", "Sagittal (XZ)", "Coronal (YZ)"]
 
     for row, plane_name in enumerate(plane_names):
         # Original - use .T for row 0 (XY plane) to match display convention
         data = orig_slices[row].T if row == 0 else orig_slices[row][::-1, :]
-        axes[row, 0].imshow(data, cmap='gray', origin='lower', vmin=orig_vmin, vmax=orig_vmax)
-        axes[row, 0].set_title(f'Original - {plane_name}')
-        axes[row, 0].axis('off')
+        axes[row, 0].imshow(data, cmap="gray", origin="lower", vmin=orig_vmin, vmax=orig_vmax)
+        axes[row, 0].set_title(f"Original - {plane_name}")
+        axes[row, 0].axis("off")
 
         # Aligned
         data = aligned_slices[row].T if row == 0 else aligned_slices[row][::-1, :]
-        axes[row, 1].imshow(data, cmap='gray', origin='lower', vmin=align_vmin, vmax=align_vmax)
-        axes[row, 1].set_title(f'Aligned - {plane_name}')
-        axes[row, 1].axis('off')
+        axes[row, 1].imshow(data, cmap="gray", origin="lower", vmin=align_vmin, vmax=align_vmax)
+        axes[row, 1].set_title(f"Aligned - {plane_name}")
+        axes[row, 1].axis("off")
 
         # Allen (reference)
         data = allen_slices[row].T if row == 0 else allen_slices[row][::-1, :]
-        axes[row, 2].imshow(data, cmap='gray', origin='lower', vmin=allen_vmin, vmax=allen_vmax)
-        axes[row, 2].set_title(f'Allen {allen_resolution}µm - {plane_name}')
-        axes[row, 2].axis('off')
+        axes[row, 2].imshow(data, cmap="gray", origin="lower", vmin=allen_vmin, vmax=allen_vmax)
+        axes[row, 2].set_title(f"Allen {allen_resolution}µm - {plane_name}")
+        axes[row, 2].axis("off")
 
     # Add info text
-    info_text = (f"Original shape: {vol_original.shape}\n"
-                 f"Aligned shape: {vol_aligned.shape}\n"
-                 f"Allen shape: {allen_template.shape}")
-    fig.text(0.02, 0.02, info_text, fontsize=10, family='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    info_text = (
+        f"Original shape: {vol_original.shape}\nAligned shape: {vol_aligned.shape}\nAllen shape: {allen_template.shape}"
+    )
+    fig.text(0.02, 0.02, info_text, fontsize=10, family="monospace", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
 
     plt.tight_layout()
     Path(preview_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(preview_path, dpi=150, bbox_inches='tight')
+    fig.savefig(preview_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     update_pbar()
 
@@ -725,6 +726,7 @@ def create_alignment_preview(
 # =============================================================================
 # Main entry point
 # =============================================================================
+
 
 def create_orientation_preview(
     input_path: str,
@@ -767,8 +769,7 @@ def create_orientation_preview(
     # Apply initial rotation via SimpleITK (same path as the registration uses)
     if any(r != 0.0 for r in initial_rotation_deg):
         vol_sitk = allen.numpy_to_sitk_image(vol, resolution, cast_dtype=np.float32)
-        center = vol_sitk.TransformContinuousIndexToPhysicalPoint(
-            [s / 2.0 for s in vol_sitk.GetSize()])
+        center = vol_sitk.TransformContinuousIndexToPhysicalPoint([s / 2.0 for s in vol_sitk.GetSize()])
         rx, ry, rz = [np.deg2rad(a) for a in initial_rotation_deg]
         t = sitk.Euler3DTransform()
         t.SetCenter(center)
@@ -786,7 +787,7 @@ def create_orientation_preview(
     # Build title
     applied = []
     if orientation_permutation is not None:
-        applied.append(f"orientation")
+        applied.append("orientation")
     if any(r != 0.0 for r in initial_rotation_deg):
         applied.append(f"rotation {list(initial_rotation_deg)}°")
     subtitle = f"({', '.join(applied)} applied)" if applied else "(no corrections applied)"
@@ -799,30 +800,30 @@ def create_orientation_preview(
     fig.suptitle(
         f"Orientation Preview — {subtitle}\n"
         f"Shape: {vol.shape}  |  After corrections: Z=S (Superior), X=R (Right), Y=A (Anterior)",
-        fontsize=11
+        fontsize=11,
     )
 
     # Axial (mid-Z): rows=Y (A), cols=X (R)
-    axes[0].imshow(vol[z_mid, :, :].T, cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[0].set_title(f'Axial  (Z={z_mid})')
-    axes[0].set_xlabel('X  (← L    R →)')
-    axes[0].set_ylabel('Y  (← P    A →)')
+    axes[0].imshow(vol[z_mid, :, :].T, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[0].set_title(f"Axial  (Z={z_mid})")
+    axes[0].set_xlabel("X  (← L    R →)")
+    axes[0].set_ylabel("Y  (← P    A →)")
 
     # Sagittal (mid-X): rows=Z (S, flipped), cols=Y (A)
-    axes[1].imshow(vol[::-1, x_mid, :], cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[1].set_title(f'Sagittal  (X={x_mid})')
-    axes[1].set_xlabel('Y  (← P    A →)')
-    axes[1].set_ylabel('Z  (← I    S →)')
+    axes[1].imshow(vol[::-1, x_mid, :], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[1].set_title(f"Sagittal  (X={x_mid})")
+    axes[1].set_xlabel("Y  (← P    A →)")
+    axes[1].set_ylabel("Z  (← I    S →)")
 
     # Coronal (mid-Y): rows=Z (S, flipped), cols=X (R)
-    axes[2].imshow(vol[::-1, :, y_mid], cmap='gray', origin='lower', vmin=vmin, vmax=vmax)
-    axes[2].set_title(f'Coronal  (Y={y_mid})')
-    axes[2].set_xlabel('X  (← L    R →)')
-    axes[2].set_ylabel('Z  (← I    S →)')
+    axes[2].imshow(vol[::-1, :, y_mid], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[2].set_title(f"Coronal  (Y={y_mid})")
+    axes[2].set_xlabel("X  (← L    R →)")
+    axes[2].set_ylabel("Z  (← I    S →)")
 
     plt.tight_layout()
     Path(preview_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(preview_path, dpi=150, bbox_inches='tight')
+    fig.savefig(preview_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Orientation preview saved to: {preview_path}")
 
@@ -830,6 +831,7 @@ def create_orientation_preview(
 # =============================================================================
 # Main entry point
 # =============================================================================
+
 
 def main():
     """Main entry point: parse arguments and run alignment workflow."""
@@ -904,7 +906,7 @@ def main():
         n_resolution_levels=3,
         pbar=pbar,
         registration_start_step=registration_start_step,
-        registration_steps=registration_steps
+        registration_steps=registration_steps,
     )
 
     # Register to Allen atlas
@@ -948,7 +950,7 @@ def main():
 
         # Save transform file
         # Strip the compound .ome.zarr extension (Path.stem only removes the last suffix)
-        stem = output_path.with_suffix('').with_suffix('').name
+        stem = output_path.with_suffix("").with_suffix("").name
         transform_path = output_path.parent / f"{stem}_transform.tfm"
         sitk.WriteTransform(transform, str(transform_path))
         print(f"Transform saved to: {transform_path}")

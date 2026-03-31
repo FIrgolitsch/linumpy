@@ -12,7 +12,7 @@ from . import GPU_AVAILABLE, to_cpu
 def normalize_percentile(image, p_low=1, p_high=99, use_gpu=True):
     """
     GPU-accelerated percentile-based normalization.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -23,7 +23,7 @@ def normalize_percentile(image, p_low=1, p_high=99, use_gpu=True):
         Upper percentile for normalization (0-100)
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -31,6 +31,7 @@ def normalize_percentile(image, p_low=1, p_high=99, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image.astype(np.float32))
 
         low, high = cp.percentile(img_gpu, [p_low, p_high])
@@ -53,14 +54,14 @@ def normalize_percentile(image, p_low=1, p_high=99, use_gpu=True):
 def normalize_minmax(image, use_gpu=True):
     """
     GPU-accelerated min-max normalization.
-    
+
     Parameters
     ----------
     image : np.ndarray
         Input image
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -68,6 +69,7 @@ def normalize_minmax(image, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image.astype(np.float32))
 
         vmin, vmax = cp.min(img_gpu), cp.max(img_gpu)
@@ -88,7 +90,7 @@ def normalize_minmax(image, use_gpu=True):
 def clip_percentile(image, p_low=0.5, p_high=99.5, use_gpu=True):
     """
     GPU-accelerated percentile clipping.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -99,7 +101,7 @@ def clip_percentile(image, p_low=0.5, p_high=99.5, use_gpu=True):
         Upper percentile to clip
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -107,6 +109,7 @@ def clip_percentile(image, p_low=0.5, p_high=99.5, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image)
 
         low, high = cp.percentile(img_gpu, [p_low, p_high])
@@ -118,9 +121,9 @@ def clip_percentile(image, p_low=0.5, p_high=99.5, use_gpu=True):
         return np.clip(image, low, high)
 
 
-def compute_percentiles_memory_efficient(image: np.ndarray, percentiles: list,
-                                         use_gpu: bool = True,
-                                         max_samples: int = 10_000_000) -> list:
+def compute_percentiles_memory_efficient(
+    image: np.ndarray, percentiles: list, use_gpu: bool = True, max_samples: int = 10_000_000
+) -> list:
     """
     Compute percentiles using subsampling to reduce memory usage.
 
@@ -157,6 +160,7 @@ def compute_percentiles_memory_efficient(image: np.ndarray, percentiles: list,
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         try:
             sample_gpu = cp.asarray(sample)
             result = [float(cp.percentile(sample_gpu, p).get()) for p in percentiles]
@@ -170,9 +174,9 @@ def compute_percentiles_memory_efficient(image: np.ndarray, percentiles: list,
     return [float(np.percentile(sample, p)) for p in percentiles]
 
 
-def compute_nonzero_percentile_memory_efficient(image: np.ndarray, percentile: float,
-                                                use_gpu: bool = True,
-                                                max_samples: int = 10_000_000) -> float:
+def compute_nonzero_percentile_memory_efficient(
+    image: np.ndarray, percentile: float, use_gpu: bool = True, max_samples: int = 10_000_000
+) -> float:
     """
     Compute percentile of non-zero values using subsampling.
 
@@ -209,6 +213,7 @@ def compute_nonzero_percentile_memory_efficient(image: np.ndarray, percentile: f
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         try:
             sample_gpu = cp.asarray(sample)
             result = float(cp.percentile(sample_gpu, percentile).get())
@@ -224,9 +229,9 @@ def compute_nonzero_percentile_memory_efficient(image: np.ndarray, percentile: f
 def apply_flatfield_correction(image, flatfield, darkfield=None, use_gpu=True):
     """
     GPU-accelerated flatfield correction.
-    
+
     Corrected = (Image - Darkfield) / (Flatfield - Darkfield)
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -237,7 +242,7 @@ def apply_flatfield_correction(image, flatfield, darkfield=None, use_gpu=True):
         Darkfield image
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -245,6 +250,7 @@ def apply_flatfield_correction(image, flatfield, darkfield=None, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image.astype(np.float32))
         flat_gpu = cp.asarray(flatfield.astype(np.float32))
 
@@ -276,7 +282,7 @@ def apply_flatfield_correction(image, flatfield, darkfield=None, use_gpu=True):
 def compute_std_projection(volume, axis=0, use_gpu=True):
     """
     GPU-accelerated standard deviation projection.
-    
+
     Parameters
     ----------
     volume : np.ndarray
@@ -285,7 +291,7 @@ def compute_std_projection(volume, axis=0, use_gpu=True):
         Axis along which to compute std
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -293,6 +299,7 @@ def compute_std_projection(volume, axis=0, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         vol_gpu = cp.asarray(volume)
         result = cp.std(vol_gpu, axis=axis)
         return to_cpu(result)
@@ -303,14 +310,14 @@ def compute_std_projection(volume, axis=0, use_gpu=True):
 def threshold_otsu(image, use_gpu=True):
     """
     GPU-accelerated Otsu thresholding.
-    
+
     Parameters
     ----------
     image : np.ndarray
         Input image
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     float
@@ -318,6 +325,7 @@ def threshold_otsu(image, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image.astype(np.float32))
 
         # Compute histogram
@@ -349,13 +357,14 @@ def threshold_otsu(image, use_gpu=True):
         return threshold
     else:
         from skimage.filters import threshold_otsu as sk_otsu
+
         return sk_otsu(image)
 
 
 def apply_xy_shift(image, reference, dy, dx, use_gpu=True):
     """
     GPU-accelerated XY shift application.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -368,7 +377,7 @@ def apply_xy_shift(image, reference, dy, dx, use_gpu=True):
         X shift in pixels
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -396,6 +405,7 @@ def apply_xy_shift(image, reference, dy, dx, use_gpu=True):
         return to_cpu(shifted)
     else:
         from scipy.ndimage import shift as scipy_shift
+
         if image.ndim == 2:
             return scipy_shift(image, [dy, dx], order=1, cval=cval)
         else:

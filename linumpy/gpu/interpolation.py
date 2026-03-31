@@ -13,7 +13,7 @@ from . import GPU_AVAILABLE, to_cpu
 def affine_transform(image, matrix, output_shape=None, order=1, use_gpu=True):
     """
     GPU-accelerated affine transformation.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -26,7 +26,7 @@ def affine_transform(image, matrix, output_shape=None, order=1, use_gpu=True):
         Interpolation order (0=nearest, 1=linear, 3=cubic)
     use_gpu : bool
         Whether to use GPU acceleration
-        
+
     Returns
     -------
     np.ndarray
@@ -57,13 +57,14 @@ def _affine_transform_gpu(image, matrix, output_shape, order):
 def _affine_transform_cpu(image, matrix, output_shape, order):
     """CPU fallback for affine transform."""
     from scipy.ndimage import affine_transform as scipy_affine
+
     return scipy_affine(image, matrix, output_shape=output_shape, order=order)
 
 
 def map_coordinates(image, coordinates, order=1, use_gpu=True):
     """
     GPU-accelerated coordinate mapping (general interpolation).
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -74,7 +75,7 @@ def map_coordinates(image, coordinates, order=1, use_gpu=True):
         Interpolation order
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -102,13 +103,14 @@ def _map_coordinates_gpu(image, coordinates, order):
 def _map_coordinates_cpu(image, coordinates, order):
     """CPU fallback for map_coordinates."""
     from scipy.ndimage import map_coordinates as scipy_map
+
     return scipy_map(image, coordinates, order=order)
 
 
 def resize(image, output_shape, order=1, anti_aliasing=True, use_gpu=True):
     """
     GPU-accelerated image resize.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -121,7 +123,7 @@ def resize(image, output_shape, order=1, anti_aliasing=True, use_gpu=True):
         Whether to apply anti-aliasing filter before downsampling
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -136,8 +138,8 @@ def resize(image, output_shape, order=1, anti_aliasing=True, use_gpu=True):
 def _resize_gpu(image, output_shape, order, anti_aliasing):
     """GPU implementation of resize using zoom."""
     import cupy as cp
-    from cupyx.scipy.ndimage import zoom as cp_zoom
     from cupyx.scipy.ndimage import gaussian_filter as cp_gaussian
+    from cupyx.scipy.ndimage import zoom as cp_zoom
 
     img_gpu = cp.asarray(image if image.dtype == np.float32 else image.astype(np.float32))
 
@@ -159,8 +161,8 @@ def _resize_gpu(image, output_shape, order, anti_aliasing):
 
 def _resize_cpu(image, output_shape, order, anti_aliasing):
     """CPU fallback for resize using zoom."""
-    from scipy.ndimage import zoom as scipy_zoom
     from scipy.ndimage import gaussian_filter as scipy_gaussian
+    from scipy.ndimage import zoom as scipy_zoom
 
     img = image if image.dtype == np.float32 else image.astype(np.float32)
 
@@ -178,7 +180,7 @@ def _resize_cpu(image, output_shape, order, anti_aliasing):
 def apply_displacement_field(image, displacement_field, use_gpu=True):
     """
     Apply a displacement field to warp an image.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -187,16 +189,16 @@ def apply_displacement_field(image, displacement_field, use_gpu=True):
         Displacement field with shape (ndim, *image.shape)
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
         Warped image
     """
-    ndim = image.ndim
+    _ndim = image.ndim
 
     # Create coordinate grid
-    coords = np.meshgrid(*[np.arange(s) for s in image.shape], indexing='ij')
+    coords = np.meshgrid(*[np.arange(s) for s in image.shape], indexing="ij")
     coords = np.array(coords)
 
     # Add displacement
@@ -208,7 +210,7 @@ def apply_displacement_field(image, displacement_field, use_gpu=True):
 def resample_volume(volume, current_spacing, target_spacing, order=1, use_gpu=True):
     """
     Resample a volume to a new spacing.
-    
+
     Parameters
     ----------
     volume : np.ndarray
@@ -221,7 +223,7 @@ def resample_volume(volume, current_spacing, target_spacing, order=1, use_gpu=Tr
         Interpolation order
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray

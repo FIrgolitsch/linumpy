@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from typing import Tuple
 
-import SimpleITK as sitk
 import numpy as np
+import SimpleITK as sitk
 from matplotlib import pyplot as plt
 
 
@@ -106,7 +106,7 @@ def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: int, dy: int) -> 
     fixed = sitk.GetImageFromArray(reference)
     moving = sitk.GetImageFromArray(img)
 
-    translation = [0.] * fixed.GetDimension()
+    translation = [0.0] * fixed.GetDimension()
     # Set the translation
     translation[0] = dx
     translation[1] = dy

@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-""" This modules contains all methods related to I/O for the slicer data.
+"""This modules contains all methods related to I/O for the slicer data.
 
 .. moduleauthor:: Joël Lefebvre <joel.lefebvre@polymtl.ca>
 
@@ -37,7 +37,7 @@ def listSlicesInDir(directory, extension=".nii", returnIndices=False):
 def getSliceListIndices(slice_list):
     zList = list()
     for this_file in slice_list:
-        filename_rx = re.compile(".*z(\d+).*")
+        filename_rx = re.compile(r".*z(\d+).*")
         tmp = filename_rx.match(this_file)
         if tmp is not None:
             zList.append(int(tmp.groups()[0]))
@@ -46,13 +46,13 @@ def getSliceListIndices(slice_list):
 
 
 def load_volume(
-        directory,
-        pos,
-        vol_shape,
-        prefix="volume",
-        extension=".bin",
-        precision="float32",
-        suffix="",
+    directory,
+    pos,
+    vol_shape,
+    prefix="volume",
+    extension=".bin",
+    precision="float32",
+    suffix="",
 ):
     """Load a volume, given its directory and its position in slicer coordinates.
 
@@ -66,7 +66,8 @@ def load_volume(
 
     :returns: ndarray containing the imported volume.
 
-    .. note:: This method can load nifti files (*.nii* and *.nii.gz*) or binary files saved by matlab using the Fortran Order (*.bin*)
+    .. note:: This method can load nifti files (*.nii* and *.nii.gz*) or binary files
+       saved by matlab using the Fortran Order (*.bin*)
 
     """
     if len(vol_shape) == 2 or vol_shape[2] == 1:  # This is an image
@@ -75,15 +76,7 @@ def load_volume(
 
     filename = os.path.join(
         directory,
-        prefix
-        + "_"
-        + "x%02.0f" % (pos[0])
-        + "_"
-        + "y%02.0f" % (pos[1])
-        + "_"
-        + "z%02.0f" % (pos[2])
-        + suffix
-        + extension,
+        prefix + "_" + "x%02.0f" % (pos[0]) + "_" + "y%02.0f" % (pos[1]) + "_" + "z%02.0f" % (pos[2]) + suffix + extension,
     )
     return load_volumeByFilename(filename, vol_shape, precision)
 
@@ -111,13 +104,14 @@ def load_slice(directory, z, prototype="slice_z%d", extension=".nii"):
     try:
         filename = os.path.join(directory, prototype % (z) + extension)
         return load_volumeByFilename(filename)
-    except:
+    except Exception:
         print("Unable to create filename for this slice.")
         return -1
 
 
-def load_volumeByFilename(filename: str, volshape: tuple = (512, 512, 120), precision: str = "float32",
-                          convert2Bool: bool = True) -> np.ndarray:
+def load_volumeByFilename(
+    filename: str, volshape: tuple = (512, 512, 120), precision: str = "float32", convert2Bool: bool = True
+) -> np.ndarray:
     """Load a volume based on its filename.
 
     Parameters
@@ -138,7 +132,8 @@ def load_volumeByFilename(filename: str, volshape: tuple = (512, 512, 120), prec
         An array containing the imported volume
 
     file handle
-        If an h5 file is opened, the file handle is also returned as the second element of a list. This file must be closed by user.
+        If an h5 file is opened, the file handle is also returned as the second element
+        of a list. This file must be closed by user.
 
     Notes
     -----
@@ -162,9 +157,7 @@ def load_volumeByFilename(filename: str, volshape: tuple = (512, 512, 120), prec
 
     elif extension in [".bin"]:
         dt = precision  # big endian 32-bit floating-point number
-        read_order = (
-            "C"  # Matlab fwrite save the data in a column order (i.e. Fortran Order)
-        )
+        read_order = "C"  # Matlab fwrite save the data in a column order (i.e. Fortran Order)
         volume = np.fromfile(filename, dtype=dt)
         volume = np.reshape(volume, volshape, order=read_order)
         volume = np.swapaxes(volume, 0, 1)  # Matlab inverts the X and Y axis
@@ -177,9 +170,7 @@ def load_volumeByFilename(filename: str, volshape: tuple = (512, 512, 120), prec
     return volume
 
 
-def save_nifti(
-        fname, volume, pixDim=(1, 1, 1), pixelFormat=None, intent=1007, expand_dim=True
-):
+def save_nifti(fname, volume, pixDim=(1, 1, 1), pixelFormat=None, intent=1007, expand_dim=True):
     """Save volume as a nifti format. The origin is assumed to be at the center of the volume.
 
     Parameters
@@ -226,9 +217,7 @@ def save_nifti(
         pixelFormat = volume.dtype
 
     if volume.ndim > 3 and expand_dim:
-        img = nib.Nifti1Image(
-            np.expand_dims(volume.astype(pixelFormat), 3), afft
-        )  # A nifti image
+        img = nib.Nifti1Image(np.expand_dims(volume.astype(pixelFormat), 3), afft)  # A nifti image
     else:
         img = nib.Nifti1Image(volume.astype(pixelFormat), afft)  # A nifti image
     header = img.header

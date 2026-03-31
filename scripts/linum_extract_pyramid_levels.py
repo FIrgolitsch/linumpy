@@ -16,8 +16,6 @@ linum_extract_pyramid_levels.py /data/3d_volume.ome.zarr 0 2
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 from pathlib import Path
 
@@ -25,8 +23,9 @@ import numpy as np
 import SimpleITK as sitk
 import zarr
 from ome_zarr.io import parse_url
-from ome_zarr.reader import Reader, Multiscales
+from ome_zarr.reader import Multiscales, Reader
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 
@@ -70,16 +69,15 @@ def _resolution_tag(scale_mm: list[float]) -> str:
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input", help="Path to an OME-Zarr pyramid directory (.ome.zarr)")
+    p.add_argument(
+        "levels",
+        nargs="*",
+        type=int,
+        help="Pyramid level index/indices to extract (0 = finest). Required unless --list is given.",
     )
-    p.add_argument("input",
-                   help="Path to an OME-Zarr pyramid directory (.ome.zarr)")
-    p.add_argument("levels", nargs="*", type=int,
-                   help="Pyramid level index/indices to extract (0 = finest). "
-                        "Required unless --list is given.")
-    p.add_argument("--list", action="store_true",
-                   help="Print available pyramid levels and exit")
+    p.add_argument("--list", action="store_true", help="Print available pyramid levels and exit")
     return p
 
 
@@ -98,8 +96,7 @@ def main():
         for lv in levels_info:
             um = [round(s * 1000, 2) for s in lv["scale_mm"]]
             tag = _resolution_tag(lv["scale_mm"])
-            print(f"  Level {lv['index']:2d}  shape {lv['shape']}  "
-                  f"resolution {um} µm  ({tag})")
+            print(f"  Level {lv['index']:2d}  shape {lv['shape']}  resolution {um} µm  ({tag})")
         return
 
     if not args.levels:

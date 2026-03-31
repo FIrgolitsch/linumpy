@@ -28,7 +28,7 @@ Usage:
     quality, metrics = assess_slice_quality(vol, vol_before, vol_after)
 """
 
-from typing import Optional, Tuple, Dict, List, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -99,9 +99,7 @@ def compute_ssim_2d(img1: np.ndarray, img2: np.ndarray, win_size: int = 7) -> fl
         return float(max(0.0, corr)) if not np.isnan(corr) else 0.0
 
 
-def compute_ssim_3d(vol1: np.ndarray, vol2: np.ndarray,
-                    win_size: int = 7, sample_depth: int = 0,
-                    xy_roi: int = 0) -> float:
+def compute_ssim_3d(vol1: np.ndarray, vol2: np.ndarray, win_size: int = 7, sample_depth: int = 0, xy_roi: int = 0) -> float:
     """
     Compute mean SSIM between two 3D volumes.
 
@@ -155,8 +153,7 @@ def compute_ssim_3d(vol1: np.ndarray, vol2: np.ndarray,
     return float(np.mean(ssim_scores))
 
 
-def compute_edge_score(vol: np.ndarray, reference: np.ndarray,
-                       sample_z: Optional[int] = None) -> float:
+def compute_edge_score(vol: np.ndarray, reference: np.ndarray, sample_z: Optional[int] = None) -> float:
     """
     Compute edge preservation score between volume and reference.
 
@@ -245,12 +242,14 @@ def compute_variance_score(vol: np.ndarray, reference: np.ndarray) -> float:
     return float(min(1.0, max(0.0, score)))
 
 
-def assess_slice_quality(vol: np.ndarray,
-                         vol_before: Optional[np.ndarray],
-                         vol_after: Optional[np.ndarray],
-                         sample_depth: int = 5,
-                         weights: Optional[Dict[str, float]] = None,
-                         xy_roi: int = 0) -> Tuple[float, Dict[str, Any]]:
+def assess_slice_quality(
+    vol: np.ndarray,
+    vol_before: Optional[np.ndarray],
+    vol_after: Optional[np.ndarray],
+    sample_depth: int = 5,
+    weights: Optional[Dict[str, float]] = None,
+    xy_roi: int = 0,
+) -> Tuple[float, Dict[str, Any]]:
     """
     Assess overall quality of a slice volume.
 
@@ -284,7 +283,7 @@ def assess_slice_quality(vol: np.ndarray,
         Individual metric values.
     """
     if weights is None:
-        weights = {'ssim': 0.5, 'edge': 0.3, 'variance': 0.2}
+        weights = {"ssim": 0.5, "edge": 0.3, "variance": 0.2}
 
     nz = vol.shape[0] if vol.ndim == 3 else 1
     ny = vol.shape[1] if vol.ndim == 3 else vol.shape[0]
@@ -306,39 +305,37 @@ def assess_slice_quality(vol: np.ndarray,
     vol_sample = np.asarray(vol[::step, ys:ye, xs:xe])
 
     metrics: Dict[str, Any] = {
-        'ssim_before': 0.0,
-        'ssim_after': 0.0,
-        'ssim_mean': 0.0,
-        'edge_score': 0.0,
-        'variance_score': 0.0,
-        'depth': nz,
-        'has_data': True,
+        "ssim_before": 0.0,
+        "ssim_after": 0.0,
+        "ssim_mean": 0.0,
+        "edge_score": 0.0,
+        "variance_score": 0.0,
+        "depth": nz,
+        "has_data": True,
     }
 
     # Check if slice has meaningful data using the cheap sample
     if vol_sample.max() == vol_sample.min() or np.std(vol_sample) < 1e-6:
-        metrics['has_data'] = False
-        metrics['overall'] = 0.0
+        metrics["has_data"] = False
+        metrics["overall"] = 0.0
         return 0.0, metrics
 
     # Compute SSIM with neighbors — each call loads only sample_depth cropped planes
     ssim_scores = []
     if vol_before is not None:
-        metrics['ssim_before'] = compute_ssim_3d(vol, vol_before, sample_depth=sample_depth, xy_roi=xy_roi)
-        ssim_scores.append(metrics['ssim_before'])
+        metrics["ssim_before"] = compute_ssim_3d(vol, vol_before, sample_depth=sample_depth, xy_roi=xy_roi)
+        ssim_scores.append(metrics["ssim_before"])
     if vol_after is not None:
-        metrics['ssim_after'] = compute_ssim_3d(vol, vol_after, sample_depth=sample_depth, xy_roi=xy_roi)
-        ssim_scores.append(metrics['ssim_after'])
+        metrics["ssim_after"] = compute_ssim_3d(vol, vol_after, sample_depth=sample_depth, xy_roi=xy_roi)
+        ssim_scores.append(metrics["ssim_after"])
 
     if ssim_scores:
-        metrics['ssim_mean'] = float(np.mean(ssim_scores))
+        metrics["ssim_mean"] = float(np.mean(ssim_scores))
 
     # Build a single reference plane (middle z, cropped) for edge and variance scores.
     mid_z = nz // 2
-    ny_n = min(ye, vol_before.shape[1] if vol_before is not None else ye,
-               vol_after.shape[1] if vol_after is not None else ye)
-    nx_n = min(xe, vol_before.shape[2] if vol_before is not None else xe,
-               vol_after.shape[2] if vol_after is not None else xe)
+    ny_n = min(ye, vol_before.shape[1] if vol_before is not None else ye, vol_after.shape[1] if vol_after is not None else ye)
+    nx_n = min(xe, vol_before.shape[2] if vol_before is not None else xe, vol_after.shape[2] if vol_after is not None else xe)
     # Re-clip crop to neighbour extents
     ye_n = min(ye, ny_n)
     xe_n = min(xe, nx_n)
@@ -347,8 +344,9 @@ def assess_slice_quality(vol: np.ndarray,
     if vol_before is not None and vol_after is not None:
         z_b = min(mid_z, vol_before.shape[0] - 1)
         z_a = min(mid_z, vol_after.shape[0] - 1)
-        ref_plane = (0.5 * np.asarray(vol_before[z_b, ys:ye_n, xs:xe_n]).astype(np.float32)
-                     + 0.5 * np.asarray(vol_after[z_a, ys:ye_n, xs:xe_n]).astype(np.float32))
+        ref_plane = 0.5 * np.asarray(vol_before[z_b, ys:ye_n, xs:xe_n]).astype(np.float32) + 0.5 * np.asarray(
+            vol_after[z_a, ys:ye_n, xs:xe_n]
+        ).astype(np.float32)
     elif vol_before is not None:
         z_b = min(mid_z, vol_before.shape[0] - 1)
         ref_plane = np.asarray(vol_before[z_b, ys:ye_n, xs:xe_n]).astype(np.float32)
@@ -359,25 +357,24 @@ def assess_slice_quality(vol: np.ndarray,
     # Compute edge preservation score using the single cropped reference plane
     if ref_plane is not None:
         vol_plane = np.asarray(vol[mid_z, ys:ye_n, xs:xe_n])
-        metrics['edge_score'] = compute_edge_score(vol_plane, ref_plane)
+        metrics["edge_score"] = compute_edge_score(vol_plane, ref_plane)
 
     # Compute variance consistency using the strided crop vs reference plane
     if ref_plane is not None:
-        metrics['variance_score'] = compute_variance_score(vol_sample, vol_sample * 0 + ref_plane.mean())
+        metrics["variance_score"] = compute_variance_score(vol_sample, vol_sample * 0 + ref_plane.mean())
 
     # Compute overall score
     overall = (
-            weights['ssim'] * metrics['ssim_mean'] +
-            weights['edge'] * metrics['edge_score'] +
-            weights['variance'] * metrics['variance_score']
+        weights["ssim"] * metrics["ssim_mean"]
+        + weights["edge"] * metrics["edge_score"]
+        + weights["variance"] * metrics["variance_score"]
     )
-    metrics['overall'] = float(overall)
+    metrics["overall"] = float(overall)
 
     return float(overall), metrics
 
 
-def detect_calibration_slice(volumes: Dict[int, np.ndarray],
-                             thickness_ratio: float = 1.5) -> List[int]:
+def detect_calibration_slice(volumes: Dict[int, np.ndarray], thickness_ratio: float = 1.5) -> List[int]:
     """
     Detect calibration slices by their different thickness.
 
@@ -418,8 +415,7 @@ def detect_calibration_slice(volumes: Dict[int, np.ndarray],
     return calibration
 
 
-def compute_quality_report(slice_qualities: Dict[int, Dict[str, Any]],
-                           min_quality: float = 0.0) -> Dict[str, Any]:
+def compute_quality_report(slice_qualities: Dict[int, Dict[str, Any]], min_quality: float = 0.0) -> Dict[str, Any]:
     """
     Generate a quality report from slice quality assessments.
 
@@ -436,24 +432,24 @@ def compute_quality_report(slice_qualities: Dict[int, Dict[str, Any]],
         Summary report with statistics and flagged slices.
     """
     if not slice_qualities:
-        return {'error': 'No slices to analyze'}
+        return {"error": "No slices to analyze"}
 
-    overall_scores = [q.get('overall', 0.0) for q in slice_qualities.values()]
+    overall_scores = [q.get("overall", 0.0) for q in slice_qualities.values()]
 
     report = {
-        'n_slices': len(slice_qualities),
-        'mean_quality': float(np.mean(overall_scores)),
-        'std_quality': float(np.std(overall_scores)),
-        'min_quality': float(np.min(overall_scores)),
-        'max_quality': float(np.max(overall_scores)),
-        'low_quality_slices': [],
-        'no_data_slices': [],
+        "n_slices": len(slice_qualities),
+        "mean_quality": float(np.mean(overall_scores)),
+        "std_quality": float(np.std(overall_scores)),
+        "min_quality": float(np.min(overall_scores)),
+        "max_quality": float(np.max(overall_scores)),
+        "low_quality_slices": [],
+        "no_data_slices": [],
     }
 
     for sid, metrics in slice_qualities.items():
-        if not metrics.get('has_data', True):
-            report['no_data_slices'].append(sid)
-        elif metrics.get('overall', 0.0) < min_quality:
-            report['low_quality_slices'].append(sid)
+        if not metrics.get("has_data", True):
+            report["no_data_slices"].append(sid)
+        elif metrics.get("overall", 0.0) < min_quality:
+            report["low_quality_slices"].append(sid)
 
     return report

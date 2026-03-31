@@ -1,14 +1,14 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-""" This module uses graph theory to describe and interact with the mosaic topology.
+"""This module uses graph theory to describe and interact with the mosaic topology.
 
 .. moduleauthor:: Joël Lefebvre <joel.lefebvre@polymtl.ca>
 
 """
 
-import SimpleITK as sitk
 import networkx as nx
 import numpy as np
+import SimpleITK as sitk
 
 
 def generate_default(nX, nY):
@@ -56,7 +56,7 @@ def generate_default(nX, nY):
     outX = np.tile(np.arange(1, nX), (nY,))
     y = np.zeros(inX.shape, dtype=np.int)
     for iY in range(nY):
-        y[iY * (nX - 1): iY * (nX - 1) + nX - 1] = iY
+        y[iY * (nX - 1) : iY * (nX - 1) + nX - 1] = iY
     inX += nX * y
     outX += nX * y
 
@@ -168,10 +168,10 @@ def get_unvisitedEdges(topo, sList, tList):
 
         try:
             edgeList.remove(this_edge1)
-        except:
+        except Exception:
             try:
                 edgeList.remove(this_edge2)
-            except:
+            except Exception:
                 continue
 
     return edgeList
@@ -244,9 +244,7 @@ def keepLargestCCInMask(mask):
             largestLabelSize = lstats.GetCount(iCC)
 
     # Only keeping the laster connected component in this image
-    output = sitk.LabelMapMask(
-        sitk.LabelImageToLabelMap(labels), vol, label=largestLabel
-    )
+    output = sitk.LabelMapMask(sitk.LabelImageToLabelMap(labels), vol, label=largestLabel)
 
     return sitk.GetArrayFromImage(output)
 

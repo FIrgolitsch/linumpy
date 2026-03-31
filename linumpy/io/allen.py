@@ -6,9 +6,9 @@ Methods to download data from the Allen Institute
 
 from pathlib import Path
 
-import SimpleITK as sitk
 import numpy as np
 import requests
+import SimpleITK as sitk
 from tqdm import tqdm
 
 AVAILABLE_RESOLUTIONS = [10, 25, 50, 100]
@@ -16,7 +16,7 @@ AVAILABLE_RESOLUTIONS = [10, 25, 50, 100]
 
 def numpy_to_sitk_image(volume: np.ndarray, spacing: tuple, cast_dtype=None) -> sitk.Image:
     """Convert numpy array (Z, X, Y) to SimpleITK image format.
-    
+
     Parameters
     ----------
     volume : np.ndarray
@@ -97,7 +97,7 @@ def download_template(resolution: int, cache: bool = True, cache_dir: str = ".da
 
 def download_template_ras_aligned(resolution: int, cache: bool = True, cache_dir: str = ".data/") -> sitk.Image:
     """Download a 3D average mouse brain and align it to RAS+ orientation.
-    
+
     Parameters
     ----------
     resolution
@@ -106,7 +106,7 @@ def download_template_ras_aligned(resolution: int, cache: bool = True, cache_dir
         Keep the downloaded volume in cache
     cache_dir
         Cache directory
-        
+
     Returns
     -------
     Allen average mouse brain in RAS+ orientation.
@@ -130,13 +130,18 @@ def download_template_ras_aligned(resolution: int, cache: bool = True, cache_dir
     return vol
 
 
-def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
-                               allen_resolution: int = 100, metric: str = 'MI',
-                               max_iterations: int = 1000, verbose: bool = False,
-                               progress_callback=None,
-                               initial_rotation_deg: tuple = (0.0, 0.0, 0.0)):
+def register_3d_rigid_to_allen(
+    moving_image: np.ndarray,
+    moving_spacing: tuple,
+    allen_resolution: int = 100,
+    metric: str = "MI",
+    max_iterations: int = 1000,
+    verbose: bool = False,
+    progress_callback=None,
+    initial_rotation_deg: tuple = (0.0, 0.0, 0.0),
+):
     """Perform 3D rigid registration of a brain volume to the Allen atlas.
-    
+
     Parameters
     ----------
     moving_image : np.ndarray
@@ -146,7 +151,7 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
     allen_resolution : int
         Allen template resolution in micron (default: 100)
     metric : str
-        Similarity metric: 'MI' (mutual information), 'MSE', 'CC' (correlation), 
+        Similarity metric: 'MI' (mutual information), 'MSE', 'CC' (correlation),
         or 'AntsCC' (ANTS correlation)
     max_iterations : int
         Maximum number of iterations
@@ -155,7 +160,7 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
     progress_callback : callable, optional
         Callback function called on each iteration with the registration method.
         Function signature: callback(registration_method)
-        
+
     Returns
     -------
     transform : sitk.Euler3DTransform
@@ -180,9 +185,7 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
     # Allen voxel outside the resampled moving image buffer.
     original_moving_size = moving_sitk.GetSize()
     original_moving_center_idx = [s / 2.0 for s in original_moving_size]
-    original_moving_center = np.array(
-        moving_sitk.TransformContinuousIndexToPhysicalPoint(original_moving_center_idx)
-    )
+    original_moving_center = np.array(moving_sitk.TransformContinuousIndexToPhysicalPoint(original_moving_center_idx))
 
     # Resample moving image to match Allen atlas spacing and size for better registration.
     # NOTE: we deliberately keep the original moving center computed above so that the
@@ -197,13 +200,14 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
     size_ratio = np.array(allen_size, dtype=float) / np.array(moving_size_sitk, dtype=float)
 
     # Resample if spacing differs by more than 10% or if volumes are very different sizes
-    needs_resample = (np.any(np.abs(spacing_ratio - 1.0) > 0.1) or
-                      np.any(size_ratio < 0.5) or np.any(size_ratio > 2.0))
+    needs_resample = np.any(np.abs(spacing_ratio - 1.0) > 0.1) or np.any(size_ratio < 0.5) or np.any(size_ratio > 2.0)
 
     if needs_resample:
         if verbose:
-            print(f"Resampling moving image from {moving_spacing_sitk} mm, size {moving_size_sitk} "
-                  f"to {allen_spacing} mm, size {allen_size}")
+            print(
+                f"Resampling moving image from {moving_spacing_sitk} mm, size {moving_size_sitk} "
+                f"to {allen_spacing} mm, size {allen_size}"
+            )
         resampler = sitk.ResampleImageFilter()
         resampler.SetReferenceImage(allen_atlas)
         resampler.SetInterpolator(sitk.sitkLinear)
@@ -218,14 +222,12 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
         # Instead, use the centroid of the non-zero (brain-tissue) voxels that
         # survived the clipping into the Allen domain.
         moving_arr = sitk.GetArrayFromImage(moving_sitk)  # shape (Z, Y, X) in numpy
-        nonzero_idx = np.argwhere(moving_arr > 0)          # rows are (z, y, x)
+        nonzero_idx = np.argwhere(moving_arr > 0)  # rows are (z, y, x)
         if len(nonzero_idx) > 0:
             centroid_zyx = nonzero_idx.mean(axis=0)
             # SITK index order is (x, y, z), reverse of numpy (z, y, x)
             centroid_xyz = [float(centroid_zyx[2]), float(centroid_zyx[1]), float(centroid_zyx[0])]
-            original_moving_center = np.array(
-                moving_sitk.TransformContinuousIndexToPhysicalPoint(centroid_xyz)
-            )
+            original_moving_center = np.array(moving_sitk.TransformContinuousIndexToPhysicalPoint(centroid_xyz))
             if verbose:
                 print(f"Resampled brain centroid (physical): {original_moving_center} mm")
         # If all voxels are zero (brain entirely outside Allen domain), keep
@@ -245,13 +247,13 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
     # Set metric
     # Note: For correlation-based metrics, negative values are possible
     # The optimizer will maximize MI/CC and minimize MSE
-    if metric.upper() == 'MI':
+    if metric.upper() == "MI":
         registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
-    elif metric.upper() == 'MSE':
+    elif metric.upper() == "MSE":
         registration_method.SetMetricAsMeanSquares()
-    elif metric.upper() == 'CC':
+    elif metric.upper() == "CC":
         registration_method.SetMetricAsCorrelation()
-    elif metric.upper() == 'ANTSCC':
+    elif metric.upper() == "ANTSCC":
         registration_method.SetMetricAsANTSNeighborhoodCorrelation(radius=20)
     else:
         raise ValueError(f"Unknown metric: {metric}. Choose from: MI, MSE, CC, AntsCC")
@@ -269,7 +271,7 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
         minStep=min_step,
         numberOfIterations=max_iterations,
         relaxationFactor=0.5,
-        gradientMagnitudeTolerance=1e-8
+        gradientMagnitudeTolerance=1e-8,
     )
 
     # Use physical shift for scaling - more appropriate for physical coordinate registration
@@ -329,10 +331,7 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
             # Use MOMENTS initialization which is more robust
             init_transform = sitk.Euler3DTransform()
             init_transform = sitk.CenteredTransformInitializer(
-                fixed_image,
-                moving_image_sitk,
-                init_transform,
-                sitk.CenteredTransformInitializerFilter.MOMENTS
+                fixed_image, moving_image_sitk, init_transform, sitk.CenteredTransformInitializerFilter.MOMENTS
             )
             # Verify the initialized transform has reasonable translation
             init_params = init_transform.GetParameters()
@@ -351,7 +350,8 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
             else:
                 if verbose:
                     print(
-                        f"MOMENTS initialization translation too large ({translation_magnitude:.2f} mm), using center-aligned")
+                        f"MOMENTS initialization translation too large ({translation_magnitude:.2f} mm), using center-aligned"
+                    )
         except Exception as e:
             if verbose:
                 print(f"MOMENTS initialization failed: {e}, using center-aligned translation")
@@ -367,18 +367,20 @@ def register_3d_rigid_to_allen(moving_image: np.ndarray, moving_spacing: tuple,
 
     # Set up iteration callback
     if verbose or progress_callback is not None:
+
         def command_iteration(method):
             if verbose:
                 if method.GetOptimizerIteration() == 0:
                     print(f"Estimated scales: {method.GetOptimizerScales()}")
-                print(f"Iteration {method.GetOptimizerIteration():3d} = "
-                      f"{method.GetMetricValue():7.5f} : "
-                      f"{method.GetOptimizerPosition()}")
+                print(
+                    f"Iteration {method.GetOptimizerIteration():3d} = "
+                    f"{method.GetMetricValue():7.5f} : "
+                    f"{method.GetOptimizerPosition()}"
+                )
             if progress_callback is not None:
                 progress_callback(method)
 
-        registration_method.AddCommand(sitk.sitkIterationEvent,
-                                       lambda: command_iteration(registration_method))
+        registration_method.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(registration_method))
 
     # Execute registration
     final_transform = registration_method.Execute(fixed_image, moving_image_sitk)

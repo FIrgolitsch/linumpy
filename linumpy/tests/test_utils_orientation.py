@@ -10,10 +10,10 @@ from linumpy.utils.orientation import (
     reorder_resolution,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_gradient_vol(shape=(4, 6, 8)):
     """Create a volume where each voxel value encodes its (z, x, y) index."""
@@ -26,28 +26,29 @@ def _make_gradient_vol(shape=(4, 6, 8)):
 # parse_orientation_code — valid codes
 # ---------------------------------------------------------------------------
 
+
 class TestParseOrientationCodeValid:
     def test_identity_SRA(self):
         """SRA is the native target order → identity permutation."""
-        perm, flips = parse_orientation_code('SRA')
+        perm, flips = parse_orientation_code("SRA")
         assert perm == (0, 1, 2)
         assert flips == (1, 1, 1)
 
     def test_identity_lowercase(self):
         """Input is case-insensitive."""
-        perm, flips = parse_orientation_code('sra')
+        perm, flips = parse_orientation_code("sra")
         assert perm == (0, 1, 2)
         assert flips == (1, 1, 1)
 
     def test_PIR(self):
         """PIR is a common OCT orientation."""
-        perm, flips = parse_orientation_code('PIR')
+        perm, flips = parse_orientation_code("PIR")
         assert perm == (1, 2, 0)
         assert flips == (-1, 1, -1)
 
     def test_RAS(self):
         """RAS orientation (Allen/NIfTI default, but dim0=R not S)."""
-        perm, flips = parse_orientation_code('RAS')
+        perm, flips = parse_orientation_code("RAS")
         # R→target-dim1, A→target-dim2, S→target-dim0
         # source: dim0=R, dim1=A, dim2=S
         # target order (S, R, A): dim0←source_dim2, dim1←source_dim0, dim2←source_dim1
@@ -56,7 +57,7 @@ class TestParseOrientationCodeValid:
 
     def test_LPS(self):
         """LPS (opposite of RAS)."""
-        perm, flips = parse_orientation_code('LPS')
+        perm, flips = parse_orientation_code("LPS")
         # L→target-dim1(flip), P→target-dim2(flip), S→target-dim0
         # source: dim0=L, dim1=P, dim2=S
         # S in dim2 → target dim0, so source_dim2 for target dim0
@@ -66,7 +67,7 @@ class TestParseOrientationCodeValid:
 
     def test_all_flipped_ILP(self):
         """ILP: all three axes need to be flipped (I→S, L→R, P→A)."""
-        perm, flips = parse_orientation_code('ILP')
+        perm, flips = parse_orientation_code("ILP")
         # I at dim0 → target dim0 (Superior), flip; L at dim1 → target dim1 (Right), flip;
         # P at dim2 → target dim2 (Anterior), flip
         assert all(f == -1 for f in flips)
@@ -74,7 +75,7 @@ class TestParseOrientationCodeValid:
 
     def test_AIR(self):
         """AIR: A in dim0, I in dim1, R in dim2."""
-        perm, flips = parse_orientation_code('AIR')
+        perm, flips = parse_orientation_code("AIR")
         # A at dim0 → target dim2, sign=+1
         # I at dim1 → target dim0, sign=-1
         # R at dim2 → target dim1, sign=+1
@@ -83,23 +84,23 @@ class TestParseOrientationCodeValid:
         assert flips == (-1, 1, 1)
 
     def test_output_type_is_tuple(self):
-        perm, flips = parse_orientation_code('SRA')
+        perm, flips = parse_orientation_code("SRA")
         assert isinstance(perm, tuple)
         assert isinstance(flips, tuple)
 
     def test_output_perm_length_3(self):
-        perm, flips = parse_orientation_code('PIR')
+        perm, flips = parse_orientation_code("PIR")
         assert len(perm) == 3
         assert len(flips) == 3
 
     def test_perm_is_valid_permutation(self):
         """axis_permutation must be a valid permutation of (0,1,2)."""
-        for code in ('SRA', 'PIR', 'RAS', 'LPS', 'AIR', 'ILP', 'SAR'):
+        for code in ("SRA", "PIR", "RAS", "LPS", "AIR", "ILP", "SAR"):
             perm, _ = parse_orientation_code(code)
             assert sorted(perm) == [0, 1, 2], f"Bad permutation for {code}: {perm}"
 
     def test_flips_only_1_or_minus1(self):
-        for code in ('SRA', 'PIR', 'RAS', 'LPS', 'AIR', 'ILP', 'SAR'):
+        for code in ("SRA", "PIR", "RAS", "LPS", "AIR", "ILP", "SAR"):
             _, flips = parse_orientation_code(code)
             for f in flips:
                 assert f in (1, -1), f"Unexpected flip value {f} for {code}"
@@ -109,40 +110,42 @@ class TestParseOrientationCodeValid:
 # parse_orientation_code — error cases
 # ---------------------------------------------------------------------------
 
+
 class TestParseOrientationCodeErrors:
     def test_too_short(self):
         with pytest.raises(ValueError, match="3 letters"):
-            parse_orientation_code('SR')
+            parse_orientation_code("SR")
 
     def test_too_long(self):
         with pytest.raises(ValueError, match="3 letters"):
-            parse_orientation_code('SRAX')
+            parse_orientation_code("SRAX")
 
     def test_invalid_letter(self):
         with pytest.raises(ValueError, match="Invalid orientation letter"):
-            parse_orientation_code('XRA')
+            parse_orientation_code("XRA")
 
     def test_duplicate_axis_same_direction(self):
         """RRS has R mapping to target-dim1 twice."""
         with pytest.raises(ValueError):
-            parse_orientation_code('RRS')
+            parse_orientation_code("RRS")
 
     def test_duplicate_axis_opposite_direction(self):
         """RLS has R=dim1 and L=dim1 — same target axis."""
         with pytest.raises(ValueError):
-            parse_orientation_code('RLS')
+            parse_orientation_code("RLS")
 
     def test_missing_axis(self):
         """SAI uses neither R nor L so target-dim1 is missing."""
         # S→dim0, A→dim2, I→dim0 — actually duplicate! Let's use a truly missing case.
         # SAP: S→0, A→2, P→2 — duplicate (A and P both target dim2).
         with pytest.raises(ValueError):
-            parse_orientation_code('SAP')
+            parse_orientation_code("SAP")
 
 
 # ---------------------------------------------------------------------------
 # apply_orientation_transform
 # ---------------------------------------------------------------------------
+
 
 class TestApplyOrientationTransform:
     def test_identity_permutation_no_flip(self):
@@ -188,6 +191,7 @@ class TestApplyOrientationTransform:
 # Roundtrip: applying orientation + inverse gives back the original
 # ---------------------------------------------------------------------------
 
+
 class TestOrientationRoundtrip:
     def _inverse_permutation(self, perm):
         """Compute the inverse of a permutation tuple."""
@@ -198,7 +202,7 @@ class TestOrientationRoundtrip:
 
     def test_roundtrip_PIR(self):
         vol = _make_gradient_vol((5, 7, 9))
-        perm, flips = parse_orientation_code('PIR')
+        perm, flips = parse_orientation_code("PIR")
 
         # Forward: source → target (SRA)
         forward = apply_orientation_transform(vol, perm, flips)
@@ -216,7 +220,7 @@ class TestOrientationRoundtrip:
 
     def test_roundtrip_RAS(self):
         vol = _make_gradient_vol((3, 5, 7))
-        perm, flips = parse_orientation_code('RAS')
+        perm, flips = parse_orientation_code("RAS")
 
         forward = apply_orientation_transform(vol, perm, flips)
 
@@ -229,7 +233,7 @@ class TestOrientationRoundtrip:
     def test_roundtrip_all_flipped_ILP(self):
         """A code with all axes needing a flip."""
         vol = _make_gradient_vol((4, 6, 8))
-        perm, flips = parse_orientation_code('ILP')
+        perm, flips = parse_orientation_code("ILP")
 
         forward = apply_orientation_transform(vol, perm, flips)
 
@@ -245,6 +249,7 @@ class TestOrientationRoundtrip:
 # lands in the expected output dimension.
 # ---------------------------------------------------------------------------
 
+
 class TestOrientationSemantics:
     """
     For a volume whose signal varies along a known anatomical axis,
@@ -258,7 +263,7 @@ class TestOrientationSemantics:
         vol = np.zeros((10, 5, 5), dtype=np.float32)
         vol[:, 2, 2] = np.arange(10)
 
-        perm, flips = parse_orientation_code('SRA')
+        perm, flips = parse_orientation_code("SRA")
         result = apply_orientation_transform(vol, perm, flips)
 
         # After identity reorientation, variation should still be along dim0
@@ -271,21 +276,19 @@ class TestOrientationSemantics:
         vol = np.zeros((10, 5, 5), dtype=np.float32)
         vol[:, 2, 2] = np.arange(10)  # value increases in Inferior direction
 
-        perm, flips = parse_orientation_code('IRA')
+        perm, flips = parse_orientation_code("IRA")
         result = apply_orientation_transform(vol, perm, flips)
 
         # 'IRA': I at dim0 → target dim0 with flip=-1 (Inferior→Superior).
         # Values increasing along Inferior (dim0 source) should decrease along dim0 output.
         slice_col = result[:, 2, 2]
-        assert slice_col[0] > slice_col[-1], (
-            "After I→S flip, values should decrease along output dim0 (Superior direction)"
-        )
+        assert slice_col[0] > slice_col[-1], "After I→S flip, values should decrease along output dim0 (Superior direction)"
 
     def test_PIR_output_shape(self):
         """PIR → output shape should be a permutation of input shape."""
         shape = (10, 15, 20)
         vol = np.zeros(shape)
-        perm, flips = parse_orientation_code('PIR')
+        perm, flips = parse_orientation_code("PIR")
         result = apply_orientation_transform(vol, perm, flips)
         # perm=(1,2,0): output shape = (input[1], input[2], input[0]) = (15, 20, 10)
         assert result.shape == (shape[perm[0]], shape[perm[1]], shape[perm[2]])
@@ -294,6 +297,7 @@ class TestOrientationSemantics:
 # ---------------------------------------------------------------------------
 # reorder_resolution
 # ---------------------------------------------------------------------------
+
 
 class TestReorderResolution:
     def test_identity_permutation(self):
@@ -324,13 +328,13 @@ class TestReorderResolution:
         #   target_dim0 = source_dim1 (I), so resolution[target0] = 0.02
         #   target_dim1 = source_dim2 (R), so resolution[target1] = 0.03
         #   target_dim2 = source_dim0 (P), so resolution[target2] = 0.01
-        perm, _ = parse_orientation_code('PIR')
+        perm, _ = parse_orientation_code("PIR")
         source_res = (0.01, 0.02, 0.03)
         result = reorder_resolution(source_res, perm)
         assert result == (0.02, 0.03, 0.01)
 
     def test_reorder_preserves_len(self):
-        perm, _ = parse_orientation_code('AIR')
+        perm, _ = parse_orientation_code("AIR")
         res = (0.025, 0.025, 0.025)
         result = reorder_resolution(res, perm)
         assert len(result) == 3
@@ -340,10 +344,11 @@ class TestReorderResolution:
 # Integration: parse → apply → reorder gives anatomically consistent result
 # ---------------------------------------------------------------------------
 
+
 class TestIntegration:
     def test_isotropic_resolution_unchanged_by_reorder(self):
         """For isotropic data, resolution is the same regardless of permutation."""
-        perm, _ = parse_orientation_code('PIR')
+        perm, _ = parse_orientation_code("PIR")
         res = (0.025, 0.025, 0.025)
         reordered = reorder_resolution(res, perm)
         assert all(r == 0.025 for r in reordered)
@@ -355,10 +360,10 @@ class TestIntegration:
         anatomical axis.
         """
         shape = (10, 20, 30)  # (P direction, I direction, R direction) in PIR
-        res = (0.01, 0.02, 0.03)   # resolutions in (P, I, R) order
+        res = (0.01, 0.02, 0.03)  # resolutions in (P, I, R) order
 
         vol = np.ones(shape)
-        perm, flips = parse_orientation_code('PIR')
+        perm, flips = parse_orientation_code("PIR")
         result = apply_orientation_transform(vol, perm, flips)
         reordered_res = reorder_resolution(res, perm)
 

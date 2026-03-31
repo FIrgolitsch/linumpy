@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-""" All functions required by more than two other stitching module is kept here
-"""
+"""All functions required by more than two other stitching module is kept here"""
+
 import numpy as np
 
 
@@ -24,17 +24,13 @@ def getOverlap(vol1, vol2, pos1, pos2):
             mosaic2 = np.zeros((xmax - xmin, ymax - ymin))
 
             mosaic1[
-                pos1[0] - xmin: pos1[0] - xmin + nx,
-                pos1[1] - ymin: pos1[1] - ymin + ny,
-            ] = (
-                    np.squeeze(vol1.mean(axis=2)) + 1
-            )
+                pos1[0] - xmin : pos1[0] - xmin + nx,
+                pos1[1] - ymin : pos1[1] - ymin + ny,
+            ] = np.squeeze(vol1.mean(axis=2)) + 1
             mosaic2[
-                pos2[0] - xmin: pos2[0] - xmin + nx,
-                pos2[1] - ymin: pos2[1] - ymin + ny,
-            ] = (
-                    np.squeeze(vol2.mean(axis=2)) + 1
-            )
+                pos2[0] - xmin : pos2[0] - xmin + nx,
+                pos2[1] - ymin : pos2[1] - ymin + ny,
+            ] = np.squeeze(vol2.mean(axis=2)) + 1
 
             # Find intersection
             mask = mosaic1 * mosaic2 >= 1
@@ -60,15 +56,15 @@ def getOverlap(vol1, vol2, pos1, pos2):
             )
 
             # Getting overlap
-            overlap1 = vol1[o_pos1[0]: o_pos1[2], o_pos1[1]: o_pos1[3], :]
-            overlap2 = vol2[o_pos2[0]: o_pos2[2], o_pos2[1]: o_pos2[3], :]
+            overlap1 = vol1[o_pos1[0] : o_pos1[2], o_pos1[1] : o_pos1[3], :]
+            overlap2 = vol2[o_pos2[0] : o_pos2[2], o_pos2[1] : o_pos2[3], :]
 
             if overlap1.shape[2] == 1:
                 overlap1 = np.reshape(overlap1, overlap1.shape[:2])
                 overlap2 = np.reshape(overlap2, overlap2.shape[:2])
 
             return overlap1, overlap2, o_pos1, o_pos2
-        except:
+        except Exception:
             return None, None, None, None
 
     elif len(pos1) == 3:
@@ -91,19 +87,15 @@ def getOverlap(vol1, vol2, pos1, pos2):
             mosaic2 = np.zeros((xmax - xmin, ymax - ymin, zmax - zmin))
 
             mosaic1[
-                pos1[0] - xmin: pos1[0] - xmin + nx,
-                pos1[1] - ymin: pos1[1] - ymin + ny,
-                pos1[2] - zmin: pos1[2] - zmin + nz,
-            ] = (
-                    vol1 + 1
-            )
+                pos1[0] - xmin : pos1[0] - xmin + nx,
+                pos1[1] - ymin : pos1[1] - ymin + ny,
+                pos1[2] - zmin : pos1[2] - zmin + nz,
+            ] = vol1 + 1
             mosaic2[
-                pos2[0] - xmin: pos2[0] - xmin + nx,
-                pos2[1] - ymin: pos2[1] - ymin + ny,
-                pos2[2] - zmin: pos2[2] - zmin + nz,
-            ] = (
-                    vol2 + 1
-            )
+                pos2[0] - xmin : pos2[0] - xmin + nx,
+                pos2[1] - ymin : pos2[1] - ymin + ny,
+                pos2[2] - zmin : pos2[2] - zmin + nz,
+            ] = vol2 + 1
 
             # Find intersection
             mask = mosaic1 * mosaic2 >= 1
@@ -135,17 +127,13 @@ def getOverlap(vol1, vol2, pos1, pos2):
             )
 
             # Getting overlap
-            overlap1 = vol1[
-                o_pos1[0]: o_pos1[3], o_pos1[1]: o_pos1[4], o_pos1[2]: o_pos1[5]
-            ]
-            overlap2 = vol2[
-                o_pos2[0]: o_pos2[3], o_pos2[1]: o_pos2[4], o_pos2[2]: o_pos2[5]
-            ]
+            overlap1 = vol1[o_pos1[0] : o_pos1[3], o_pos1[1] : o_pos1[4], o_pos1[2] : o_pos1[5]]
+            overlap2 = vol2[o_pos2[0] : o_pos2[3], o_pos2[1] : o_pos2[4], o_pos2[2] : o_pos2[5]]
 
             if overlap1.shape[2] == 1:
                 overlap1 = np.reshape(overlap1, overlap1.shape[:2])
                 overlap2 = np.reshape(overlap2, overlap2.shape[:2])
 
             return overlap1, overlap2, o_pos1, o_pos2
-        except:
+        except Exception:
             return None, None, None, None

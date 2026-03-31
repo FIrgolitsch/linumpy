@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Tests for linumpy/preproc/normalization.py"""
+
 import numpy as np
 import pytest
 
 from linumpy.preproc.normalization import (
     _build_cdf,
     _chunk_boundaries,
-    _match_chunk_to_reference,
     _robust_percentile,
     _smooth_weighted,
     apply_histogram_matching,
@@ -15,18 +15,18 @@ from linumpy.preproc.normalization import (
     normalize_volume,
 )
 
-
 # ---------------------------------------------------------------------------
 # get_agarose_mask
 # ---------------------------------------------------------------------------
 
+
 def _make_tissue_vol(shape=(10, 32, 32)):
     """Volume with bright tissue region and dim agarose surroundings."""
     rng = np.random.default_rng(0)
-    vol = rng.random(shape).astype(np.float32) * 20.0   # low = agarose
+    vol = rng.random(shape).astype(np.float32) * 20.0  # low = agarose
     # Bright tissue block in the center
     cx, cy = shape[1] // 4, shape[2] // 4
-    vol[:, cx:cx * 3, cy:cy * 3] += 80.0
+    vol[:, cx : cx * 3, cy : cy * 3] += 80.0
     return vol
 
 
@@ -60,6 +60,7 @@ def test_get_agarose_mask_low_intensity_is_agarose():
 # normalize_volume
 # ---------------------------------------------------------------------------
 
+
 def test_normalize_volume_output_shape():
     vol = _make_tissue_vol((6, 24, 24))
     mask, _ = get_agarose_mask(vol)
@@ -87,6 +88,7 @@ def test_normalize_volume_background_thresholds_length():
 # _robust_percentile
 # ---------------------------------------------------------------------------
 
+
 def test_robust_percentile_empty_returns_zero():
     """Nearly-empty array (< 500 non-zeros) should return 0.0."""
     chunk = np.zeros((10, 10, 10), dtype=np.float32)
@@ -94,7 +96,7 @@ def test_robust_percentile_empty_returns_zero():
 
 
 def test_robust_percentile_computes_correctly():
-    chunk = np.arange(1, 1001, dtype=np.float32)   # 1000 values
+    chunk = np.arange(1, 1001, dtype=np.float32)  # 1000 values
     result = _robust_percentile(chunk, 50)
     expected = float(np.percentile(chunk, 50))
     assert abs(result - expected) < 1.0
@@ -103,6 +105,7 @@ def test_robust_percentile_computes_correctly():
 # ---------------------------------------------------------------------------
 # _smooth_weighted
 # ---------------------------------------------------------------------------
+
 
 def test_smooth_weighted_preserves_mean():
     """Smoothing should not wildly change the mean of non-zero values."""
@@ -122,6 +125,7 @@ def test_smooth_weighted_zeros_dont_bias():
 # ---------------------------------------------------------------------------
 # _chunk_boundaries
 # ---------------------------------------------------------------------------
+
 
 def test_chunk_boundaries_with_serial_slices():
     bounds = _chunk_boundaries(n_z=10, n_serial_slices=5)
@@ -144,6 +148,7 @@ def test_chunk_boundaries_per_plane():
 # _build_cdf
 # ---------------------------------------------------------------------------
 
+
 def test_build_cdf_normalized():
     values = np.random.default_rng(0).random(1000).astype(np.float64)
     bins, cdf = _build_cdf(values, n_bins=100)
@@ -163,12 +168,13 @@ def test_build_cdf_bin_count():
 # compute_scale_factors
 # ---------------------------------------------------------------------------
 
+
 def test_compute_scale_factors_shape():
     rng = np.random.default_rng(5)
     vol = rng.random((20, 16, 16)).astype(np.float32)
     sf, raw, smoothed, bounds = compute_scale_factors(
-        vol, n_serial_slices=4, smooth_sigma=1.0,
-        percentile=90.0, min_scale=0.5, max_scale=2.0)
+        vol, n_serial_slices=4, smooth_sigma=1.0, percentile=90.0, min_scale=0.5, max_scale=2.0
+    )
     assert sf.shape == (20,)
 
 
@@ -176,8 +182,7 @@ def test_compute_scale_factors_clamped():
     rng = np.random.default_rng(6)
     vol = rng.random((20, 16, 16)).astype(np.float32)
     min_s, max_s = 0.5, 2.0
-    sf, *_ = compute_scale_factors(vol, n_serial_slices=4, smooth_sigma=1.0,
-                                   percentile=90.0, min_scale=min_s, max_scale=max_s)
+    sf, *_ = compute_scale_factors(vol, n_serial_slices=4, smooth_sigma=1.0, percentile=90.0, min_scale=min_s, max_scale=max_s)
     assert float(sf.min()) >= min_s - 1e-6
     assert float(sf.max()) <= max_s + 1e-6
 
@@ -185,6 +190,7 @@ def test_compute_scale_factors_clamped():
 # ---------------------------------------------------------------------------
 # apply_histogram_matching
 # ---------------------------------------------------------------------------
+
 
 def test_apply_histogram_matching_shape():
     rng = np.random.default_rng(7)

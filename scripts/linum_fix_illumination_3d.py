@@ -9,9 +9,9 @@ This is the CPU version. For GPU acceleration, use linum_fix_illumination_3d_gpu
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import os
+
+import linumpy._thread_config  # noqa: F401
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
 # to prevent thread oversubscription. The number of threads per worker should be
@@ -19,50 +19,48 @@ import os
 # This is set dynamically in main() after parsing arguments.
 # For now, we preserve any existing OMP_NUM_THREADS setting from Nextflow,
 # or default to 1 for safety when multiprocessing.
-if 'OMP_NUM_THREADS' not in os.environ:
+if "OMP_NUM_THREADS" not in os.environ:
     os.environ["OMP_NUM_THREADS"] = "1"
 
 # Configure JAX/XLA thread limits for BaSiCPy
 # Must be set BEFORE importing jax/basicpy
-if 'XLA_FLAGS' not in os.environ:
-    omp_threads = os.environ.get('OMP_NUM_THREADS', '1')
-    os.environ['XLA_FLAGS'] = f'--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads={omp_threads}'
-if 'OMP_NUM_THREADS' not in os.environ:
+if "XLA_FLAGS" not in os.environ:
+    omp_threads = os.environ.get("OMP_NUM_THREADS", "1")
+    os.environ["XLA_FLAGS"] = f"--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads={omp_threads}"
+if "OMP_NUM_THREADS" not in os.environ:
     os.environ["OMP_NUM_THREADS"] = "1"
 
 # Force CPU mode for JAX
-os.environ['JAX_PLATFORMS'] = 'cpu'
+os.environ["JAX_PLATFORMS"] = "cpu"
 
 import argparse
 import tempfile
 from pathlib import Path
-from basicpy import BaSiC
 
 import dask.array as da
-
-import zarr
-from tqdm.auto import tqdm
 import imageio as io
 import numpy as np
+import zarr
+from basicpy import BaSiC
 from pqdm.processes import pqdm
-from linumpy.io.zarr import save_omezarr, read_omezarr, create_tempstore
+from tqdm.auto import tqdm
+
+from linumpy.io.zarr import create_tempstore, read_omezarr, save_omezarr
 from linumpy.utils.io import add_processes_arg, parse_processes_arg
 
 # TODO: add option to export the flatfields and darkfields
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input_zarr",
-                   help="Full path to the input zarr file")
-    p.add_argument("output_zarr",
-                   help="Full path to the output zarr file")
-    p.add_argument("--max_iterations", type=int, default=500,
-                   help='Maximum number of iterations for BaSiC. [%(default)s]')
-    p.add_argument("--percentile_max", type=float,
-                   help="Values above this percentile will be clipped when\n"
-                        "estimating the flatfield (inside range [0-100]).")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_zarr", help="Full path to the input zarr file")
+    p.add_argument("output_zarr", help="Full path to the output zarr file")
+    p.add_argument("--max_iterations", type=int, default=500, help="Maximum number of iterations for BaSiC. [%(default)s]")
+    p.add_argument(
+        "--percentile_max",
+        type=float,
+        help="Values above this percentile will be clipped when\nestimating the flatfield (inside range [0-100]).",
+    )
     add_processes_arg(p)
     return p
 
@@ -76,6 +74,7 @@ def process_tile(params: dict):
     # Ensure thread limits are applied in this worker process
     # (environment variables are inherited but threadpoolctl needs to be reapplied)
     from linumpy._thread_config import apply_threadpool_limits
+
     apply_threadpool_limits()
 
     file = params["slice_file"]
@@ -129,15 +128,14 @@ def process_tile(params: dict):
             # Apply correction and reconstruct complex result with original signs
             tiles_corrected = [
                 (t_real * s_real) + 1j * (t_imag * s_imag)
-                for t_real, t_imag, s_real, s_imag in zip(
-                    tiles_real_corr, tiles_imag_corr, sign_real, sign_imag)
+                for t_real, t_imag, s_real, s_imag in zip(tiles_real_corr, tiles_imag_corr, sign_real, sign_imag)
             ]
         else:
             # Process normally if tiles are real
             # Apply correction to original (not clipped) tiles
             tiles_corrected = optimizer.transform(np.asarray(tiles))
     except RuntimeError:
-        print(f'Got runtime error at z={z}')
+        print(f"Got runtime error at z={z}")
         tiles_corrected = np.asarray(tiles)
 
     # Fill the output mosaic
@@ -176,8 +174,7 @@ def main():
         p_upper = np.percentile(vol[:], args.percentile_max)
     n_slices = vol.shape[0]
 
-    tmp_dir = tempfile.TemporaryDirectory(
-        suffix="_linum_fix_illumination_3d_slices", dir=output_zarr.parent)
+    tmp_dir = tempfile.TemporaryDirectory(suffix="_linum_fix_illumination_3d_slices", dir=output_zarr.parent)
     params_list = []
     for z in tqdm(range(n_slices), "Preprocessing slices"):
         slice_file = Path(tmp_dir.name) / f"slice_{z:03d}.tiff"
@@ -188,14 +185,15 @@ def main():
             "slice_file": slice_file,
             "tile_shape": vol.chunks[1:],
             "max_iterations": args.max_iterations,
-            "p_upper": p_upper
+            "p_upper": p_upper,
         }
         params_list.append(params)
 
     if n_cpus > 1:
         # Process the tiles in parallel
-        corrected_files = pqdm(params_list, process_tile, n_jobs=n_cpus,
-                               desc="Processing tiles", exception_behaviour='immediate')
+        corrected_files = pqdm(
+            params_list, process_tile, n_jobs=n_cpus, desc="Processing tiles", exception_behaviour="immediate"
+        )
     else:  # process sequentially
         corrected_files = []
         for param in tqdm(params_list):
@@ -203,8 +201,7 @@ def main():
 
     # Retrieve the results and fix the volume
     temp_store = create_tempstore(suffix=".zarr")
-    vol_output = zarr.open(temp_store, mode="w", shape=vol.shape,
-                           dtype=vol.dtype, chunks=vol.chunks)
+    vol_output = zarr.open(temp_store, mode="w", shape=vol.shape, dtype=vol.dtype, chunks=vol.chunks)
 
     # TODO: Rebuilding volume step could be faster
     for z, f in tqdm(corrected_files, "Rebuilding volume"):
@@ -215,10 +212,9 @@ def main():
     min_value = out_dask.min().compute()
     if min_value < 0:
         print(f"Minimum value in the output volume is {min_value}. Clipping at 0.")
-        out_dask = da.clip(out_dask, 0., None)
+        out_dask = da.clip(out_dask, 0.0, None)
 
-    save_omezarr(out_dask, output_zarr, voxel_size=resolution,
-                 chunks=vol.chunks)
+    save_omezarr(out_dask, output_zarr, voxel_size=resolution, chunks=vol.chunks)
 
     # Remove the temporary slice files used by the parallel processes
     tmp_dir.cleanup()

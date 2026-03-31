@@ -11,15 +11,14 @@ Falls back to CPU if GPU is not available.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 from pathlib import Path
 
 import numpy as np
 from skimage.io import imsave
 
-from linumpy.gpu import GPU_AVAILABLE, to_cpu, print_gpu_info
+import linumpy._thread_config  # noqa: F401
+from linumpy.gpu import GPU_AVAILABLE, print_gpu_info, to_cpu
 from linumpy.io.zarr import read_omezarr
 
 
@@ -55,6 +54,7 @@ def compute_aip(vol, use_gpu: bool = True) -> np.ndarray:
 
             if use_gpu:
                 import cupy as cp
+
                 tile_gpu = cp.asarray(tile.astype(np.float32))
                 aip[rmin:rmax, cmin:cmax] = to_cpu(cp.mean(tile_gpu, axis=0))
                 del tile_gpu
@@ -64,6 +64,7 @@ def compute_aip(vol, use_gpu: bool = True) -> np.ndarray:
     if use_gpu:
         try:
             import cupy as cp
+
             cp.get_default_memory_pool().free_all_blocks()
         except Exception:
             pass
@@ -95,17 +96,16 @@ def save_aip_png(aip: np.ndarray, output_path: Path) -> None:
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input_zarr",
-                   help="Full path to the input mosaic grid OME-Zarr volume.")
-    p.add_argument("output_png",
-                   help="Full path to the output PNG file.")
-    p.add_argument("--use_gpu", default=True,
-                   action=argparse.BooleanOptionalAction,
-                   help="Use GPU acceleration if available. [%(default)s]")
-    p.add_argument("--verbose", "-v", action="store_true",
-                   help="Print GPU information.")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_zarr", help="Full path to the input mosaic grid OME-Zarr volume.")
+    p.add_argument("output_png", help="Full path to the output PNG file.")
+    p.add_argument(
+        "--use_gpu",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use GPU acceleration if available. [%(default)s]",
+    )
+    p.add_argument("--verbose", "-v", action="store_true", help="Print GPU information.")
     return p
 
 

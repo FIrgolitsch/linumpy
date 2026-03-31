@@ -16,7 +16,6 @@ the fully-registered reconstruction, you can identify:
 
 For troubleshooting 45° oblique-cut samples where edges don't match up.
 """
-import linumpy._thread_config  # noqa: F401
 
 import argparse
 import logging
@@ -24,37 +23,43 @@ from pathlib import Path
 
 import numpy as np
 
-from linumpy.io.zarr import read_omezarr, OmeZarrWriter
+import linumpy._thread_config  # noqa: F401
+from linumpy.io.zarr import OmeZarrWriter, read_omezarr
 from linumpy.stitching.mosaic_grid import addVolumeToMosaic
+from linumpy.stitching.motor import compare_motor_vs_registration, compute_motor_positions
 from linumpy.utils.io import add_overwrite_arg
 from linumpy.utils.metrics import collect_stitch_3d_metrics
-from linumpy.stitching.motor import compute_motor_positions, compare_motor_vs_registration
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('input_volume',
-                   help='Full path to a 3D mosaic grid volume (.ome.zarr)')
-    p.add_argument('output_volume',
-                   help='Output stitched mosaic filename (.ome.zarr)')
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_volume", help="Full path to a 3D mosaic grid volume (.ome.zarr)")
+    p.add_argument("output_volume", help="Output stitched mosaic filename (.ome.zarr)")
 
-    p.add_argument('--overlap_fraction', type=float, default=0.1,
-                   help='Expected overlap fraction between tiles [%(default)s]')
-    p.add_argument('--blending_method', type=str, default='diffusion',
-                   choices=['none', 'average', 'diffusion'],
-                   help='Blending method [%(default)s]')
-    p.add_argument('--scale_factor', type=float, default=1.0,
-                   help='Scale factor to apply to motor positions (to test dilation) [%(default)s]')
-    p.add_argument('--rotation_deg', type=float, default=0.0,
-                   help='Global rotation to apply to tile grid (degrees) [%(default)s]')
-    p.add_argument('--compare_transform', type=str, default=None,
-                   help='Path to registration transform .npy file for comparison output')
-    p.add_argument('--output_comparison', type=str, default=None,
-                   help='Output path for comparison metrics JSON')
+    p.add_argument("--overlap_fraction", type=float, default=0.1, help="Expected overlap fraction between tiles [%(default)s]")
+    p.add_argument(
+        "--blending_method",
+        type=str,
+        default="diffusion",
+        choices=["none", "average", "diffusion"],
+        help="Blending method [%(default)s]",
+    )
+    p.add_argument(
+        "--scale_factor",
+        type=float,
+        default=1.0,
+        help="Scale factor to apply to motor positions (to test dilation) [%(default)s]",
+    )
+    p.add_argument(
+        "--rotation_deg", type=float, default=0.0, help="Global rotation to apply to tile grid (degrees) [%(default)s]"
+    )
+    p.add_argument(
+        "--compare_transform", type=str, default=None, help="Path to registration transform .npy file for comparison output"
+    )
+    p.add_argument("--output_comparison", type=str, default=None, help="Output path for comparison metrics JSON")
 
     add_overwrite_arg(p)
     return p
@@ -77,7 +82,7 @@ def main():
     input_file = Path(args.input_volume)
     output_file = Path(args.output_volume)
 
-    assert output_file.name.endswith('.zarr'), "output_volume must be a .zarr file"
+    assert output_file.name.endswith(".zarr"), "output_volume must be a .zarr file"
 
     if not args.overwrite and output_file.exists():
         raise FileExistsError(f"Output file exists: {output_file}. Use --overwrite to replace.")
@@ -97,12 +102,7 @@ def main():
     logger.info(f"Grid: {nx} x {ny} tiles")
 
     # Compute motor-based positions
-    motor_positions = compute_motor_positions(
-        nx, ny, tile_shape,
-        args.overlap_fraction,
-        args.scale_factor,
-        args.rotation_deg
-    )
+    motor_positions = compute_motor_positions(nx, ny, tile_shape, args.overlap_fraction, args.scale_factor, args.rotation_deg)
 
     # If comparison transform provided, compare positions
     if args.compare_transform:
@@ -113,8 +113,8 @@ def main():
         logger.info("Position comparison summary:")
         logger.info(f"  Mean offset: ({comparison['mean_diff_y']:.1f}, {comparison['mean_diff_x']:.1f}) px")
         logger.info(f"  Max offset: {comparison['max_magnitude']:.1f} px")
-        if comparison.get('dilation_indicator'):
-            logger.warning(comparison['dilation_warning'])
+        if comparison.get("dilation_indicator"):
+            logger.warning(comparison["dilation_warning"])
 
     # Compute output mosaic shape
     posx_min = min([pos[0] for pos in motor_positions])
@@ -127,8 +127,7 @@ def main():
 
     # Stitch the mosaic using motor positions only
     logger.info("Stitching mosaic using motor positions...")
-    writer = OmeZarrWriter(output_file, mosaic_shape, chunk_shape=(100, 100, 100),
-                           dtype=np.float32, overwrite=args.overwrite)
+    writer = OmeZarrWriter(output_file, mosaic_shape, chunk_shape=(100, 100, 100), dtype=np.float32, overwrite=args.overwrite)
 
     for i in range(nx):
         for j in range(ny):
@@ -159,11 +158,11 @@ def main():
         resolution=list(resolution),
         output_path=str(output_file),
         input_path=str(input_file),
-        blending_method=args.blending_method
+        blending_method=args.blending_method,
     )
 
     logger.info(f"Motor-only stitched mosaic saved to {output_file}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

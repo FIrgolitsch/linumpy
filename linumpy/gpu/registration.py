@@ -14,15 +14,15 @@ from .interpolation import affine_transform
 class GPUAcceleratedRegistration:
     """
     Hybrid GPU/CPU registration class.
-    
+
     Uses GPU for:
     - Image resampling/transformation
     - Metric computation (MSE, NCC)
-    
+
     Uses CPU (SimpleITK) for:
     - Optimization loop
     - Transform management
-    
+
     Parameters
     ----------
     use_gpu : bool
@@ -31,25 +31,26 @@ class GPUAcceleratedRegistration:
         Registration metric: 'mse', 'ncc', 'mi'
     """
 
-    def __init__(self, use_gpu=True, metric='mse'):
+    def __init__(self, use_gpu=True, metric="mse"):
         self.use_gpu = use_gpu and GPU_AVAILABLE
         self.metric = metric.lower()
 
         if self.use_gpu:
             import cupy as cp
+
             self._cp = cp
 
     def compute_metric(self, fixed, moving):
         """
         Compute registration metric between two images.
-        
+
         Parameters
         ----------
         fixed : np.ndarray
             Fixed image
         moving : np.ndarray
             Moving image (already transformed)
-            
+
         Returns
         -------
         float
@@ -70,12 +71,12 @@ class GPUAcceleratedRegistration:
         # Create mask for valid pixels
         mask = (fixed_gpu > 0) & (moving_gpu > 0)
 
-        if self.metric == 'mse':
+        if self.metric == "mse":
             diff = fixed_gpu - moving_gpu
             mse = cp.mean(diff[mask] ** 2)
             return float(mse.get())
 
-        elif self.metric == 'ncc':
+        elif self.metric == "ncc":
             # Normalized cross-correlation
             fixed_masked = fixed_gpu[mask]
             moving_masked = moving_gpu[mask]
@@ -92,7 +93,7 @@ class GPUAcceleratedRegistration:
             ncc = cp.mean(fixed_norm * moving_norm) / (std_fixed * std_moving)
             return float(ncc.get())
 
-        elif self.metric == 'mi':
+        elif self.metric == "mi":
             # Mutual information (simplified histogram-based)
             return self._compute_mi_gpu(fixed_gpu, moving_gpu, mask)
 
@@ -136,9 +137,7 @@ class GPUAcceleratedRegistration:
         for i in range(bins):
             for j in range(bins):
                 if joint_hist[i, j] > 1e-10:
-                    mi += joint_hist[i, j] * cp.log(
-                        joint_hist[i, j] / (p_fixed[i] * p_moving[j] + 1e-10) + 1e-10
-                    )
+                    mi += joint_hist[i, j] * cp.log(joint_hist[i, j] / (p_fixed[i] * p_moving[j] + 1e-10) + 1e-10)
 
         return float(mi.get())
 
@@ -146,11 +145,11 @@ class GPUAcceleratedRegistration:
         """CPU fallback for metric computation."""
         mask = (fixed > 0) & (moving > 0)
 
-        if self.metric == 'mse':
+        if self.metric == "mse":
             diff = fixed - moving
             return float(np.mean(diff[mask] ** 2))
 
-        elif self.metric == 'ncc':
+        elif self.metric == "ncc":
             fixed_masked = fixed[mask]
             moving_masked = moving[mask]
 
@@ -171,7 +170,7 @@ class GPUAcceleratedRegistration:
     def transform_image(self, image, transform_matrix, output_shape=None):
         """
         Apply transformation to image using GPU.
-        
+
         Parameters
         ----------
         image : np.ndarray
@@ -180,23 +179,21 @@ class GPUAcceleratedRegistration:
             Transformation matrix
         output_shape : tuple, optional
             Output shape
-            
+
         Returns
         -------
         np.ndarray
             Transformed image
         """
-        return affine_transform(image, transform_matrix, output_shape,
-                                order=1, use_gpu=self.use_gpu)
+        return affine_transform(image, transform_matrix, output_shape, order=1, use_gpu=self.use_gpu)
 
 
-def register_2d_gpu(fixed, moving, method='affine', metric='mse',
-                    max_iterations=1000, use_gpu=True):
+def register_2d_gpu(fixed, moving, method="affine", metric="mse", max_iterations=1000, use_gpu=True):
     """
     GPU-accelerated 2D image registration.
-    
+
     Uses SimpleITK optimizer with GPU metric computation.
-    
+
     Parameters
     ----------
     fixed : np.ndarray
@@ -211,7 +208,7 @@ def register_2d_gpu(fixed, moving, method='affine', metric='mse',
         Maximum optimizer iterations
     use_gpu : bool
         Whether to use GPU acceleration
-        
+
     Returns
     -------
     transform : sitk.Transform
@@ -243,17 +240,18 @@ def register_2d_gpu(fixed, moving, method='affine', metric='mse',
     from linumpy.stitching.registration import register_2d_images_sitk
 
     return register_2d_images_sitk(
-        fixed, moving,
+        fixed,
+        moving,
         method=method,
-        metric='MSE' if metric.lower() == 'mse' else metric.upper(),
-        max_iterations=max_iterations
+        metric="MSE" if metric.lower() == "mse" else metric.upper(),
+        max_iterations=max_iterations,
     )
 
 
 def apply_transform_gpu(image, transform, use_gpu=True):
     """
     Apply SimpleITK transform to image using GPU resampling.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -262,7 +260,7 @@ def apply_transform_gpu(image, transform, use_gpu=True):
         SimpleITK transform
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -279,16 +277,17 @@ def apply_transform_gpu(image, transform, use_gpu=True):
     else:
         # Fall back to SimpleITK
         from linumpy.stitching.registration import apply_transform
+
         return apply_transform(image, transform)
 
 
 def _is_affine_transform(transform):
     """Check if transform can be represented as affine matrix."""
     import SimpleITK as sitk
-    return isinstance(transform, (sitk.AffineTransform,
-                                  sitk.Euler2DTransform,
-                                  sitk.Euler3DTransform,
-                                  sitk.TranslationTransform))
+
+    return isinstance(
+        transform, (sitk.AffineTransform, sitk.Euler2DTransform, sitk.Euler3DTransform, sitk.TranslationTransform)
+    )
 
 
 def _sitk_transform_to_matrix(transform, image_shape):

@@ -63,9 +63,12 @@ def parse_orientation_code(orientation: str) -> tuple:
     #   dim 1 → R (Right)       letter 'R' → same direction, 'L' → flipped
     #   dim 2 → A (Anterior)    letter 'A' → same direction, 'P' → flipped
     letter_map = {
-        'S': (0,  1), 'I': (0, -1),   # target dim 0 (Superior)
-        'R': (1,  1), 'L': (1, -1),   # target dim 1 (Right)
-        'A': (2,  1), 'P': (2, -1),   # target dim 2 (Anterior)
+        "S": (0, 1),
+        "I": (0, -1),  # target dim 0 (Superior)
+        "R": (1, 1),
+        "L": (1, -1),  # target dim 1 (Right)
+        "A": (2, 1),
+        "P": (2, -1),  # target dim 2 (Anterior)
     }
 
     source_to_target = {}
@@ -73,9 +76,7 @@ def parse_orientation_code(orientation: str) -> tuple:
 
     for source_dim, letter in enumerate(orientation):
         if letter not in letter_map:
-            raise ValueError(
-                f"Invalid orientation letter '{letter}'. Use R/L, A/P, or S/I."
-            )
+            raise ValueError(f"Invalid orientation letter '{letter}'. Use R/L, A/P, or S/I.")
         target_dim, sign = letter_map[letter]
         if target_dim in axes_used:
             raise ValueError(
@@ -86,9 +87,7 @@ def parse_orientation_code(orientation: str) -> tuple:
         source_to_target[source_dim] = (target_dim, sign)
 
     if axes_used != {0, 1, 2}:
-        raise ValueError(
-            f"Orientation code '{orientation}' must specify all three axes (S/I, R/L, A/P)."
-        )
+        raise ValueError(f"Orientation code '{orientation}' must specify all three axes (S/I, R/L, A/P).")
 
     # Build target_dim -> (source_dim, sign)
     target_to_source = {v[0]: (k, v[1]) for k, v in source_to_target.items()}
@@ -99,11 +98,7 @@ def parse_orientation_code(orientation: str) -> tuple:
     return axis_permutation, axis_flips
 
 
-def apply_orientation_transform(
-    volume: np.ndarray,
-    permutation: tuple,
-    flips: tuple
-) -> np.ndarray:
+def apply_orientation_transform(volume: np.ndarray, permutation: tuple, flips: tuple) -> np.ndarray:
     """
     Reorient a 3D volume by applying an axis permutation followed by axis flips.
 

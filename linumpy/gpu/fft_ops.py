@@ -13,7 +13,7 @@ from . import GPU_AVAILABLE, to_cpu
 def phase_correlation(vol1, vol2, n_peaks=8, use_gpu=True):
     """
     GPU-accelerated phase correlation for finding translation between images.
-    
+
     Parameters
     ----------
     vol1 : np.ndarray
@@ -24,7 +24,7 @@ def phase_correlation(vol1, vol2, n_peaks=8, use_gpu=True):
         Number of peaks to sample for refinement
     use_gpu : bool
         Whether to use GPU acceleration
-        
+
     Returns
     -------
     list
@@ -41,7 +41,6 @@ def phase_correlation(vol1, vol2, n_peaks=8, use_gpu=True):
 def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
     """GPU implementation of phase correlation."""
     import cupy as cp
-    from cupyx.scipy.ndimage import uniform_filter
 
     vol_shape = vol1.shape
     ndim = vol1.ndim
@@ -52,11 +51,10 @@ def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
 
     # Extend images by 1/4 of their size (padding)
     new_shape = tuple(int(s * 1.25) for s in vol_shape)
-    pad_size = tuple((int(np.ceil(0.5 * (n - s))),) * 2
-                     for s, n in zip(vol_shape, new_shape))
+    pad_size = tuple((int(np.ceil(0.5 * (n - s))),) * 2 for s, n in zip(vol_shape, new_shape))
 
-    vol1_p = cp.pad(vol1_gpu, pad_size, mode='reflect')
-    vol2_p = cp.pad(vol2_gpu, pad_size, mode='reflect')
+    vol1_p = cp.pad(vol1_gpu, pad_size, mode="reflect")
+    vol2_p = cp.pad(vol2_gpu, pad_size, mode="reflect")
 
     # Apply Hanning window
     vol1_p = _apply_hanning_window_gpu(vol1_p, [p[0] for p in pad_size])
@@ -83,7 +81,7 @@ def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
 
     # Local maxima detection
     local_max = maximum_filter(Q_abs, size=3)
-    peaks_mask = (Q_abs == local_max)
+    _peaks_mask = Q_abs == local_max
 
     # Get top n_peaks
     flat_indices = cp.argsort(Q_abs.ravel())[-n_peaks:]
@@ -115,8 +113,7 @@ def _phase_correlation_gpu(vol1, vol2, n_peaks=8):
                 [dx, dy],
                 [dx - int(np.sign(dx) * vol1_p.shape[0] / 2), dy],
                 [dx, dy - int(np.sign(dy) * vol1_p.shape[1] / 2)],
-                [dx - int(np.sign(dx) * vol1_p.shape[0] / 2),
-                 dy - int(np.sign(dy) * vol1_p.shape[1] / 2)],
+                [dx - int(np.sign(dx) * vol1_p.shape[0] / 2), dy - int(np.sign(dy) * vol1_p.shape[1] / 2)],
             ]
         else:
             dx, dy, dz = deltas
@@ -172,7 +169,6 @@ def _apply_hanning_window_gpu(vol, pad_sizes):
 
 def _compute_correlation_score(vol1, vol2, translation):
     """Compute normalized cross-correlation score for a translation."""
-    ndim = vol1.ndim
 
     # Compute overlap region
     slices1 = []
@@ -205,27 +201,28 @@ def _compute_correlation_score(vol1, vol2, translation):
             return 0
 
         return float(np.mean(ov1_norm * ov2_norm) / (std1 * std2))
-    except:
+    except Exception:
         return 0
 
 
 def _phase_correlation_cpu(vol1, vol2, n_peaks=8):
     """CPU fallback for phase correlation - calls existing implementation."""
     from linumpy.stitching.registration import pairWisePhaseCorrelation
+
     return pairWisePhaseCorrelation(vol1, vol2, nPeaks=n_peaks, returnCC=True)
 
 
 def fft2(image, use_gpu=True):
     """
     GPU-accelerated 2D FFT.
-    
+
     Parameters
     ----------
     image : np.ndarray
         Input 2D image
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -233,6 +230,7 @@ def fft2(image, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         img_gpu = cp.asarray(image)
         result = cp.fft.fft2(img_gpu)
         return to_cpu(result)
@@ -243,14 +241,14 @@ def fft2(image, use_gpu=True):
 def ifft2(spectrum, use_gpu=True):
     """
     GPU-accelerated 2D inverse FFT.
-    
+
     Parameters
     ----------
     spectrum : np.ndarray
         Input spectrum (complex)
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -258,6 +256,7 @@ def ifft2(spectrum, use_gpu=True):
     """
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         spec_gpu = cp.asarray(spectrum)
         result = cp.fft.ifft2(spec_gpu)
         return to_cpu(result)

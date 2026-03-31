@@ -4,8 +4,6 @@
 """Segment the brain from a 3D volume using a threshold and morphological operations."""
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 from pathlib import Path
 
@@ -14,18 +12,15 @@ import numpy as np
 from scipy.ndimage import median_filter
 from skimage.filters import threshold_otsu
 
+import linumpy._thread_config  # noqa: F401
 from linumpy import segmentation
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input_volume",
-                   help="Full path to the input volume (.nii or .nii.gz)")
-    p.add_argument("output_mask",
-                   help="Full path to the output mask (.nii or .nii.gz)")
-    p.add_argument("--median-size", type=int, default=5,
-                   help="Size of the median filter (default=%(default)s)")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_volume", help="Full path to the input volume (.nii or .nii.gz)")
+    p.add_argument("output_mask", help="Full path to the output mask (.nii or .nii.gz)")
+    p.add_argument("--median-size", type=int, default=5, help="Size of the median filter (default=%(default)s)")
 
     return p
 

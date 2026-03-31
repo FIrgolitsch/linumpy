@@ -80,15 +80,15 @@ class SystemDiagnostics:
         # Check environment variables that control threading
         print_subheader("Thread Environment Variables")
         thread_vars = [
-            'OMP_NUM_THREADS',
-            'MKL_NUM_THREADS',
-            'OPENBLAS_NUM_THREADS',
-            'NUMEXPR_NUM_THREADS',
-            'NUMBA_NUM_THREADS',
-            'ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS',
-            'XLA_FLAGS',
-            'LINUMPY_MAX_CPUS',
-            'LINUMPY_RESERVED_CPUS',
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "NUMBA_NUM_THREADS",
+            "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS",
+            "XLA_FLAGS",
+            "LINUMPY_MAX_CPUS",
+            "LINUMPY_RESERVED_CPUS",
         ]
 
         for var in thread_vars:
@@ -104,6 +104,7 @@ class SystemDiagnostics:
 
         try:
             import psutil
+
             mem = psutil.virtual_memory()
             total_gb = mem.total / (1024**3)
             available_gb = mem.available / (1024**3)
@@ -117,7 +118,7 @@ class SystemDiagnostics:
             print(f"  Memory usage: {mem.percent}%")
 
             if available_gb < 16:
-                print(f"  ⚠️  Low available memory - may cause swapping")
+                print("  ⚠️  Low available memory - may cause swapping")
                 self.results["issues"].append(f"Low available memory: {available_gb:.1f} GB")
 
             return total_gb, available_gb
@@ -135,22 +136,24 @@ class SystemDiagnostics:
         # Check nvidia-smi
         print_subheader("NVIDIA Driver")
         try:
-            simple_result = subprocess.run(
-                ['nvidia-smi', '-L'],
-                capture_output=True, text=True, timeout=30
-            )
+            simple_result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30)
             if simple_result.returncode == 0 and simple_result.stdout.strip():
                 result = subprocess.run(
-                    ['nvidia-smi', '--query-gpu=name,memory.total,memory.free,driver_version,cuda_version',
-                     '--format=csv,noheader,nounits'],
-                    capture_output=True, text=True, timeout=30
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=name,memory.total,memory.free,driver_version,cuda_version",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     gpus = []
-                    for i, line in enumerate(result.stdout.strip().split('\n')):
+                    for i, line in enumerate(result.stdout.strip().split("\n")):
                         if not line.strip():
                             continue
-                        parts = [p.strip() for p in line.split(',')]
+                        parts = [p.strip() for p in line.split(",")]
                         if len(parts) >= 5:
                             try:
                                 gpu_info = {
@@ -163,7 +166,10 @@ class SystemDiagnostics:
                                 }
                                 gpus.append(gpu_info)
                                 print(f"  GPU {i}: {parts[0]}")
-                                print(f"    Memory: {int(float(parts[1]))/1024:.1f} GB total, {int(float(parts[2]))/1024:.1f} GB free")
+                                print(
+                                    f"    Memory: {int(float(parts[1])) / 1024:.1f} GB total, "
+                                    f"{int(float(parts[2])) / 1024:.1f} GB free"
+                                )
                                 print(f"    Driver: {parts[3]}, CUDA: {parts[4]}")
                             except (ValueError, IndexError):
                                 print(f"  ⚠️  Could not parse GPU {i} info: {line}")
@@ -174,8 +180,8 @@ class SystemDiagnostics:
                         print(f"  ✅ Found {len(gpus)} GPU(s)")
                 else:
                     gpus = []
-                    for line in simple_result.stdout.strip().split('\n'):
-                        if line.startswith('GPU '):
+                    for line in simple_result.stdout.strip().split("\n"):
+                        if line.startswith("GPU "):
                             gpus.append({"name": line})
                             print(f"  {line}")
                     self.results["gpu"]["available"] = len(gpus) > 0
@@ -219,7 +225,7 @@ class SystemDiagnostics:
             if cuda12_paths:
                 print(f"  Found {len(cuda12_paths)} CUDA 12 library paths")
 
-            jax_check_code = '''
+            jax_check_code = """
 import sys
 import os
 import ctypes
@@ -250,13 +256,12 @@ try:
 except Exception as e:
     print(f"ERROR:{e}")
     sys.exit(1)
-'''
+"""
             env = os.environ.copy()
-            env['LD_LIBRARY_PATH'] = new_ld_path
+            env["LD_LIBRARY_PATH"] = new_ld_path
 
             result = subprocess.run(
-                [sys.executable, '-c', jax_check_code],
-                capture_output=True, text=True, timeout=60, env=env
+                [sys.executable, "-c", jax_check_code], capture_output=True, text=True, timeout=60, env=env
             )
 
             if result.returncode == 0:
@@ -264,13 +269,13 @@ except Exception as e:
                 jax_devices = []
                 jax_has_gpu = False
 
-                for line in result.stdout.strip().split('\n'):
-                    if line.startswith('VERSION:'):
-                        jax_version = line.split(':', 1)[1]
-                    elif line.startswith('DEVICES:'):
-                        jax_devices = line.split(':', 1)[1].split(',') if line.split(':', 1)[1] else []
-                    elif line.startswith('HAS_GPU:'):
-                        jax_has_gpu = line.split(':', 1)[1] == 'True'
+                for line in result.stdout.strip().split("\n"):
+                    if line.startswith("VERSION:"):
+                        jax_version = line.split(":", 1)[1]
+                    elif line.startswith("DEVICES:"):
+                        jax_devices = line.split(":", 1)[1].split(",") if line.split(":", 1)[1] else []
+                    elif line.startswith("HAS_GPU:"):
+                        jax_has_gpu = line.split(":", 1)[1] == "True"
 
                 print(f"  JAX version: {jax_version}")
                 self.results["gpu"]["jax_version"] = jax_version
@@ -285,7 +290,7 @@ except Exception as e:
                     self.results["gpu"]["jax_gpu"] = False
             else:
                 error_msg = result.stderr or result.stdout or "Unknown error"
-                print(f"  ⚠️  JAX GPU check failed")
+                print("  ⚠️  JAX GPU check failed")
                 self.results["gpu"]["jax_gpu"] = False
                 self._handle_jax_error(error_msg)
 
@@ -311,9 +316,7 @@ except Exception as e:
             print("       etc.")
             print("")
             print("     Then set LD_LIBRARY_PATH - see docs/GPU_ACCELERATION.md")
-            self.results["issues"].append(
-                "CUDA library issue - run: source scripts/fix_jax_cuda_plugin.sh"
-            )
+            self.results["issues"].append("CUDA library issue - run: source scripts/fix_jax_cuda_plugin.sh")
         elif "cannot enable executable stack" in error_msg:
             print("     JAX CUDA plugin blocked by kernel security.")
             print("     Fix with: sudo apt install patchelf")
@@ -334,6 +337,7 @@ except Exception as e:
         """Check CuPy GPU support."""
         try:
             import cupy as cp
+
             print(f"  ✅ CuPy version: {cp.__version__}")
             self.results["gpu"]["cupy_version"] = cp.__version__
 
@@ -344,7 +348,7 @@ except Exception as e:
                 for i in range(n_devices):
                     with cp.cuda.Device(i):
                         free, total = cp.cuda.runtime.memGetInfo()
-                        print(f"    Device {i}: {free/(1024**3):.1f} GB free / {total/(1024**3):.1f} GB total")
+                        print(f"    Device {i}: {free / (1024**3):.1f} GB free / {total / (1024**3):.1f} GB total")
 
                 test_array = cp.random.rand(1000, 1000)
                 _ = cp.fft.fft2(test_array)
@@ -367,6 +371,7 @@ except Exception as e:
         """Check linumpy GPU module."""
         try:
             from linumpy.gpu import GPU_AVAILABLE, GPU_DEVICE_NAME, GPU_MEMORY_GB
+
             print(f"  GPU_AVAILABLE: {GPU_AVAILABLE}")
             if GPU_AVAILABLE:
                 print(f"  GPU_DEVICE_NAME: {GPU_DEVICE_NAME}")
@@ -404,7 +409,7 @@ except Exception as e:
         for name, import_name in packages:
             try:
                 mod = __import__(import_name)
-                version = getattr(mod, '__version__', 'unknown')
+                version = getattr(mod, "__version__", "unknown")
                 print(f"  ✅ {name}: {version}")
                 self.results["python"][name] = version
             except ImportError:
@@ -417,12 +422,13 @@ except Exception as e:
         print_subheader("NumPy BLAS Configuration")
         try:
             import numpy as np
+
             try:
-                blas_info = np.show_config(mode='dicts')
-                if blas_info and 'Build Dependencies' in blas_info:
-                    blas = blas_info.get('Build Dependencies', {}).get('blas', {})
+                blas_info = np.show_config(mode="dicts")
+                if blas_info and "Build Dependencies" in blas_info:
+                    blas = blas_info.get("Build Dependencies", {}).get("blas", {})
                     print(f"  BLAS: {blas.get('name', 'unknown')}")
-                    self.results["python"]["blas"] = blas.get('name', 'unknown')
+                    self.results["python"]["blas"] = blas.get("name", "unknown")
             except Exception:
                 print("  (Could not determine BLAS configuration)")
         except Exception:
@@ -437,13 +443,13 @@ except Exception as e:
 
         print_subheader("Current Environment")
 
-        nf_process_name = os.environ.get('NXF_TASK_NAME', 'Not in Nextflow process')
+        nf_process_name = os.environ.get("NXF_TASK_NAME", "Not in Nextflow process")
         print(f"  NXF_TASK_NAME: {nf_process_name}")
 
         try:
-            result = subprocess.run(['nextflow', '-version'], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(["nextflow", "-version"], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                version_line = result.stdout.strip().split('\n')[0]
+                version_line = result.stdout.strip().split("\n")[0]
                 print(f"  Nextflow: {version_line}")
                 self.results["nextflow"]["installed"] = True
             else:
@@ -475,9 +481,9 @@ except Exception as e:
 
         print_subheader("Notes")
         print(f"  • With {total_cpus} CPU cores, you can run up to {suggested_processes} parallel processes")
-        jax_status = 'GPU-enabled' if self.results['gpu'].get('jax_gpu') else 'CPU-only'
+        jax_status = "GPU-enabled" if self.results["gpu"].get("jax_gpu") else "CPU-only"
         print(f"  • fix_illumination step uses BaSiC algorithm (JAX-based, {jax_status})")
-        print(f"  • Each BaSiC process typically uses ~3 CPU threads")
+        print("  • Each BaSiC process typically uses ~3 CPU threads")
         if total_memory:
             print(f"  • With {total_memory:.0f} GB RAM, memory should not be a bottleneck")
 
@@ -498,6 +504,7 @@ except Exception as e:
     def _get_cuda12_ld_path(self, debug=False):
         """Build LD_LIBRARY_PATH for CUDA 12 compatible libraries."""
         import site
+
         site_packages = site.getsitepackages()[0]
 
         cuda_paths = []
@@ -535,7 +542,7 @@ except Exception as e:
                     print(f"    Found nvidia lib: {full_path}")
 
         # Build clean LD_LIBRARY_PATH
-        new_ld_path = ':'.join(cuda_paths)
+        new_ld_path = ":".join(cuda_paths)
 
         return new_ld_path, cuda_paths
 
@@ -552,7 +559,7 @@ except Exception as e:
             # Show paths being used
             print(f"  Using {len(cuda_paths)} CUDA library paths")
 
-            benchmark_code = '''
+            benchmark_code = """
 import sys
 import os
 import ctypes
@@ -572,7 +579,10 @@ for p in paths[:3]:  # Check first 3 paths
 # CRITICAL: Preload CUDA libraries BEFORE importing JAX
 # This ensures the correct libraries from cu13/lib are used
 print("DEBUG_STAGE:preloading_cuda")
-for lib in ['libcudart.so.12', 'libcublas.so.12', 'libcublasLt.so.12', 'libcusolver.so.12', 'libcufft.so.12', 'libcusparse.so.12']:
+for lib in [
+    'libcudart.so.12', 'libcublas.so.12', 'libcublasLt.so.12',
+    'libcusolver.so.12', 'libcufft.so.12', 'libcusparse.so.12',
+]:
     for path in paths:
         lib_path = os.path.join(path, lib)
         if os.path.exists(lib_path):
@@ -589,17 +599,17 @@ try:
     # Try to import JAX first to get better error messages
     print("DEBUG_STAGE:importing_jax")
     import jax
-    
+
     # Try to initialize JAX with CUDA before importing BaSiC
     print("DEBUG_STAGE:checking_devices")
     devices = jax.devices()
     device_strs = [str(d) for d in devices]
     print(f"DEBUG_JAX_DEVICES:{','.join(device_strs)}")
-    
+
     has_gpu = any('cuda' in str(d).lower() for d in devices)
     mode = "GPU" if has_gpu else "CPU"
     print(f"DEBUG_JAX_MODE:{mode}")
-    
+
     print("DEBUG_STAGE:importing_basicpy")
     from basicpy import BaSiC
 
@@ -617,54 +627,62 @@ except Exception as e:
     print(f"ERROR:{e}")
     traceback.print_exc()
     sys.exit(1)
-'''
+"""
 
             # Create a clean environment with ONLY our verified CUDA paths
             # Don't use os.environ.copy() to avoid inheriting polluted paths
             env = {}
             # Copy essential env vars but NOT LD_LIBRARY_PATH
-            essential_vars = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'SHELL',
-                            'PYTHONPATH', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'PYENV_ROOT']
+            essential_vars = [
+                "PATH",
+                "HOME",
+                "USER",
+                "LANG",
+                "TERM",
+                "SHELL",
+                "PYTHONPATH",
+                "VIRTUAL_ENV",
+                "CONDA_PREFIX",
+                "PYENV_ROOT",
+            ]
             for var in essential_vars:
                 if var in os.environ:
                     env[var] = os.environ[var]
 
             # Set our clean LD_LIBRARY_PATH
-            env['LD_LIBRARY_PATH'] = new_ld_path
+            env["LD_LIBRARY_PATH"] = new_ld_path
 
             # Debug: show what we're setting
             if self.verbose:
                 print(f"  Setting clean LD_LIBRARY_PATH: {new_ld_path}")
 
             result = subprocess.run(
-                [sys.executable, '-c', benchmark_code],
-                capture_output=True, text=True, timeout=120, env=env
+                [sys.executable, "-c", benchmark_code], capture_output=True, text=True, timeout=120, env=env
             )
 
             # Parse debug info and result
             success_line = None
-            jax_mode = None
             last_stage = None
-            for line in result.stdout.strip().split('\n'):
-                if line.startswith('DEBUG_LD_PATHS:'):
-                    n_paths = line.split(':')[1]
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith("DEBUG_LD_PATHS:"):
+                    n_paths = line.split(":")[1]
                     print(f"  LD_LIBRARY_PATH has {n_paths} entries")
-                elif line.startswith('DEBUG_SO12_PATH:'):
-                    parts = line.split(':')
+                elif line.startswith("DEBUG_SO12_PATH:"):
+                    parts = line.split(":")
                     path, count = parts[1], parts[2]
                     print(f"  Found {count} .so.12 files in: {os.path.basename(path)}/")
-                elif line.startswith('DEBUG_JAX_DEVICES:'):
-                    devices = line.split(':')[1]
+                elif line.startswith("DEBUG_JAX_DEVICES:"):
+                    devices = line.split(":")[1]
                     print(f"  JAX devices: {devices}")
-                elif line.startswith('DEBUG_JAX_MODE:'):
-                    jax_mode = line.split(':')[1]
-                elif line.startswith('DEBUG_STAGE:'):
-                    last_stage = line.split(':')[1]
-                elif line.startswith('SUCCESS:'):
+                elif line.startswith("DEBUG_JAX_MODE:"):
+                    _ = line.split(":")[1]
+                elif line.startswith("DEBUG_STAGE:"):
+                    last_stage = line.split(":")[1]
+                elif line.startswith("SUCCESS:"):
                     success_line = line
 
             if success_line:
-                parts = success_line.split(':')
+                parts = success_line.split(":")
                 elapsed = float(parts[1])
                 mode = parts[2]
                 print(f"  BaSiC fit 16 tiles @ (256, 256): {elapsed:.2f}s ({mode})")
@@ -684,14 +702,14 @@ except Exception as e:
                 if self.verbose:
                     print("\n  --- Full subprocess output ---")
                     print("  STDOUT:")
-                    for line in result.stdout.split('\n')[-20:]:
+                    for line in result.stdout.split("\n")[-20:]:
                         print(f"    {line}")
                     print("  STDERR:")
-                    for line in result.stderr.split('\n')[-30:]:
+                    for line in result.stderr.split("\n")[-30:]:
                         print(f"    {line}")
 
         except subprocess.TimeoutExpired:
-            print(f"  ⚠️  BaSiC benchmark timed out (>120s)")
+            print("  ⚠️  BaSiC benchmark timed out (>120s)")
         except Exception as e:
             print(f"  ⚠️  BaSiC benchmark failed: {e}")
 
@@ -707,8 +725,10 @@ except Exception as e:
             print("")
             print("     Quick test:")
             print("       jax_cuda12_env() {")
-            print("         local sp=$(python -c \"import site; print(site.getsitepackages()[0])\")")
-            print("         echo \"${sp}/nvidia/cublas/lib:${sp}/nvidia/cuda_runtime/lib:${sp}/nvidia/cudnn/lib:${sp}/nvidia/cufft/lib:${sp}/nvidia/cusolver/lib:${sp}/nvidia/cusparse/lib:${LD_LIBRARY_PATH}\"")
+            print('         local sp=$(python -c "import site; print(site.getsitepackages()[0])")')
+            print(
+                '         echo "${sp}/nvidia/cublas/lib:${sp}/nvidia/cuda_runtime/lib:${sp}/nvidia/cudnn/lib:${sp}/nvidia/cufft/lib:${sp}/nvidia/cusolver/lib:${sp}/nvidia/cusparse/lib:${LD_LIBRARY_PATH}"'
+            )
             print("       }")
             print("       LD_LIBRARY_PATH=$(jax_cuda12_env) linum_diagnose_pipeline.py --benchmark")
             print("")
@@ -726,15 +746,17 @@ except Exception as e:
             print("     FIX: Reinstall JAX CUDA plugin with correct LD_LIBRARY_PATH set FIRST:")
             print("")
             print("       # 1. Set LD_LIBRARY_PATH before reinstalling")
-            print("       SP=$(python -c \"import site; print(site.getsitepackages()[0])\")")
-            print("       export LD_LIBRARY_PATH=\"${SP}/nvidia/cublas/lib:${SP}/nvidia/cuda_runtime/lib:${SP}/nvidia/nvjitlink/lib:${SP}/nvidia/cudnn/lib:${SP}/nvidia/cu13/lib\"")
+            print('       SP=$(python -c "import site; print(site.getsitepackages()[0])")')
+            print(
+                '       export LD_LIBRARY_PATH="${SP}/nvidia/cublas/lib:${SP}/nvidia/cuda_runtime/lib:${SP}/nvidia/nvjitlink/lib:${SP}/nvidia/cudnn/lib:${SP}/nvidia/cu13/lib"'
+            )
             print("")
             print("       # 2. Reinstall JAX CUDA plugin")
             print("       pip uninstall jax-cuda12-plugin jax-cuda12-pjrt -y")
             print("       pip install jax-cuda12-plugin==0.4.23")
             print("")
             print("       # 3. Test")
-            print("       python -c \"import jax; print(jax.devices())\"")
+            print('       python -c "import jax; print(jax.devices())"')
         elif "build_gesvd_descriptor" in error_lower or "cusolver" in error_lower:
             print("  ❌ BaSiC failed: CUDA cusolver library issue")
             print("")
@@ -747,14 +769,16 @@ except Exception as e:
                 print("")
                 print("     FIX:")
                 print("       # Set LD_LIBRARY_PATH first")
-                print("       SP=$(python -c \"import site; print(site.getsitepackages()[0])\")")
-                print("       export LD_LIBRARY_PATH=\"${SP}/nvidia/cublas/lib:${SP}/nvidia/cuda_runtime/lib:${SP}/nvidia/cusolver/lib:${SP}/nvidia/cudnn/lib\"")
+                print('       SP=$(python -c "import site; print(site.getsitepackages()[0])")')
+                print(
+                    '       export LD_LIBRARY_PATH="${SP}/nvidia/cublas/lib:${SP}/nvidia/cuda_runtime/lib:${SP}/nvidia/cusolver/lib:${SP}/nvidia/cudnn/lib"'
+                )
                 print("")
                 print("       # Or run the fix script:")
                 print("       source scripts/fix_jax_cuda_plugin.sh")
             else:
                 print("     cusolver initialization failed. Check JAX CUDA plugin status:")
-                print("       python -c \"import jax; print(jax.devices())\"")
+                print('       python -c "import jax; print(jax.devices())"')
         elif "executable stack" in error_lower or "enable executable stack" in error_lower:
             print("  ❌ BaSiC failed: Kernel blocking JAX CUDA plugin (executable stack)")
             print("")
@@ -766,10 +790,12 @@ except Exception as e:
             print("       sudo apt install patchelf")
             print("")
             print("       # Clear the executable stack flag")
-            print("       patchelf --clear-execstack $(python -c \"import jax_plugins.xla_cuda12; print(jax_plugins.xla_cuda12.__path__[0])\")/xla_cuda_plugin.so")
+            print(
+                '       patchelf --clear-execstack $(python -c "import jax_plugins.xla_cuda12; print(jax_plugins.xla_cuda12.__path__[0])")/xla_cuda_plugin.so'
+            )
             print("")
             print("       # Test")
-            print("       python -c \"import jax; print(jax.devices())\"")
+            print('       python -c "import jax; print(jax.devices())"')
             print("")
             print("     NOTE: You need to re-run patchelf after reinstalling jax-cuda12-plugin.")
         elif "cuda_plugin_extension" in error_lower or "xla_cuda12" in error_lower:
@@ -793,21 +819,21 @@ except Exception as e:
             # Show the actual error for debugging
             print("     Full error (for debugging):")
             # Extract just the last exception line
-            for line in reversed(error_out.split('\n')):
+            for line in reversed(error_out.split("\n")):
                 line = line.strip()
-                if line and not line.startswith('Traceback') and not line.startswith('File '):
+                if line and not line.startswith("Traceback") and not line.startswith("File "):
                     print(f"       {line[:150]}")
                     break
             # In verbose mode, show the full traceback
             if self.verbose:
                 print("")
                 print("     Complete output (--verbose mode):")
-                for line in error_out.split('\n')[-30:]:  # Last 30 lines
+                for line in error_out.split("\n")[-30:]:  # Last 30 lines
                     print(f"       {line}")
         else:
             # Show the actual error
-            for line in error_out.split('\n'):
-                if line.startswith('ERROR:'):
+            for line in error_out.split("\n"):
+                if line.startswith("ERROR:"):
                     print(f"  ❌ BaSiC failed: {line[6:]}")
                     break
             else:
@@ -816,14 +842,14 @@ except Exception as e:
             if self.verbose:
                 print("")
                 print("     Complete output (--verbose mode):")
-                for line in error_out.split('\n')[-30:]:
+                for line in error_out.split("\n")[-30:]:
                     print(f"       {line}")
 
     def _run_pqdm_benchmark(self):
         """Run pqdm parallel processing benchmark."""
         try:
-            from pqdm.processes import pqdm
             import numpy as np
+            from pqdm.processes import pqdm
 
             def dummy_task(i):
                 arr = np.random.rand(500, 500)
@@ -833,8 +859,7 @@ except Exception as e:
 
             for n_jobs in [1, 4, 8, 16]:
                 start = time.perf_counter()
-                results = pqdm(range(16), dummy_task, n_jobs=n_jobs,
-                              desc=f"pqdm n_jobs={n_jobs}", disable=True)
+                _results = pqdm(range(16), dummy_task, n_jobs=n_jobs, desc=f"pqdm n_jobs={n_jobs}", disable=True)
                 elapsed = time.perf_counter() - start
                 print(f"  pqdm with n_jobs={n_jobs}: {elapsed:.2f}s for 16 tasks")
                 self.results["linumpy"][f"pqdm_njobs{n_jobs}"] = round(elapsed, 2)
@@ -866,7 +891,7 @@ except Exception as e:
 
             speedup = cpu_time / gpu_time if gpu_time > 0 else 0
 
-            print(f"  FFT {size}x{size}: CPU {cpu_time*1000:.1f}ms, GPU {gpu_time*1000:.1f}ms ({speedup:.1f}x speedup)")
+            print(f"  FFT {size}x{size}: CPU {cpu_time * 1000:.1f}ms, GPU {gpu_time * 1000:.1f}ms ({speedup:.1f}x speedup)")
 
             self.results["linumpy"]["fft_cpu_ms"] = round(cpu_time * 1000, 1)
             self.results["linumpy"]["fft_gpu_ms"] = round(gpu_time * 1000, 1)
@@ -887,9 +912,9 @@ except Exception as e:
 
         # Check current LD_LIBRARY_PATH
         print_subheader("Current LD_LIBRARY_PATH")
-        ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+        ld_path = os.environ.get("LD_LIBRARY_PATH", "")
         if ld_path:
-            for i, p in enumerate(ld_path.split(':')):
+            for i, p in enumerate(ld_path.split(":")):
                 if p:
                     print(f"  [{i}] {p}")
         else:
@@ -906,26 +931,31 @@ except Exception as e:
                     lib_path = os.path.join(subdir_path, "lib")
                     if os.path.isdir(lib_path):
                         so_files = glob.glob(os.path.join(lib_path, "*.so*"))
-                        so12_count = len([f for f in so_files if '.so.12' in f])
-                        so11_count = len([f for f in so_files if '.so.11' in f])
-                        so13_count = len([f for f in so_files if '.so.13' in f])
+                        so12_count = len([f for f in so_files if ".so.12" in f])
+                        so11_count = len([f for f in so_files if ".so.11" in f])
+                        so13_count = len([f for f in so_files if ".so.13" in f])
                         version_info = []
-                        if so11_count: version_info.append(f"{so11_count} .so.11")
-                        if so12_count: version_info.append(f"{so12_count} .so.12")
-                        if so13_count: version_info.append(f"{so13_count} .so.13")
-                        print(f"  nvidia/{subdir}/lib: {len(so_files)} .so files "
-                              f"({', '.join(version_info) if version_info else 'no versioned'})")
+                        if so11_count:
+                            version_info.append(f"{so11_count} .so.11")
+                        if so12_count:
+                            version_info.append(f"{so12_count} .so.12")
+                        if so13_count:
+                            version_info.append(f"{so13_count} .so.13")
+                        print(
+                            f"  nvidia/{subdir}/lib: {len(so_files)} .so files "
+                            f"({', '.join(version_info) if version_info else 'no versioned'})"
+                        )
         else:
             print("  No nvidia packages found in site-packages")
 
         # Check what's in the individual nvidia/xxx/lib paths
         print_subheader("Libraries in -cu12 Package Directories")
-        cu12_dirs = ['cublas', 'cuda_runtime', 'nvjitlink', 'cudnn', 'cufft']
+        cu12_dirs = ["cublas", "cuda_runtime", "nvjitlink", "cudnn", "cufft"]
         for dir_name in cu12_dirs:
             lib_path = os.path.join(sp, "nvidia", dir_name, "lib")
             if os.path.isdir(lib_path):
                 so_files = glob.glob(os.path.join(lib_path, "lib*.so*"))
-                versioned_files = [os.path.basename(f) for f in so_files if '.so.' in os.path.basename(f)]
+                versioned_files = [os.path.basename(f) for f in so_files if ".so." in os.path.basename(f)]
                 if versioned_files:
                     print(f"  nvidia/{dir_name}/lib: {', '.join(sorted(versioned_files)[:4])}")
 
@@ -959,8 +989,12 @@ except Exception as e:
         check_paths = []
         # Individual -cu12 package paths
         cu12_pkg_paths = [
-            "nvidia/cublas/lib", "nvidia/cuda_runtime/lib", "nvidia/nvjitlink/lib",
-            "nvidia/cudnn/lib", "nvidia/cufft/lib", "nvidia/cusolver/lib",
+            "nvidia/cublas/lib",
+            "nvidia/cuda_runtime/lib",
+            "nvidia/nvjitlink/lib",
+            "nvidia/cudnn/lib",
+            "nvidia/cufft/lib",
+            "nvidia/cusolver/lib",
             "nvidia/cusparse/lib",
         ]
         for pkg_path in cu12_pkg_paths:
@@ -968,7 +1002,7 @@ except Exception as e:
             if os.path.isdir(full_path) and full_path not in check_paths:
                 check_paths.append(full_path)
         # Add LD_LIBRARY_PATH entries
-        for p in ld_path.split(':'):
+        for p in ld_path.split(":"):
             if p and os.path.isdir(p) and p not in check_paths:
                 check_paths.append(p)
 
@@ -977,7 +1011,6 @@ except Exception as e:
 
         for lib, pkg_name, alt_names in key_libs:
             found = False
-            found_path = None
             wrong_version = None
 
             # Check all names (including alternates for case variations)
@@ -991,22 +1024,21 @@ except Exception as e:
                         rel_path = check_path.replace(sp + "/", "")
                         print(f"  ✅ {lib} found in {rel_path}")
                         found = True
-                        found_path = check_path
                         break
                 if found:
                     break
 
             if not found:
                 # Check for wrong version (.so.13 instead of .so.12, etc.)
-                base_name = lib.rsplit('.so.', 1)[0]
+                base_name = lib.rsplit(".so.", 1)[0]
                 for check_path in check_paths:
                     wrong_files = glob.glob(os.path.join(check_path, f"{base_name}.so.*"))
                     # Also check case variations
-                    if 'nvjitlink' in base_name.lower():
+                    if "nvjitlink" in base_name.lower():
                         wrong_files += glob.glob(os.path.join(check_path, "libnvJitLink.so.*"))
                     for wf in wrong_files:
                         wf_base = os.path.basename(wf)
-                        if wf_base not in names_to_check and '.so.' in wf_base:
+                        if wf_base not in names_to_check and ".so." in wf_base:
                             wrong_version = wf_base
                             break
                     if wrong_version:
@@ -1035,17 +1067,14 @@ except Exception as e:
                     if os.path.exists(xla_plugin):
                         # Check if patchelf was applied by looking at execstack
                         try:
-                            result = subprocess.run(
-                                ["readelf", "-l", xla_plugin],
-                                capture_output=True, text=True, timeout=5
-                            )
+                            result = subprocess.run(["readelf", "-l", xla_plugin], capture_output=True, text=True, timeout=5)
                             if "GNU_STACK" in result.stdout:
-                                for line in result.stdout.split('\n'):
+                                for line in result.stdout.split("\n"):
                                     if "GNU_STACK" in line:
                                         if "RWE" in line:
-                                            print(f"    ⚠️ xla_cuda_plugin.so has executable stack (needs patchelf)")
+                                            print("    ⚠️ xla_cuda_plugin.so has executable stack (needs patchelf)")
                                         else:
-                                            print(f"    ✅ xla_cuda_plugin.so stack is non-executable")
+                                            print("    ✅ xla_cuda_plugin.so stack is non-executable")
                                         break
                         except Exception:
                             pass
@@ -1059,31 +1088,34 @@ except Exception as e:
             if os.path.exists(xla_plugin):
                 # Build LD_LIBRARY_PATH with nvidia package paths
                 nvidia_paths = []
-                for pkg_dir in ['cublas', 'cuda_runtime', 'cusolver', 'cusparse', 'cufft', 'cudnn', 'nvjitlink']:
+                for pkg_dir in ["cublas", "cuda_runtime", "cusolver", "cusparse", "cufft", "cudnn", "nvjitlink"]:
                     pkg_path = os.path.join(sp, "nvidia", pkg_dir, "lib")
                     if os.path.isdir(pkg_path):
                         nvidia_paths.append(pkg_path)
-                test_ld_path = ':'.join(nvidia_paths)
+                test_ld_path = ":".join(nvidia_paths)
                 if ld_path:
                     test_ld_path = f"{test_ld_path}:{ld_path}"
 
                 env = os.environ.copy()
-                env['LD_LIBRARY_PATH'] = test_ld_path
+                env["LD_LIBRARY_PATH"] = test_ld_path
 
-                result = subprocess.run(
-                    ["ldd", xla_plugin],
-                    capture_output=True, text=True, timeout=10, env=env
-                )
+                result = subprocess.run(["ldd", xla_plugin], capture_output=True, text=True, timeout=10, env=env)
                 # Show only CUDA-related or "not found" lines
-                for line in result.stdout.split('\n'):
+                for line in result.stdout.split("\n"):
                     line = line.strip()
-                    if 'cuda' in line.lower() or 'cublas' in line.lower() or \
-                       'cusolver' in line.lower() or 'cudnn' in line.lower() or \
-                       'cufft' in line.lower() or 'cusparse' in line.lower() or \
-                       'nvjit' in line.lower() or 'not found' in line.lower():
+                    if (
+                        "cuda" in line.lower()
+                        or "cublas" in line.lower()
+                        or "cusolver" in line.lower()
+                        or "cudnn" in line.lower()
+                        or "cufft" in line.lower()
+                        or "cusparse" in line.lower()
+                        or "nvjit" in line.lower()
+                        or "not found" in line.lower()
+                    ):
                         print(f"  {line}")
             else:
-                print(f"  xla_cuda_plugin.so not found at expected location")
+                print("  xla_cuda_plugin.so not found at expected location")
         except Exception as e:
             print(f"  Error checking ldd: {e}")
 
@@ -1131,7 +1163,7 @@ except Exception as e:
             if os.path.isdir(cu13_lib):
                 print("  ✅ All required CUDA 12 libraries found!")
                 print("")
-                print(f"  Make sure LD_LIBRARY_PATH includes:")
+                print("  Make sure LD_LIBRARY_PATH includes:")
                 print(f"    export LD_LIBRARY_PATH={cu13_lib}:$LD_LIBRARY_PATH")
             else:
                 print("  ℹ️  Using individual nvidia/xxx/lib paths")
@@ -1164,18 +1196,12 @@ except Exception as e:
 
 
 def main():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("--quick", action="store_true",
-                   help="Quick system check only (no benchmarks)")
-    p.add_argument("--benchmark", action="store_true",
-                   help="Include performance benchmarks")
-    p.add_argument("--debug-cuda", action="store_true",
-                   help="Show detailed CUDA library debugging info")
-    p.add_argument("--verbose", "-v", action="store_true",
-                   help="Show verbose error output for debugging")
-    p.add_argument("--output", "-o", type=str,
-                   help="Save results to JSON file")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("--quick", action="store_true", help="Quick system check only (no benchmarks)")
+    p.add_argument("--benchmark", action="store_true", help="Include performance benchmarks")
+    p.add_argument("--debug-cuda", action="store_true", help="Show detailed CUDA library debugging info")
+    p.add_argument("--verbose", "-v", action="store_true", help="Show verbose error output for debugging")
+    p.add_argument("--output", "-o", type=str, help="Save results to JSON file")
     args = p.parse_args()
 
     print("=" * get_terminal_width())
@@ -1201,7 +1227,7 @@ def main():
     results = diag.generate_report()
 
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2, default=str)
         print(f"\n  Results saved to: {args.output}")
 

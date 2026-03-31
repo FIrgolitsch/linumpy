@@ -17,9 +17,8 @@ Example usage:
     # Use a downsampled pyramid level for faster processing
     linum_generate_mosaic_aips_gpu.py /path/to/mosaics /path/to/aips --level 1
 """
-# Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
 
+# Configure thread limits before numpy/scipy imports
 import argparse
 from pathlib import Path
 
@@ -27,7 +26,8 @@ import numpy as np
 from skimage.io import imsave
 from tqdm.auto import tqdm
 
-from linumpy.gpu import GPU_AVAILABLE, to_cpu, print_gpu_info
+import linumpy._thread_config  # noqa: F401
+from linumpy.gpu import GPU_AVAILABLE, print_gpu_info, to_cpu
 from linumpy.io.zarr import read_omezarr
 
 
@@ -63,6 +63,7 @@ def compute_aip_gpu(vol, use_gpu: bool = True) -> np.ndarray:
 
             if use_gpu:
                 import cupy as cp
+
                 tile_gpu = cp.asarray(tile.astype(np.float32))
                 aip[rmin:rmax, cmin:cmax] = to_cpu(cp.mean(tile_gpu, axis=0))
                 del tile_gpu
@@ -72,6 +73,7 @@ def compute_aip_gpu(vol, use_gpu: bool = True) -> np.ndarray:
     if use_gpu:
         try:
             import cupy as cp
+
             cp.get_default_memory_pool().free_all_blocks()
         except Exception:
             pass
@@ -103,26 +105,27 @@ def save_aip_png(aip: np.ndarray, output_path: Path) -> None:
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input",
-                   help="Input directory containing mosaic grid OME-Zarr files\n"
-                        "(mosaic_grid_3d_z*.ome.zarr).")
-    p.add_argument("output",
-                   help="Output directory where AIP PNG files will be saved.")
-    p.add_argument("--level", type=int, default=0,
-                   help="Pyramid level of the input mosaic grids to use.\n"
-                        "Higher levels are downsampled and faster to process.\n"
-                        "Default: 0 (full resolution)")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input", help="Input directory containing mosaic grid OME-Zarr files\n(mosaic_grid_3d_z*.ome.zarr).")
+    p.add_argument("output", help="Output directory where AIP PNG files will be saved.")
+    p.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        help="Pyramid level of the input mosaic grids to use.\n"
+        "Higher levels are downsampled and faster to process.\n"
+        "Default: 0 (full resolution)",
+    )
 
     gpu_group = p.add_argument_group("GPU Options")
-    gpu_group.add_argument("--use_gpu", default=True,
-                           action=argparse.BooleanOptionalAction,
-                           help="Use GPU acceleration if available. [%(default)s]")
-    gpu_group.add_argument("--gpu_id", type=int, default=0,
-                           help="GPU device ID to use. Default: 0")
-    gpu_group.add_argument("--verbose", "-v", action="store_true",
-                           help="Print GPU information.")
+    gpu_group.add_argument(
+        "--use_gpu",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use GPU acceleration if available. [%(default)s]",
+    )
+    gpu_group.add_argument("--gpu_id", type=int, default=0, help="GPU device ID to use. Default: 0")
+    gpu_group.add_argument("--verbose", "-v", action="store_true", help="Print GPU information.")
     return p
 
 
@@ -145,6 +148,7 @@ def main():
         print("GPU: ENABLED")
         try:
             import cupy as cp
+
             cp.cuda.Device(args.gpu_id).use()
             device = cp.cuda.Device(args.gpu_id)
             mem_info = device.mem_info
@@ -158,11 +162,11 @@ def main():
     mosaic_files = sorted(input_dir.glob("mosaic_grid_3d_z*.ome.zarr"))
     if not mosaic_files:
         raise FileNotFoundError(
-            f"No mosaic grid files found in {input_dir}.\n"
-            "Expected files matching 'mosaic_grid_3d_z*.ome.zarr'.")
+            f"No mosaic grid files found in {input_dir}.\nExpected files matching 'mosaic_grid_3d_z*.ome.zarr'."
+        )
 
     for mosaic_file in tqdm(mosaic_files, desc="Generating AIPs"):
-        slice_id = mosaic_file.name[len("mosaic_grid_3d_z"):-len(".ome.zarr")]
+        slice_id = mosaic_file.name[len("mosaic_grid_3d_z") : -len(".ome.zarr")]
         output_file = output_dir / f"aip_z{slice_id}.png"
         vol, _ = read_omezarr(mosaic_file, level=args.level)
         aip = compute_aip_gpu(vol, use_gpu=use_gpu)

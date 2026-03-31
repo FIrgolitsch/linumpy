@@ -18,11 +18,11 @@ Usage:
     ssim = compute_ssim_3d_gpu(vol1, vol2)
 """
 
-from typing import Optional, Tuple, Dict, Any
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from linumpy.gpu import GPU_AVAILABLE, CUPY_AVAILABLE
+from linumpy.gpu import CUPY_AVAILABLE, GPU_AVAILABLE
 
 if CUPY_AVAILABLE:
     import cupy as cp
@@ -41,7 +41,7 @@ def _to_gpu(arr: np.ndarray) -> "cp.ndarray":
 
 def _to_cpu(arr) -> np.ndarray:
     """Transfer GPU array to CPU."""
-    if hasattr(arr, 'get'):
+    if hasattr(arr, "get"):
         return arr.get()
     return np.asarray(arr)
 
@@ -67,8 +67,7 @@ def normalize_image_gpu(img: "cp.ndarray") -> "cp.ndarray":
     return img
 
 
-def compute_ssim_2d_gpu(img1: np.ndarray, img2: np.ndarray,
-                        win_size: int = 7) -> float:
+def compute_ssim_2d_gpu(img1: np.ndarray, img2: np.ndarray, win_size: int = 7) -> float:
     """
     Compute SSIM between two 2D images using GPU.
 
@@ -88,6 +87,7 @@ def compute_ssim_2d_gpu(img1: np.ndarray, img2: np.ndarray,
     """
     if not GPU_AVAILABLE or cp is None:
         from linumpy.utils.image_quality import compute_ssim_2d
+
         return compute_ssim_2d(img1, img2, win_size)
 
     if img1.shape != img2.shape:
@@ -106,8 +106,8 @@ def compute_ssim_2d_gpu(img1: np.ndarray, img2: np.ndarray,
         i2 = normalize_image_gpu(i2)
 
         # SSIM constants
-        C1 = 0.01 ** 2
-        C2 = 0.03 ** 2
+        C1 = 0.01**2
+        C2 = 0.03**2
 
         # Compute local means using uniform filter
         mu1 = cupy_uniform_filter(i1, size=win_size)
@@ -131,11 +131,11 @@ def compute_ssim_2d_gpu(img1: np.ndarray, img2: np.ndarray,
     except Exception:
         # Fall back to CPU
         from linumpy.utils.image_quality import compute_ssim_2d
+
         return compute_ssim_2d(img1, img2, win_size)
 
 
-def compute_ssim_3d_gpu(vol1: np.ndarray, vol2: np.ndarray,
-                        win_size: int = 7, sample_depth: int = 0) -> float:
+def compute_ssim_3d_gpu(vol1: np.ndarray, vol2: np.ndarray, win_size: int = 7, sample_depth: int = 0) -> float:
     """
     Compute mean SSIM between two 3D volumes using GPU.
 
@@ -155,6 +155,7 @@ def compute_ssim_3d_gpu(vol1: np.ndarray, vol2: np.ndarray,
     """
     if not GPU_AVAILABLE:
         from linumpy.utils.image_quality import compute_ssim_3d
+
         return compute_ssim_3d(vol1, vol2, win_size, sample_depth)
 
     if vol1.shape != vol2.shape:
@@ -178,8 +179,7 @@ def compute_ssim_3d_gpu(vol1: np.ndarray, vol2: np.ndarray,
     return float(np.mean(ssim_scores))
 
 
-def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray,
-                           sample_z: Optional[int] = None) -> float:
+def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray, sample_z: Optional[int] = None) -> float:
     """
     Compute edge preservation score using GPU.
 
@@ -199,6 +199,7 @@ def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray,
     """
     if not GPU_AVAILABLE or cp is None:
         from linumpy.utils.image_quality import compute_edge_score
+
         return compute_edge_score(vol, reference, sample_z)
 
     try:
@@ -248,6 +249,7 @@ def compute_edge_score_gpu(vol: np.ndarray, reference: np.ndarray,
         return 0.0
     except Exception:
         from linumpy.utils.image_quality import compute_edge_score
+
         return compute_edge_score(vol, reference, sample_z)
 
 
@@ -269,6 +271,7 @@ def compute_variance_score_gpu(vol: np.ndarray, reference: np.ndarray) -> float:
     """
     if not GPU_AVAILABLE or cp is None:
         from linumpy.utils.image_quality import compute_variance_score
+
         return compute_variance_score(vol, reference)
 
     try:
@@ -287,14 +290,17 @@ def compute_variance_score_gpu(vol: np.ndarray, reference: np.ndarray) -> float:
         return float(min(1.0, max(0.0, score)))
     except Exception:
         from linumpy.utils.image_quality import compute_variance_score
+
         return compute_variance_score(vol, reference)
 
 
-def assess_slice_quality_gpu(vol: np.ndarray,
-                             vol_before: Optional[np.ndarray],
-                             vol_after: Optional[np.ndarray],
-                             sample_depth: int = 5,
-                             weights: Optional[Dict[str, float]] = None) -> Tuple[float, Dict[str, Any]]:
+def assess_slice_quality_gpu(
+    vol: np.ndarray,
+    vol_before: Optional[np.ndarray],
+    vol_after: Optional[np.ndarray],
+    sample_depth: int = 5,
+    weights: Optional[Dict[str, float]] = None,
+) -> Tuple[float, Dict[str, Any]]:
     """
     Assess overall quality of a slice volume using GPU acceleration.
 
@@ -320,20 +326,21 @@ def assess_slice_quality_gpu(vol: np.ndarray,
     """
     if not GPU_AVAILABLE:
         from linumpy.utils.image_quality import assess_slice_quality
+
         return assess_slice_quality(vol, vol_before, vol_after, sample_depth, weights)
 
     if weights is None:
-        weights = {'ssim': 0.5, 'edge': 0.3, 'variance': 0.2}
+        weights = {"ssim": 0.5, "edge": 0.3, "variance": 0.2}
 
     depth = vol.shape[0] if vol.ndim == 3 else 1
     metrics: Dict[str, Any] = {
-        'ssim_before': 0.0,
-        'ssim_after': 0.0,
-        'ssim_mean': 0.0,
-        'edge_score': 0.0,
-        'variance_score': 0.0,
-        'depth': depth,
-        'has_data': True,
+        "ssim_before": 0.0,
+        "ssim_after": 0.0,
+        "ssim_mean": 0.0,
+        "edge_score": 0.0,
+        "variance_score": 0.0,
+        "depth": depth,
+        "has_data": True,
     }
 
     # Check if slice has meaningful data by sampling a single centre z-plane.
@@ -341,8 +348,8 @@ def assess_slice_quality_gpu(vol: np.ndarray,
     z_check = depth // 2 if vol.ndim == 3 else 0
     check_plane = np.asarray(vol[z_check])
     if check_plane.max() == check_plane.min() or np.std(check_plane) < 1e-6:
-        metrics['has_data'] = False
-        metrics['overall'] = 0.0
+        metrics["has_data"] = False
+        metrics["overall"] = 0.0
         return 0.0, metrics
 
     # Compute SSIM with neighbours.
@@ -350,14 +357,14 @@ def assess_slice_quality_gpu(vol: np.ndarray,
     # zarr arrays are handled without loading the whole volume.
     ssim_scores = []
     if vol_before is not None:
-        metrics['ssim_before'] = compute_ssim_3d_gpu(vol, vol_before, sample_depth=sample_depth)
-        ssim_scores.append(metrics['ssim_before'])
+        metrics["ssim_before"] = compute_ssim_3d_gpu(vol, vol_before, sample_depth=sample_depth)
+        ssim_scores.append(metrics["ssim_before"])
     if vol_after is not None:
-        metrics['ssim_after'] = compute_ssim_3d_gpu(vol, vol_after, sample_depth=sample_depth)
-        ssim_scores.append(metrics['ssim_after'])
+        metrics["ssim_after"] = compute_ssim_3d_gpu(vol, vol_after, sample_depth=sample_depth)
+        ssim_scores.append(metrics["ssim_after"])
 
     if ssim_scores:
-        metrics['ssim_mean'] = float(np.mean(ssim_scores))
+        metrics["ssim_mean"] = float(np.mean(ssim_scores))
 
     # Build sampled numpy arrays for edge and variance scores.
     # Read only sample_depth z-planes via zarr integer indexing to avoid loading
@@ -373,10 +380,9 @@ def assess_slice_quality_gpu(vol: np.ndarray,
         min_x = min(vol_before.shape[2], vol_after.shape[2])
         max_z_b = vol_before.shape[0] - 1
         max_z_a = vol_after.shape[0] - 1
-        ref_s = (
-            0.5 * np.stack([np.asarray(vol_before[min(int(z), max_z_b)], dtype=np.float32)[:min_y, :min_x] for z in z_indices])
-            + 0.5 * np.stack([np.asarray(vol_after[min(int(z), max_z_a)], dtype=np.float32)[:min_y, :min_x] for z in z_indices])
-        )
+        ref_s = 0.5 * np.stack(
+            [np.asarray(vol_before[min(int(z), max_z_b)], dtype=np.float32)[:min_y, :min_x] for z in z_indices]
+        ) + 0.5 * np.stack([np.asarray(vol_after[min(int(z), max_z_a)], dtype=np.float32)[:min_y, :min_x] for z in z_indices])
     elif vol_before is not None:
         max_z_b = vol_before.shape[0] - 1
         ref_s = np.stack([np.asarray(vol_before[min(int(z), max_z_b)], dtype=np.float32) for z in z_indices])
@@ -386,19 +392,19 @@ def assess_slice_quality_gpu(vol: np.ndarray,
 
     # Compute edge preservation score
     if ref_s is not None:
-        metrics['edge_score'] = compute_edge_score_gpu(vol_s, ref_s)
+        metrics["edge_score"] = compute_edge_score_gpu(vol_s, ref_s)
 
     # Compute variance consistency
     if ref_s is not None:
-        metrics['variance_score'] = compute_variance_score_gpu(vol_s, ref_s)
+        metrics["variance_score"] = compute_variance_score_gpu(vol_s, ref_s)
 
     # Compute overall score
     overall = (
-            weights['ssim'] * metrics['ssim_mean'] +
-            weights['edge'] * metrics['edge_score'] +
-            weights['variance'] * metrics['variance_score']
+        weights["ssim"] * metrics["ssim_mean"]
+        + weights["edge"] * metrics["edge_score"]
+        + weights["variance"] * metrics["variance_score"]
     )
-    metrics['overall'] = float(overall)
+    metrics["overall"] = float(overall)
 
     return float(overall), metrics
 

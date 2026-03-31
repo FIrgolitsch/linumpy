@@ -4,14 +4,13 @@ Slice interpolation utilities for missing or degraded serial sections.
 
 Consolidated from linum_interpolate_missing_slice.py.
 """
+
 import numpy as np
 import SimpleITK as sitk
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 
-from linumpy.stitching.registration import register_2d_images_sitk, apply_transform
-from linumpy.utils.image_quality import (
-    compute_ssim_3d, compute_edge_score, compute_variance_score
-)
+from linumpy.stitching.registration import apply_transform, register_2d_images_sitk
+from linumpy.utils.image_quality import compute_edge_score, compute_ssim_3d, compute_variance_score
 
 
 def compute_half_affine_transform(transform):
@@ -43,14 +42,11 @@ def compute_half_affine_transform(transform):
 
         eigenvalues, eigenvectors = np.linalg.eig(matrix)
         sqrt_eigenvalues = np.sqrt(eigenvalues.astype(complex))
-        half_matrix = (eigenvectors @ np.diag(sqrt_eigenvalues) @
-                       np.linalg.inv(eigenvectors)).real
+        half_matrix = (eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)).real
 
         # Correct half-translation: h(h(x)) = T(x) requires
         # (H_m + I) * h_t = t  =>  h_t = (H_m + I)^{-1} * t
-        half_translation = np.linalg.solve(
-            half_matrix + np.eye(2), translation
-        )
+        half_translation = np.linalg.solve(half_matrix + np.eye(2), translation)
 
         half_transform.SetMatrix(half_matrix.flatten().tolist())
         half_transform.SetTranslation(half_translation.tolist())
@@ -64,12 +60,9 @@ def compute_half_affine_transform(transform):
 
         eigenvalues, eigenvectors = np.linalg.eig(matrix)
         sqrt_eigenvalues = np.sqrt(eigenvalues.astype(complex))
-        half_matrix = (eigenvectors @ np.diag(sqrt_eigenvalues) @
-                       np.linalg.inv(eigenvectors)).real
+        half_matrix = (eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)).real
 
-        half_translation = np.linalg.solve(
-            half_matrix + np.eye(3), translation
-        )
+        half_translation = np.linalg.solve(half_matrix + np.eye(3), translation)
 
         half_transform.SetMatrix(half_matrix.flatten().tolist())
         half_transform.SetTranslation(half_translation.tolist())
@@ -98,9 +91,7 @@ def interpolate_average(vol_before: np.ndarray, vol_after: np.ndarray) -> np.nda
     return 0.5 * vol_before.astype(np.float32) + 0.5 * vol_after.astype(np.float32)
 
 
-def interpolate_weighted(vol_before: np.ndarray,
-                         vol_after: np.ndarray,
-                         sigma: float = 2.0) -> np.ndarray:
+def interpolate_weighted(vol_before: np.ndarray, vol_after: np.ndarray, sigma: float = 2.0) -> np.ndarray:
     """Weighted average with Gaussian smoothing along Z.
 
     Parameters
@@ -121,9 +112,7 @@ def interpolate_weighted(vol_before: np.ndarray,
     return gaussian_filter(avg, sigma=(sigma, 0, 0))
 
 
-def find_best_overlap_planes(vol_before: np.ndarray,
-                             vol_after: np.ndarray,
-                             search_window: int = 5):
+def find_best_overlap_planes(vol_before: np.ndarray, vol_after: np.ndarray, search_window: int = 5):
     """Find the best-correlated plane pair at the boundary between two volumes.
 
     In serial sectioning, each OCT volume images the tissue surface that
@@ -194,14 +183,16 @@ def find_best_overlap_planes(vol_before: np.ndarray,
     return ref_before, ref_after, best_corr
 
 
-def interpolate_registration_based(vol_before: np.ndarray,
-                                   vol_after: np.ndarray,
-                                   metric: str = 'MSE',
-                                   max_iterations: int = 1000,
-                                   reference_slice: int | None = None,
-                                   blend_method: str = 'gaussian',
-                                   overlap_search_window: int = 5,
-                                   min_overlap_correlation: float = 0.1) -> np.ndarray:
+def interpolate_registration_based(
+    vol_before: np.ndarray,
+    vol_after: np.ndarray,
+    metric: str = "MSE",
+    max_iterations: int = 1000,
+    reference_slice: int | None = None,
+    blend_method: str = "gaussian",
+    overlap_search_window: int = 5,
+    min_overlap_correlation: float = 0.1,
+) -> np.ndarray:
     """Interpolate a missing slice using registration-based morphing.
 
     1. Finds the best-correlated plane pair at the volume boundary using
@@ -251,15 +242,14 @@ def interpolate_registration_based(vol_before: np.ndarray,
     nz_out = min(nz_before, nz_after)
 
     if reference_slice is None:
-        ref_before, ref_after, best_corr = find_best_overlap_planes(
-            vol_before, vol_after, search_window=overlap_search_window
-        )
+        ref_before, ref_after, best_corr = find_best_overlap_planes(vol_before, vol_after, search_window=overlap_search_window)
         if best_corr < min_overlap_correlation:
-            print(f"  [interpolation] Overlap correlation {best_corr:.3f} is below threshold "
-                  f"{min_overlap_correlation:.3f} — falling back to simple average.")
+            print(
+                f"  [interpolation] Overlap correlation {best_corr:.3f} is below threshold "
+                f"{min_overlap_correlation:.3f} — falling back to simple average."
+            )
             return interpolate_average(vol_before[:nz_out], vol_after[:nz_out])
-        print(f"  [interpolation] Best overlap: before[{ref_before}] ↔ after[{ref_after}] "
-              f"(corr={best_corr:.3f})")
+        print(f"  [interpolation] Best overlap: before[{ref_before}] ↔ after[{ref_after}] (corr={best_corr:.3f})")
     else:
         ref_before = min(reference_slice, nz_before - 1)
         ref_after = min(reference_slice, nz_after - 1)
@@ -275,12 +265,13 @@ def interpolate_registration_based(vol_before: np.ndarray,
         moving_2d = (moving_2d - mn) / (mx - mn)
 
     transform_2d, _, _ = register_2d_images_sitk(
-        fixed_2d, moving_2d,
-        method='affine',
+        fixed_2d,
+        moving_2d,
+        method="affine",
         metric=metric,
         max_iterations=max_iterations,
         return_3d_transform=False,
-        verbose=False
+        verbose=False,
     )
 
     half_transform = compute_half_affine_transform(transform_2d)
@@ -293,10 +284,10 @@ def interpolate_registration_based(vol_before: np.ndarray,
         warped_before[z] = apply_transform(vol_before[z].astype(np.float32), half_transform)
         warped_after[z] = apply_transform(vol_after[z].astype(np.float32), inv_half_transform)
 
-    if blend_method == 'linear':
+    if blend_method == "linear":
         return 0.5 * warped_before + 0.5 * warped_after
 
-    elif blend_method == 'gaussian':
+    elif blend_method == "gaussian":
         mask_before = warped_before > 0
         mask_after = warped_after > 0
 
@@ -328,9 +319,7 @@ def interpolate_registration_based(vol_before: np.ndarray,
     raise ValueError(f"Unknown blend_method: {blend_method}")
 
 
-def assess_degraded_slice_quality(vol_degraded: np.ndarray,
-                                  vol_before: np.ndarray,
-                                  vol_after: np.ndarray):
+def assess_degraded_slice_quality(vol_degraded: np.ndarray, vol_before: np.ndarray, vol_after: np.ndarray):
     """Automatically assess the quality of a degraded slice.
 
     Uses SSIM (weight 0.5), edge preservation (0.3), and variance (0.2).
@@ -363,20 +352,18 @@ def assess_degraded_slice_quality(vol_degraded: np.ndarray,
     quality_score = 0.5 * ssim_score + 0.3 * edge_score + 0.2 * variance_score
 
     metrics = {
-        'ssim_before': ssim_before,
-        'ssim_after': ssim_after,
-        'ssim_mean': ssim_score,
-        'edge_preservation': edge_score,
-        'variance_ratio': variance_score,
-        'overall': quality_score
+        "ssim_before": ssim_before,
+        "ssim_after": ssim_after,
+        "ssim_mean": ssim_score,
+        "edge_preservation": edge_score,
+        "variance_ratio": variance_score,
+        "overall": quality_score,
     }
 
     return quality_score, metrics
 
 
-def blend_with_degraded(interpolated: np.ndarray,
-                        degraded: np.ndarray,
-                        quality_weight: float) -> np.ndarray:
+def blend_with_degraded(interpolated: np.ndarray, degraded: np.ndarray, quality_weight: float) -> np.ndarray:
     """Blend an interpolated result with a degraded slice weighted by quality.
 
     Parameters

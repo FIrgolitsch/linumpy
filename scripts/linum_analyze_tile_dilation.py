@@ -15,7 +15,6 @@ For troubleshooting 3D reconstruction artifacts in serial OCT microscopy,
 particularly for obliquely-cut samples where physical vs measured positions
 may diverge due to tissue deformation after slicing.
 """
-import linumpy._thread_config  # noqa: F401
 
 import argparse
 import json
@@ -25,15 +24,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 from linumpy.utils.io import add_overwrite_arg
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class NumpyEncoder(json.JSONEncoder):
     """JSON encoder that handles numpy types."""
+
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -47,21 +48,14 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('input_volume',
-                   help='Path to mosaic grid volume (.ome.zarr)')
-    p.add_argument('input_transform',
-                   help='Path to registration transform (.npy)')
-    p.add_argument('out_directory',
-                   help='Output directory for analysis results')
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_volume", help="Path to mosaic grid volume (.ome.zarr)")
+    p.add_argument("input_transform", help="Path to registration transform (.npy)")
+    p.add_argument("out_directory", help="Output directory for analysis results")
 
-    p.add_argument('--overlap_fraction', type=float, default=0.1,
-                   help='Expected overlap fraction between tiles [%(default)s]')
-    p.add_argument('--resolution', type=float, default=10.0,
-                   help='Resolution in µm/pixel [%(default)s]')
-    p.add_argument('--slice_id', type=str, default=None,
-                   help='Slice identifier for labeling outputs')
+    p.add_argument("--overlap_fraction", type=float, default=0.1, help="Expected overlap fraction between tiles [%(default)s]")
+    p.add_argument("--resolution", type=float, default=10.0, help="Resolution in µm/pixel [%(default)s]")
+    p.add_argument("--slice_id", type=str, default=None, help="Slice identifier for labeling outputs")
 
     add_overwrite_arg(p)
     return p
@@ -105,22 +99,22 @@ def estimate_scale_factors(expected, actual):
     slope_x, intercept_x, r_x, p_x, se_x = stats.linregress(expected[:, 1], actual[:, 1])
 
     return {
-        'scale_y': slope_y,
-        'scale_x': slope_x,
-        'offset_y': intercept_y,
-        'offset_x': intercept_x,
-        'r_squared_y': r_y**2,
-        'r_squared_x': r_x**2,
-        'anisotropy': abs(slope_y - slope_x),
-        'mean_scale': (slope_y + slope_x) / 2,
+        "scale_y": slope_y,
+        "scale_x": slope_x,
+        "offset_y": intercept_y,
+        "offset_x": intercept_x,
+        "r_squared_y": r_y**2,
+        "r_squared_x": r_x**2,
+        "anisotropy": abs(slope_y - slope_x),
+        "mean_scale": (slope_y + slope_x) / 2,
     }
 
 
 def analyze_residuals(expected, actual, scale_factors):
     """Analyze residuals after removing estimated scale."""
     # Predicted positions using estimated scale
-    predicted_y = scale_factors['scale_y'] * expected[:, 0] + scale_factors['offset_y']
-    predicted_x = scale_factors['scale_x'] * expected[:, 1] + scale_factors['offset_x']
+    predicted_y = scale_factors["scale_y"] * expected[:, 0] + scale_factors["offset_y"]
+    predicted_x = scale_factors["scale_x"] * expected[:, 1] + scale_factors["offset_x"]
 
     # Residuals
     residual_y = actual[:, 0] - predicted_y
@@ -128,12 +122,12 @@ def analyze_residuals(expected, actual, scale_factors):
     residual_mag = np.sqrt(residual_y**2 + residual_x**2)
 
     return {
-        'residual_y': residual_y,
-        'residual_x': residual_x,
-        'residual_magnitude': residual_mag,
-        'mean_residual': float(np.mean(residual_mag)),
-        'max_residual': float(np.max(residual_mag)),
-        'std_residual': float(np.std(residual_mag)),
+        "residual_y": residual_y,
+        "residual_x": residual_x,
+        "residual_magnitude": residual_mag,
+        "mean_residual": float(np.mean(residual_mag)),
+        "max_residual": float(np.max(residual_mag)),
+        "std_residual": float(np.std(residual_mag)),
     }
 
 
@@ -154,12 +148,12 @@ def detect_local_distortions(expected, actual, nx, ny):
     curvature_x = np.gradient(np.gradient(diff_grid_x, axis=1), axis=1).std()
 
     return {
-        'gradient_y': float(gradient_y),
-        'gradient_x': float(gradient_x),
-        'curvature_y': float(curvature_y),
-        'curvature_x': float(curvature_x),
-        'has_progressive_error': bool(abs(gradient_y) > 0.5 or abs(gradient_x) > 0.5),
-        'has_curvature': bool(curvature_y > 1.0 or curvature_x > 1.0),
+        "gradient_y": float(gradient_y),
+        "gradient_x": float(gradient_x),
+        "curvature_y": float(curvature_y),
+        "curvature_x": float(curvature_x),
+        "has_progressive_error": bool(abs(gradient_y) > 0.5 or abs(gradient_x) > 0.5),
+        "has_curvature": bool(curvature_y > 1.0 or curvature_x > 1.0),
     }
 
 
@@ -188,52 +182,58 @@ def generate_report(analysis, scale_factors, residuals, distortions, output_dir,
     ]
 
     # Interpret scale factors
-    scale_deviation = abs(scale_factors['mean_scale'] - 1.0)
+    scale_deviation = abs(scale_factors["mean_scale"] - 1.0)
     if scale_deviation < 0.001:
         lines.append("✓ Scale factor ~1.0: No significant dilation detected")
-    elif scale_factors['mean_scale'] > 1.0:
-        lines.append(f"⚠ Scale > 1.0: Tiles spread MORE than expected ({scale_deviation*100:.2f}% expansion)")
+    elif scale_factors["mean_scale"] > 1.0:
+        lines.append(f"⚠ Scale > 1.0: Tiles spread MORE than expected ({scale_deviation * 100:.2f}% expansion)")
         lines.append("  → Possible cause: Tissue relaxation/expansion after cutting")
     else:
-        lines.append(f"⚠ Scale < 1.0: Tiles spread LESS than expected ({scale_deviation*100:.2f}% contraction)")
+        lines.append(f"⚠ Scale < 1.0: Tiles spread LESS than expected ({scale_deviation * 100:.2f}% contraction)")
         lines.append("  → Possible cause: Stage calibration error or tissue shrinkage")
 
-    if scale_factors['anisotropy'] > 0.005:
+    if scale_factors["anisotropy"] > 0.005:
         lines.append(f"⚠ Anisotropic scaling detected: X/Y scales differ by {scale_factors['anisotropy']:.4f}")
         lines.append("  → May cause edge misalignment in 3D reconstruction")
 
-    lines.extend([
-        "",
-        "RESIDUAL ANALYSIS (after scale correction)",
-        "-" * 50,
-        f"Mean residual:  {residuals['mean_residual']:.2f} px",
-        f"Max residual:   {residuals['max_residual']:.2f} px",
-        f"Std residual:   {residuals['std_residual']:.2f} px",
-    ])
+    lines.extend(
+        [
+            "",
+            "RESIDUAL ANALYSIS (after scale correction)",
+            "-" * 50,
+            f"Mean residual:  {residuals['mean_residual']:.2f} px",
+            f"Max residual:   {residuals['max_residual']:.2f} px",
+            f"Std residual:   {residuals['std_residual']:.2f} px",
+        ]
+    )
 
-    lines.extend([
-        "",
-        "LOCAL DISTORTION ANALYSIS",
-        "-" * 50,
-        f"Progressive error (gradient Y): {distortions['gradient_y']:.4f} px/tile",
-        f"Progressive error (gradient X): {distortions['gradient_x']:.4f} px/tile",
-        f"Non-linearity (curvature Y):    {distortions['curvature_y']:.4f}",
-        f"Non-linearity (curvature X):    {distortions['curvature_x']:.4f}",
-    ])
+    lines.extend(
+        [
+            "",
+            "LOCAL DISTORTION ANALYSIS",
+            "-" * 50,
+            f"Progressive error (gradient Y): {distortions['gradient_y']:.4f} px/tile",
+            f"Progressive error (gradient X): {distortions['gradient_x']:.4f} px/tile",
+            f"Non-linearity (curvature Y):    {distortions['curvature_y']:.4f}",
+            f"Non-linearity (curvature X):    {distortions['curvature_x']:.4f}",
+        ]
+    )
 
-    if distortions['has_progressive_error']:
+    if distortions["has_progressive_error"]:
         lines.append("⚠ Progressive error detected: Position error grows across mosaic")
-    if distortions['has_curvature']:
+    if distortions["has_curvature"]:
         lines.append("⚠ Non-linear distortion detected: Local deformations present")
 
-    lines.extend([
-        "",
-        "=" * 70,
-    ])
+    lines.extend(
+        [
+            "",
+            "=" * 70,
+        ]
+    )
 
-    report_path = output_dir / 'dilation_analysis.txt'
-    with open(report_path, 'w') as f:
-        f.write('\n'.join(lines))
+    report_path = output_dir / "dilation_analysis.txt"
+    with open(report_path, "w") as f:
+        f.write("\n".join(lines))
 
     logger.info(f"Report saved to {report_path}")
     return report_path
@@ -247,52 +247,50 @@ def generate_plots(expected, actual, residuals, nx, ny, output_dir, slice_id=Non
 
     # 1. Vector field showing displacement
     ax1 = axes[0, 0]
-    ax1.quiver(expected[:, 1], expected[:, 0], diff[:, 1], diff[:, 0],
-               angles='xy', scale_units='xy', scale=1, alpha=0.7)
-    ax1.scatter(expected[:, 1], expected[:, 0], c='blue', s=20, alpha=0.5, label='Expected')
-    ax1.scatter(actual[:, 1], actual[:, 0], c='red', s=20, alpha=0.5, label='Actual')
-    ax1.set_xlabel('X position (pixels)')
-    ax1.set_ylabel('Y position (pixels)')
-    ax1.set_title('Tile Displacement Vectors')
+    ax1.quiver(expected[:, 1], expected[:, 0], diff[:, 1], diff[:, 0], angles="xy", scale_units="xy", scale=1, alpha=0.7)
+    ax1.scatter(expected[:, 1], expected[:, 0], c="blue", s=20, alpha=0.5, label="Expected")
+    ax1.scatter(actual[:, 1], actual[:, 0], c="red", s=20, alpha=0.5, label="Actual")
+    ax1.set_xlabel("X position (pixels)")
+    ax1.set_ylabel("Y position (pixels)")
+    ax1.set_title("Tile Displacement Vectors")
     ax1.legend()
     ax1.invert_yaxis()
 
     # 2. Displacement magnitude heatmap
     ax2 = axes[0, 1]
-    diff_mag = np.sqrt(diff[:, 0]**2 + diff[:, 1]**2)
+    diff_mag = np.sqrt(diff[:, 0] ** 2 + diff[:, 1] ** 2)
     diff_grid = diff_mag.reshape(nx, ny)
-    im = ax2.imshow(diff_grid, cmap='hot', interpolation='nearest')
-    ax2.set_xlabel('Tile X index')
-    ax2.set_ylabel('Tile Y index')
-    ax2.set_title('Displacement Magnitude (pixels)')
+    im = ax2.imshow(diff_grid, cmap="hot", interpolation="nearest")
+    ax2.set_xlabel("Tile X index")
+    ax2.set_ylabel("Tile Y index")
+    ax2.set_title("Displacement Magnitude (pixels)")
     plt.colorbar(im, ax=ax2)
 
     # 3. Expected vs Actual positions (scatter)
     ax3 = axes[1, 0]
-    ax3.scatter(expected[:, 1], actual[:, 1], alpha=0.5, label='X positions')
-    ax3.scatter(expected[:, 0], actual[:, 0], alpha=0.5, label='Y positions')
+    ax3.scatter(expected[:, 1], actual[:, 1], alpha=0.5, label="X positions")
+    ax3.scatter(expected[:, 0], actual[:, 0], alpha=0.5, label="Y positions")
     max_val = max(expected.max(), actual.max())
-    ax3.plot([0, max_val], [0, max_val], 'k--', label='Perfect fit')
-    ax3.set_xlabel('Expected position (pixels)')
-    ax3.set_ylabel('Actual position (pixels)')
-    ax3.set_title('Expected vs Actual Positions')
+    ax3.plot([0, max_val], [0, max_val], "k--", label="Perfect fit")
+    ax3.set_xlabel("Expected position (pixels)")
+    ax3.set_ylabel("Actual position (pixels)")
+    ax3.set_title("Expected vs Actual Positions")
     ax3.legend()
 
     # 4. Residuals distribution
     ax4 = axes[1, 1]
-    ax4.hist(residuals['residual_magnitude'], bins=30, edgecolor='black', alpha=0.7)
-    ax4.axvline(residuals['mean_residual'], color='red', linestyle='--',
-                label=f'Mean: {residuals["mean_residual"]:.1f} px')
-    ax4.set_xlabel('Residual magnitude (pixels)')
-    ax4.set_ylabel('Count')
-    ax4.set_title('Residual Distribution (after scale correction)')
+    ax4.hist(residuals["residual_magnitude"], bins=30, edgecolor="black", alpha=0.7)
+    ax4.axvline(residuals["mean_residual"], color="red", linestyle="--", label=f"Mean: {residuals['mean_residual']:.1f} px")
+    ax4.set_xlabel("Residual magnitude (pixels)")
+    ax4.set_ylabel("Count")
+    ax4.set_title("Residual Distribution (after scale correction)")
     ax4.legend()
 
     slice_label = f" (Slice {slice_id})" if slice_id else ""
-    fig.suptitle(f'Tile Dilation Analysis{slice_label}', fontsize=14)
+    fig.suptitle(f"Tile Dilation Analysis{slice_label}", fontsize=14)
     plt.tight_layout()
 
-    plot_path = output_dir / 'dilation_analysis.png'
+    plot_path = output_dir / "dilation_analysis.png"
     plt.savefig(plot_path, dpi=150)
     plt.close()
 
@@ -333,19 +331,19 @@ def main():
 
     # Compile full analysis
     analysis = {
-        'slice_id': args.slice_id,
-        'grid_size': [nx, ny],
-        'tile_shape': list(tile_shape),
-        'resolution_um': args.resolution,
-        'overlap_fraction': args.overlap_fraction,
-        'scale_factors': scale_factors,
-        'residuals': {k: v for k, v in residuals.items() if not isinstance(v, np.ndarray)},
-        'distortions': distortions,
+        "slice_id": args.slice_id,
+        "grid_size": [nx, ny],
+        "tile_shape": list(tile_shape),
+        "resolution_um": args.resolution,
+        "overlap_fraction": args.overlap_fraction,
+        "scale_factors": scale_factors,
+        "residuals": {k: v for k, v in residuals.items() if not isinstance(v, np.ndarray)},
+        "distortions": distortions,
     }
 
     # Save JSON
-    json_path = output_dir / 'dilation_analysis.json'
-    with open(json_path, 'w') as f:
+    json_path = output_dir / "dilation_analysis.json"
+    with open(json_path, "w") as f:
         json.dump(analysis, f, indent=2, cls=NumpyEncoder)
     logger.info(f"Analysis JSON saved to {json_path}")
 
@@ -358,16 +356,16 @@ def main():
     print("SUMMARY")
     print("=" * 50)
     print(f"Mean scale factor: {scale_factors['mean_scale']:.4f}")
-    if abs(scale_factors['mean_scale'] - 1.0) > 0.001:
-        deviation = (scale_factors['mean_scale'] - 1.0) * 100
+    if abs(scale_factors["mean_scale"] - 1.0) > 0.001:
+        deviation = (scale_factors["mean_scale"] - 1.0) * 100
         direction = "expansion" if deviation > 0 else "contraction"
         print(f"⚠ {abs(deviation):.2f}% {direction} detected")
     else:
         print("✓ No significant dilation")
 
-    if scale_factors['anisotropy'] > 0.005:
+    if scale_factors["anisotropy"] > 0.005:
         print(f"⚠ Anisotropic scaling: X/Y differ by {scale_factors['anisotropy']:.4f}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

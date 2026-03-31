@@ -16,9 +16,8 @@ Example usage:
     # Use a downsampled pyramid level for faster processing
     linum_generate_mosaic_aips.py /path/to/mosaics /path/to/aips --level 1
 """
-# Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
 
+# Configure thread limits before numpy/scipy imports
 import argparse
 from pathlib import Path
 
@@ -26,6 +25,7 @@ import numpy as np
 from skimage.io import imsave
 from tqdm.auto import tqdm
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 
@@ -53,8 +53,7 @@ def compute_aip(vol) -> np.ndarray:
             rmax = (i + 1) * tile_shape[1]
             cmin = j * tile_shape[2]
             cmax = (j + 1) * tile_shape[2]
-            aip[rmin:rmax, cmin:cmax] = np.asarray(
-                vol[:, rmin:rmax, cmin:cmax]).mean(axis=0)
+            aip[rmin:rmax, cmin:cmax] = np.asarray(vol[:, rmin:rmax, cmin:cmax]).mean(axis=0)
     return aip
 
 
@@ -82,17 +81,17 @@ def save_aip_png(aip: np.ndarray, output_path: Path) -> None:
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input",
-                   help="Input directory containing mosaic grid OME-Zarr files\n"
-                        "(mosaic_grid_3d_z*.ome.zarr).")
-    p.add_argument("output",
-                   help="Output directory where AIP PNG files will be saved.")
-    p.add_argument("--level", type=int, default=0,
-                   help="Pyramid level of the input mosaic grids to use.\n"
-                        "Higher levels are downsampled and faster to process.\n"
-                        "Default: 0 (full resolution)")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input", help="Input directory containing mosaic grid OME-Zarr files\n(mosaic_grid_3d_z*.ome.zarr).")
+    p.add_argument("output", help="Output directory where AIP PNG files will be saved.")
+    p.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        help="Pyramid level of the input mosaic grids to use.\n"
+        "Higher levels are downsampled and faster to process.\n"
+        "Default: 0 (full resolution)",
+    )
     return p
 
 
@@ -107,11 +106,11 @@ def main():
     mosaic_files = sorted(input_dir.glob("mosaic_grid_3d_z*.ome.zarr"))
     if not mosaic_files:
         raise FileNotFoundError(
-            f"No mosaic grid files found in {input_dir}.\n"
-            "Expected files matching 'mosaic_grid_3d_z*.ome.zarr'.")
+            f"No mosaic grid files found in {input_dir}.\nExpected files matching 'mosaic_grid_3d_z*.ome.zarr'."
+        )
 
     for mosaic_file in tqdm(mosaic_files, desc="Generating AIPs"):
-        slice_id = mosaic_file.name[len("mosaic_grid_3d_z"):-len(".ome.zarr")]
+        slice_id = mosaic_file.name[len("mosaic_grid_3d_z") : -len(".ome.zarr")]
         output_file = output_dir / f"aip_z{slice_id}.png"
         vol, _ = read_omezarr(mosaic_file, level=args.level)
         aip = compute_aip(vol)

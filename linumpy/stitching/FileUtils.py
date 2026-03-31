@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
 
-""" Defines various classes to manage the slicer data, subjects and studies."""
+"""Defines various classes to manage the slicer data, subjects and studies."""
 
 # TODO: add save and load to classes
 
@@ -16,8 +16,8 @@ from pathlib import Path
 import networkx
 import numpy as np
 
-from linumpy.stitching import topology
 from linumpy.io import data_io
+from linumpy.stitching import topology
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +40,15 @@ class Subject:
 
     def __str__(self):
         object_str = (
-                "Subject object with attributes :\n"
-                + "  - subj_id : '%s'\n" % (self.subj_id)
-                + "  - datadir : '%s'\n" % (self.data_dir)
-                + "  - result_dir : '%s'\n" % (self.result_dir)
-                + "  - acqinfo : "
-                + str(self.info)
-                + "\n"
-                + "  - data : "
-                + str(self.data[0])
+            "Subject object with attributes :\n"
+            + "  - subj_id : '%s'\n" % (self.subj_id)
+            + "  - datadir : '%s'\n" % (self.data_dir)
+            + "  - result_dir : '%s'\n" % (self.result_dir)
+            + "  - acqinfo : "
+            + str(self.info)
+            + "\n"
+            + "  - data : "
+            + str(self.data[0])
         )
         return object_str
 
@@ -302,15 +302,15 @@ class SlicerData:
     """
 
     def __init__(
-            self,
-            datadir,
-            gridshape=None,
-            name="data",
-            prototype="volume_x%02.0f_y%02.0f_z%02.0f",
-            extension=".bin",
-            volshape=[512, 512, 120],
-            pixelFormat="float32",
-            detect_data=False,
+        self,
+        datadir,
+        gridshape=None,
+        name="data",
+        prototype="volume_x%02.0f_y%02.0f_z%02.0f",
+        extension=".bin",
+        volshape=[512, 512, 120],
+        pixelFormat="float32",
+        detect_data=False,
     ):
         """Creating a new data object"""
         self.datadir = datadir
@@ -341,24 +341,24 @@ class SlicerData:
 
     def __str__(self):
         object_str = (
-                f"<{__class__.__name__}> object with attributes :\n"
-                + "  - name : '%s'\n" % (self.name)
-                + "  - datadir : '%s'\n" % (self.datadir)
-                + "  - prototype : '%s'\n" % (self.prototype)
-                + "  - extension : '%s'\n" % (self.extension)
-                + "  - volshape : "
-                + str(self.volshape)
-                + "\n"
-                + "  - gridshape : "
-                + str(self.gridshape)
-                + "\n"
-                + "  - format : '%s'\n" % (self.format)
-                + "  - resolution : "
-                + str(self.resolution)
-                + "\n"
-                + "  - startIdx : "
-                + str(self.startIdx)
-                + "\n"
+            f"<{__class__.__name__}> object with attributes :\n"
+            + "  - name : '%s'\n" % (self.name)
+            + "  - datadir : '%s'\n" % (self.datadir)
+            + "  - prototype : '%s'\n" % (self.prototype)
+            + "  - extension : '%s'\n" % (self.extension)
+            + "  - volshape : "
+            + str(self.volshape)
+            + "\n"
+            + "  - gridshape : "
+            + str(self.gridshape)
+            + "\n"
+            + "  - format : '%s'\n" % (self.format)
+            + "  - resolution : "
+            + str(self.resolution)
+            + "\n"
+            + "  - startIdx : "
+            + str(self.startIdx)
+            + "\n"
         )
         return object_str
 
@@ -372,16 +372,12 @@ class SlicerData:
             vol = self.loadFirstVolume()
             self.volshape = vol.shape
         else:
-            logger.info(
-                "This method only works for nii and nii.gz files. Keeping the original volshape."
-            )
+            logger.info("This method only works for nii and nii.gz files. Keeping the original volshape.")
 
     def set_gridOrigin(self, origin):
         """To define the mosaic grid origin as either: 'top-right', 'top-left', 'down-right' or 'down-left"""
         valid_origins = ["top-left", "top-right", "bottom-right", "bottom-left"]
-        assert (
-                origin in valid_origins
-        ), "Unknown origin. Must be one of these: {}".format(valid_origins)
+        assert origin in valid_origins, "Unknown origin. Must be one of these: {}".format(valid_origins)
         self.grid_origin = origin
         if origin == "top-left":
             gridOrigin = (0, 0, 0)
@@ -413,9 +409,7 @@ class SlicerData:
         x, y, z = pos
         filename = os.path.join(
             self.datadir,
-            self.prototype
-            % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2])
-            + self.extension,
+            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
         )
         return filename
 
@@ -433,7 +427,7 @@ class SlicerData:
         try:
             filename = self.get_tile_path(pos)
             return data_io.load_volumeByFilename(filename, self.volshape, self.format)
-        except:
+        except Exception:
             return None
 
     def loadFirstVolume(self):
@@ -456,9 +450,7 @@ class SlicerData:
         x, y, z = pos
         filename = os.path.join(
             self.datadir,
-            self.prototype
-            % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2])
-            + self.extension,
+            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
         )
 
         # Check if datadir exits
@@ -470,10 +462,7 @@ class SlicerData:
             if self.extension in [".nii", ".nii.gz"]:
                 data_io.save_nifti(filename, vol, pixelFormat=self.format)
             else:
-                logger.info(
-                    "Volume save is not implemented yet for extension '%s'"
-                    % self.extension
-                )
+                logger.info("Volume save is not implemented yet for extension '%s'" % self.extension)
                 raise NotImplementedError
         else:
             logger.info("This file already exists : '%s'" % (filename))
@@ -481,7 +470,8 @@ class SlicerData:
     def volumeIterator(self, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all volumes
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param mask: (ndarray, default=None) This mask specify which volumes to keep in the iteration.
 
         :returns: vol
@@ -504,7 +494,8 @@ class SlicerData:
         """Iterates over all volumes in slice z
 
         :param z: (int) Slice number over which the iteration occurs.
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param mask: (ndarray, default=None) This mask specify which volumes to keep in the iteration.
 
         :returns: vol
@@ -537,7 +528,8 @@ class SlicerData:
     def neighborIterator(self, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all neighbors
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
 
         :returns: vol1, vol2
         :returns: vol1, vol2, pos1, pos2 (if returnPos=True)
@@ -547,26 +539,21 @@ class SlicerData:
         # Loop over all slices
         for z in range(self.gridshape[2]):
             if returnPosOnly:
-                for pos1, pos2 in self.neighborSliceIterator(
-                        z, returnPos, mask, returnPosOnly
-                ):
+                for pos1, pos2 in self.neighborSliceIterator(z, returnPos, mask, returnPosOnly):
                     yield pos1, pos2
             else:
                 if returnPos:
-                    for vol1, vol2, pos1, pos2 in self.neighborSliceIterator(
-                            z, returnPos, mask=mask
-                    ):
+                    for vol1, vol2, pos1, pos2 in self.neighborSliceIterator(z, returnPos, mask=mask):
                         yield vol1, vol2, pos1, pos2
                 else:
-                    for vol1, vol2 in self.neighborSliceIterator(
-                            z, returnPos, mask=mask
-                    ):
+                    for vol1, vol2 in self.neighborSliceIterator(z, returnPos, mask=mask):
                         yield vol1, vol2
 
     def neighborSliceIterator(self, z, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all neighbors in slice z
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param z: (int) Slice number over which the iteration occurs.
 
         :returns: vol1, vol2
@@ -615,9 +602,7 @@ class SlicerData:
                         else:
                             yield vol1, vol2
 
-    def singlePassNeighborIterator(
-            self, origin, method="bfs", mask=None, returnPosOnly=False
-    ):
+    def singlePassNeighborIterator(self, origin, method="bfs", mask=None, returnPosOnly=False):
         """Iterator that traverse the whole dataset in a single pass.
 
         :param origin: (2x1 array) (grid coordinates (begins at 1))
@@ -628,20 +613,14 @@ class SlicerData:
         """
         for z in range(self.gridshape[2]):
             if returnPosOnly:
-                for pos1, pos2 in self.singlePassNeighborSliceIterator(
-                        origin, z, method, mask, returnPosOnly
-                ):
+                for pos1, pos2 in self.singlePassNeighborSliceIterator(origin, z, method, mask, returnPosOnly):
                     yield pos1, pos2
 
             else:
-                for vol1, vol2, pos1, pos2 in self.singlePassNeighborSliceIterator(
-                        origin, z, method, mask
-                ):
+                for vol1, vol2, pos1, pos2 in self.singlePassNeighborSliceIterator(origin, z, method, mask):
                     yield vol1, vol2, pos1, pos2
 
-    def singlePassNeighborSliceIterator(
-            self, origin, z, method="bfs", mask=None, returnPosOnly=False
-    ):
+    def singlePassNeighborSliceIterator(self, origin, z, method="bfs", mask=None, returnPosOnly=False):
         """Iterator that traverse slice z in a single pass.
 
         :param origin: (2x1 array) (grid coordinates (begins at 1))
@@ -676,9 +655,7 @@ class SlicerData:
         self.gridshape = detect_gridshape(self.datadir, self.prototype, self.extension)
 
 
-def detect_gridshape(
-        datadir, prototype="volume_x%02.0f_y%02.0f_z%02.0f", extension=".bin"
-):
+def detect_gridshape(datadir, prototype="volume_x%02.0f_y%02.0f_z%02.0f", extension=".bin"):
     # List all files in datadir
     if isinstance(datadir, str):
         fileList = os.listdir(datadir)
@@ -689,20 +666,14 @@ def detect_gridshape(
     filename_rx_prototype = prototype + extension
 
     # Replacing %ds
-    filename_rx_prototype = re.sub("%d", "(?P<x>\d+)", filename_rx_prototype, count=1)
-    filename_rx_prototype = re.sub("%d", "(?P<y>\d+)", filename_rx_prototype, count=1)
-    filename_rx_prototype = re.sub("%d", "(?P<z>\d+)", filename_rx_prototype, count=1)
+    filename_rx_prototype = re.sub("%d", r"(?P<x>\d+)", filename_rx_prototype, count=1)
+    filename_rx_prototype = re.sub("%d", r"(?P<y>\d+)", filename_rx_prototype, count=1)
+    filename_rx_prototype = re.sub("%d", r"(?P<z>\d+)", filename_rx_prototype, count=1)
 
     # Replacing %fs
-    filename_rx_prototype = re.sub(
-        "%[0-9]*[.]*[0-9]*f", "(?P<x>\d+)", filename_rx_prototype, count=1
-    )
-    filename_rx_prototype = re.sub(
-        "%[0-9]*[.]*[0-9]*f", "(?P<y>\d+)", filename_rx_prototype, count=1
-    )
-    filename_rx_prototype = re.sub(
-        "%[0-9]*[.]*[0-9]*f", "(?P<z>\d+)", filename_rx_prototype, count=1
-    )
+    filename_rx_prototype = re.sub("%[0-9]*[.]*[0-9]*f", r"(?P<x>\d+)", filename_rx_prototype, count=1)
+    filename_rx_prototype = re.sub("%[0-9]*[.]*[0-9]*f", r"(?P<y>\d+)", filename_rx_prototype, count=1)
+    filename_rx_prototype = re.sub("%[0-9]*[.]*[0-9]*f", r"(?P<z>\d+)", filename_rx_prototype, count=1)
 
     # Prepare sniffer
     filename_rx = re.compile(filename_rx_prototype)
@@ -740,7 +711,7 @@ def detect_gridshape(
             int(maxY) - int(minY) + 1,
             int(maxZ) - int(minZ) + 1,
         )
-    except:
+    except Exception:
         logger.info("Not able to detect gridshape. Setting to 0")
         gridshape = (0, 0, 0)
 
@@ -763,7 +734,8 @@ def dataSniffer(datadir: str) -> dict:
         r"(?P<prefix>[A-Za-z-_]+)(?P<x>\d+)(?P<bXY>[A-Za-z-_]+)(?P<y>\d+)(?P<bYZ>[A-Za-z-_]+)(?P<z>\d+)(?P<suffix>.*)(?P<ext>\..*)"
     )
     filename_rx_woExt = re.compile(
-        r"(?P<prefix>[A-Za-z-_]+)(?P<x>\d+)(?P<bXY>[A-Za-z-_]+)(?P<y>\d+)(?P<bYZ>[A-Za-z-_]+)(?P<z>\d+)(?P<suffix>.*)")
+        r"(?P<prefix>[A-Za-z-_]+)(?P<x>\d+)(?P<bXY>[A-Za-z-_]+)(?P<y>\d+)(?P<bYZ>[A-Za-z-_]+)(?P<z>\d+)(?P<suffix>.*)"
+    )
 
     # Grap all volume-like files
     dataList = list()
@@ -834,15 +806,7 @@ def dataSniffer(datadir: str) -> dict:
     idxFormat = "%d"
     if min(lengthPos) >= 2:
         idxFormat = f"%0{min(lengthPos)}.0f"
-    prototype = (
-            list(prefix)[0]
-            + idxFormat
-            + list(bXY)[0]
-            + idxFormat
-            + list(bYZ)[0]
-            + idxFormat
-            + list(suffix)[0]
-    )
+    prototype = list(prefix)[0] + idxFormat + list(bXY)[0] + idxFormat + list(bYZ)[0] + idxFormat + list(suffix)[0]
     logger.info("Generated file prototype: {}".format(prototype))
 
     # Detect missing files
@@ -855,11 +819,7 @@ def dataSniffer(datadir: str) -> dict:
                     data_mask[x - minX, y - minY, z - minZ] = True
 
     nVols = gridshape[0] * gridshape[1] * gridshape[2]
-    logger.info(
-        "There are {}/{} missing files in this grid.".format(
-            nVols - data_mask.sum(), nVols
-        )
-    )
+    logger.info("There are {}/{} missing files in this grid.".format(nVols - data_mask.sum(), nVols))
 
     # Creating the output dict
     data_info = dict()

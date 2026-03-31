@@ -25,10 +25,7 @@ import shutil
 import sys
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -228,14 +225,14 @@ def delete_bin_files(data_dir: Path, dry_run: bool = False) -> int:
         total_size += file_size
 
         if dry_run:
-            logger.info(f"[DRY RUN] Would delete: {bin_file} ({file_size / (1024 ** 2):.2f} MB)")
+            logger.info(f"[DRY RUN] Would delete: {bin_file} ({file_size / (1024**2):.2f} MB)")
         else:
             bin_file.unlink()
             logger.info(f"Deleted: {bin_file}")
 
         deleted_count += 1
 
-    logger.info(f"Total size of .bin files: {total_size / (1024 ** 3):.2f} GB")
+    logger.info(f"Total size of .bin files: {total_size / (1024**3):.2f} GB")
 
     return deleted_count
 
@@ -356,29 +353,17 @@ def main():
 Examples:
   # Dry run to see what would be deleted
   %(prog)s /path/to/sub-24 --dry-run
-  
+
   # Actually clean the data
   %(prog)s /path/to/sub-24
-        """
+        """,
     )
 
-    parser.add_argument(
-        "data_directory",
-        type=Path,
-        help="Path to the subject data directory (e.g., /path/to/sub-24)"
-    )
+    parser.add_argument("data_directory", type=Path, help="Path to the subject data directory (e.g., /path/to/sub-24)")
 
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without actually doing it"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without actually doing it")
 
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose logging"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
@@ -389,7 +374,7 @@ Examples:
     if not args.dry_run:
         print(f"\nWARNING: This will DELETE all .bin files in {args.data_directory}")
         response = input("Are you sure you want to continue? [y/N]: ")
-        if response.lower() != 'y':
+        if response.lower() != "y":
             print("Operation cancelled")
             return 0
 

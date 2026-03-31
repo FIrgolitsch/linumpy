@@ -4,20 +4,17 @@
 """Convert a nifti volume into a nrrd volume"""
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 
-import dask.array as da
 import nibabel as nib
-import numpy as np
 import nrrd
+import numpy as np
+
+import linumpy._thread_config  # noqa: F401
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
-    )
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("input", help="Full path to a 3D .nii file")
     p.add_argument("output", help="Full path to the .nrrd file")
     p.add_argument(

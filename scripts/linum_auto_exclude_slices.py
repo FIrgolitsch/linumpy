@@ -27,21 +27,24 @@ logger = logging.getLogger(__name__)
 
 def build_parser():
     p = argparse.ArgumentParser(
-        description="Detect consecutive low-quality registration clusters "
-                    "and output a force-skip list for stacking.",
+        description="Detect consecutive low-quality registration clusters and output a force-skip list for stacking.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    p.add_argument("transforms_dir", type=Path,
-                   help="Directory containing per-slice subdirectories with "
-                        "pairwise_registration_metrics.json files.")
-    p.add_argument("output_csv", type=Path,
-                   help="Output CSV listing slice IDs to force-skip.")
-    p.add_argument("--consecutive_threshold", type=int, default=3,
-                   help="Minimum consecutive bad pairs to trigger exclusion. "
-                        "[%(default)s]")
-    p.add_argument("--z_corr_threshold", type=float, default=0.4,
-                   help="z_correlation below this marks a pair as bad. "
-                        "[%(default)s]")
+    p.add_argument(
+        "transforms_dir",
+        type=Path,
+        help="Directory containing per-slice subdirectories with pairwise_registration_metrics.json files.",
+    )
+    p.add_argument("output_csv", type=Path, help="Output CSV listing slice IDs to force-skip.")
+    p.add_argument(
+        "--consecutive_threshold",
+        type=int,
+        default=3,
+        help="Minimum consecutive bad pairs to trigger exclusion. [%(default)s]",
+    )
+    p.add_argument(
+        "--z_corr_threshold", type=float, default=0.4, help="z_correlation below this marks a pair as bad. [%(default)s]"
+    )
     return p
 
 
@@ -102,8 +105,7 @@ def find_bad_clusters(metrics, consecutive_threshold, z_corr_threshold):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO,
-                        format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = build_parser().parse_args()
 
     metrics = load_registration_metrics(args.transforms_dir)
@@ -117,9 +119,7 @@ def main():
 
     logger.info("Loaded %d registration metrics", len(metrics))
 
-    clusters = find_bad_clusters(
-        metrics, args.consecutive_threshold, args.z_corr_threshold
-    )
+    clusters = find_bad_clusters(metrics, args.consecutive_threshold, args.z_corr_threshold)
 
     exclude_slices = []
     for cluster in clusters:
@@ -127,27 +127,32 @@ def main():
         corrs = [s[1] for s in cluster]
         logger.info(
             "Bad cluster: slices z%s–z%s (%d pairs, z_corr range %.3f–%.3f)",
-            str(ids[0]).zfill(2), str(ids[-1]).zfill(2),
-            len(cluster), min(corrs), max(corrs),
+            str(ids[0]).zfill(2),
+            str(ids[-1]).zfill(2),
+            len(cluster),
+            min(corrs),
+            max(corrs),
         )
         for slice_id, z_corr in cluster:
-            exclude_slices.append({
-                "slice_id": slice_id,
-                "z_correlation": round(z_corr, 4),
-                "exclude_reason": "consecutive_low_z_corr",
-            })
+            exclude_slices.append(
+                {
+                    "slice_id": slice_id,
+                    "z_correlation": round(z_corr, 4),
+                    "exclude_reason": "consecutive_low_z_corr",
+                }
+            )
 
     # Write output CSV
     with open(args.output_csv, "w", newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["slice_id", "z_correlation", "exclude_reason"]
-        )
+        writer = csv.DictWriter(f, fieldnames=["slice_id", "z_correlation", "exclude_reason"])
         writer.writeheader()
         writer.writerows(exclude_slices)
 
     logger.info(
         "Auto-exclude: %d slices in %d cluster(s) → %s",
-        len(exclude_slices), len(clusters), args.output_csv,
+        len(exclude_slices),
+        len(clusters),
+        args.output_csv,
     )
 
 

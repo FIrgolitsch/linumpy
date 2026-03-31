@@ -19,8 +19,6 @@ blending quality at tile boundaries.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 import json
 import logging
@@ -28,58 +26,72 @@ from pathlib import Path
 
 import numpy as np
 
-from linumpy.io.zarr import read_omezarr, OmeZarrWriter
-from linumpy.stitching.motor import (compute_motor_positions,
-                                     compute_affine_positions,
-                                     compute_affine_output_shape,
-                                     compute_registration_refinements,
-                                     estimate_affine_from_pairs,
-                                     apply_blend_shift_refinement)
+import linumpy._thread_config  # noqa: F401
+from linumpy.io.zarr import read_omezarr
 from linumpy.stitching.mosaic_grid import addVolumeToMosaic
+from linumpy.stitching.motor import (
+    apply_blend_shift_refinement,
+    compute_affine_output_shape,
+    compute_affine_positions,
+    compute_registration_refinements,
+    estimate_affine_from_pairs,
+)
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input_volume",
-                   help="Full path to a 3D mosaic grid volume (.ome.zarr)")
-    p.add_argument("output_volume",
-                   help="Output stitched mosaic filename (.ome.zarr)")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_volume", help="Full path to a 3D mosaic grid volume (.ome.zarr)")
+    p.add_argument("output_volume", help="Output stitched mosaic filename (.ome.zarr)")
 
-    p.add_argument("--overlap_fraction", type=float, default=0.2,
-                   help="Expected tile overlap fraction (0-1). [%(default)s]")
-    p.add_argument("--blending_method", type=str, default="diffusion",
-                   choices=["none", "average", "diffusion"],
-                   help="Blending method for overlap regions. [%(default)s]")
-    p.add_argument("--refinement_mode", type=str, default="blend_shift",
-                   choices=["none", "blend_shift", "full_shift"],
-                   help="How to apply registration refinements:\n"
-                        "  none: Pure motor positions, no refinement\n"
-                        "  blend_shift: Shift blending weights (recommended)\n"
-                        "  full_shift: Apply sub-pixel shifts to tiles [%(default)s]")
-    p.add_argument("--max_refinement_px", type=float, default=10.0,
-                   help="Maximum allowed refinement shift in pixels. [%(default)s]\n"
-                        "Larger shifts are clamped to prevent bad registrations.")
-    p.add_argument("--input_transform", type=str, default=None,
-                   help="Pre-computed 2x2 affine transform (.npy) for tile positioning.\n"
-                        "If not provided, the transform is estimated from neighbor\n"
-                        "tile correlation within the slice.")
-    p.add_argument("--output_refinements", type=str, default=None,
-                   help="Output JSON file to save computed refinements for analysis.")
-    p.add_argument("--overwrite", "-f", action="store_true",
-                   help="Overwrite output if it exists.")
+    p.add_argument("--overlap_fraction", type=float, default=0.2, help="Expected tile overlap fraction (0-1). [%(default)s]")
+    p.add_argument(
+        "--blending_method",
+        type=str,
+        default="diffusion",
+        choices=["none", "average", "diffusion"],
+        help="Blending method for overlap regions. [%(default)s]",
+    )
+    p.add_argument(
+        "--refinement_mode",
+        type=str,
+        default="blend_shift",
+        choices=["none", "blend_shift", "full_shift"],
+        help="How to apply registration refinements:\n"
+        "  none: Pure motor positions, no refinement\n"
+        "  blend_shift: Shift blending weights (recommended)\n"
+        "  full_shift: Apply sub-pixel shifts to tiles [%(default)s]",
+    )
+    p.add_argument(
+        "--max_refinement_px",
+        type=float,
+        default=10.0,
+        help="Maximum allowed refinement shift in pixels. [%(default)s]\n"
+        "Larger shifts are clamped to prevent bad registrations.",
+    )
+    p.add_argument(
+        "--input_transform",
+        type=str,
+        default=None,
+        help="Pre-computed 2x2 affine transform (.npy) for tile positioning.\n"
+        "If not provided, the transform is estimated from neighbor\n"
+        "tile correlation within the slice.",
+    )
+    p.add_argument(
+        "--output_refinements", type=str, default=None, help="Output JSON file to save computed refinements for analysis."
+    )
+    p.add_argument("--overwrite", "-f", action="store_true", help="Overwrite output if it exists.")
     return p
 
 
-def stitch_with_refinements(volume, tile_shape, positions, blending_method,
-                           refinement_mode, refinements, output_shape):
+def stitch_with_refinements(
+    volume, tile_shape, positions, blending_method, refinement_mode, refinements, output_shape, overlap_fraction=0.2
+):
     """
     Stitch tiles using pre-computed positions with optional registration refinements.
     """
-    nz = volume.shape[0]
     tile_height, tile_width = tile_shape[1], tile_shape[2]
     nx = volume.shape[1] // tile_height
     ny = volume.shape[2] // tile_width
@@ -111,49 +123,49 @@ def stitch_with_refinements(volume, tile_shape, positions, blending_method,
             pos = list(positions[i * ny + j])
 
             # Apply refinements if requested
-            if refinement_mode == 'blend_shift':
+            if refinement_mode == "blend_shift":
                 # Collect refinements for this tile from its neighbors
                 tile_refinements = []
 
                 # From horizontal neighbor to the left
-                if j > 0 and (i, j-1) in refinements.get('horizontal', {}):
-                    ref = refinements['horizontal'][(i, j-1)]
-                    tile_refinements.append({'dy': -ref['dy'], 'dx': -ref['dx']})
+                if j > 0 and (i, j - 1) in refinements.get("horizontal", {}):
+                    ref = refinements["horizontal"][(i, j - 1)]
+                    tile_refinements.append({"dy": -ref["dy"], "dx": -ref["dx"]})
 
                 # From horizontal neighbor to the right
-                if (i, j) in refinements.get('horizontal', {}):
-                    ref = refinements['horizontal'][(i, j)]
+                if (i, j) in refinements.get("horizontal", {}):
+                    ref = refinements["horizontal"][(i, j)]
                     tile_refinements.append(ref)
 
                 # From vertical neighbor above
-                if i > 0 and (i-1, j) in refinements.get('vertical', {}):
-                    ref = refinements['vertical'][(i-1, j)]
-                    tile_refinements.append({'dy': -ref['dy'], 'dx': -ref['dx']})
+                if i > 0 and (i - 1, j) in refinements.get("vertical", {}):
+                    ref = refinements["vertical"][(i - 1, j)]
+                    tile_refinements.append({"dy": -ref["dy"], "dx": -ref["dx"]})
 
                 # From vertical neighbor below
-                if (i, j) in refinements.get('vertical', {}):
-                    ref = refinements['vertical'][(i, j)]
+                if (i, j) in refinements.get("vertical", {}):
+                    ref = refinements["vertical"][(i, j)]
                     tile_refinements.append(ref)
 
                 tile = apply_blend_shift_refinement(tile, tile_refinements, overlap_fraction)
 
-            elif refinement_mode == 'full_shift':
+            elif refinement_mode == "full_shift":
                 # Apply average refinement as position offset (sub-pixel)
                 # This is more aggressive - shifts the entire tile
                 tile_refinements = []
 
-                if j > 0 and (i, j-1) in refinements.get('horizontal', {}):
-                    tile_refinements.append(refinements['horizontal'][(i, j-1)])
-                if (i, j) in refinements.get('horizontal', {}):
-                    tile_refinements.append(refinements['horizontal'][(i, j)])
-                if i > 0 and (i-1, j) in refinements.get('vertical', {}):
-                    tile_refinements.append(refinements['vertical'][(i-1, j)])
-                if (i, j) in refinements.get('vertical', {}):
-                    tile_refinements.append(refinements['vertical'][(i, j)])
+                if j > 0 and (i, j - 1) in refinements.get("horizontal", {}):
+                    tile_refinements.append(refinements["horizontal"][(i, j - 1)])
+                if (i, j) in refinements.get("horizontal", {}):
+                    tile_refinements.append(refinements["horizontal"][(i, j)])
+                if i > 0 and (i - 1, j) in refinements.get("vertical", {}):
+                    tile_refinements.append(refinements["vertical"][(i - 1, j)])
+                if (i, j) in refinements.get("vertical", {}):
+                    tile_refinements.append(refinements["vertical"][(i, j)])
 
                 if tile_refinements:
-                    avg_dy = np.mean([r['dy'] for r in tile_refinements]) / 2
-                    avg_dx = np.mean([r['dx'] for r in tile_refinements]) / 2
+                    avg_dy = np.mean([r["dy"] for r in tile_refinements]) / 2
+                    avg_dx = np.mean([r["dx"] for r in tile_refinements]) / 2
                     pos[0] += avg_dy
                     pos[1] += avg_dx
 
@@ -181,7 +193,7 @@ def main():
 
     # Try to get tile shape from chunks
     vol_dask, _ = read_omezarr(str(input_file), level=0)
-    if hasattr(vol_dask, 'chunks'):
+    if hasattr(vol_dask, "chunks"):
         tile_shape = vol_dask.chunks
 
     logger.info(f"Volume shape: {volume.shape}")
@@ -195,12 +207,9 @@ def main():
 
     # Correlate neighboring tiles (needed for affine estimation and blend refinement)
     logger.info("Computing neighbor tile correlations...")
-    refinements = compute_registration_refinements(
-        volume, tile_shape, nx, ny,
-        args.overlap_fraction, args.max_refinement_px
-    )
+    refinements = compute_registration_refinements(volume, tile_shape, nx, ny, args.overlap_fraction, args.max_refinement_px)
 
-    stats = refinements['stats']
+    stats = refinements["stats"]
     logger.info(f"  Total tile pairs: {stats['total_pairs']}")
     logger.info(f"  Valid registrations: {stats['valid_pairs']}")
     logger.info(f"  Clamped (large shifts): {stats['clamped_pairs']}")
@@ -212,26 +221,22 @@ def main():
         transform = np.load(args.input_transform)
         logger.info(f"Loaded pre-computed transform from {args.input_transform}")
         from linumpy.stitching.motor import _extract_displacement_params
-        diagnostics = _extract_displacement_params(transform, tile_shape,
-                                                   args.overlap_fraction)
-        diagnostics['fallback'] = False
-        diagnostics['n_pairs'] = stats['valid_pairs']
-        diagnostics['lstsq_residual'] = 0.0
+
+        diagnostics = _extract_displacement_params(transform, tile_shape, args.overlap_fraction)
+        diagnostics["fallback"] = False
+        diagnostics["n_pairs"] = stats["valid_pairs"]
+        diagnostics["lstsq_residual"] = 0.0
     else:
-        transform, diagnostics = estimate_affine_from_pairs(
-            refinements['pairs'], tile_shape, args.overlap_fraction
-        )
+        transform, diagnostics = estimate_affine_from_pairs(refinements["pairs"], tile_shape, args.overlap_fraction)
 
     logger.info("Displacement model (Lefebvre et al. 2017):")
-    logger.info(f"  Transform: [[{transform[0,0]:.2f}, {transform[0,1]:.2f}],")
-    logger.info(f"              [{transform[1,0]:.2f}, {transform[1,1]:.2f}]]")
-    if not diagnostics.get('fallback', False):
+    logger.info(f"  Transform: [[{transform[0, 0]:.2f}, {transform[0, 1]:.2f}],")
+    logger.info(f"              [{transform[1, 0]:.2f}, {transform[1, 1]:.2f}]]")
+    if not diagnostics.get("fallback", False):
         logger.info(f"  Scan-to-stage rotation (θ): {diagnostics['theta_deg']:.3f}°")
         logger.info(f"  Non-perpendicularity (φ):   {diagnostics['phi_deg']:.3f}°")
-        logger.info(f"  Effective overlap Ox:        {diagnostics['Ox_fraction']:.4f} "
-                     f"(expected {args.overlap_fraction:.4f})")
-        logger.info(f"  Effective overlap Oy:        {diagnostics['Oy_fraction']:.4f} "
-                     f"(expected {args.overlap_fraction:.4f})")
+        logger.info(f"  Effective overlap Ox:        {diagnostics['Ox_fraction']:.4f} (expected {args.overlap_fraction:.4f})")
+        logger.info(f"  Effective overlap Oy:        {diagnostics['Oy_fraction']:.4f} (expected {args.overlap_fraction:.4f})")
         logger.info(f"  Off-diagonal terms:          {diagnostics['off_diagonal_px']} px/tile")
 
     # Compute tile positions from affine transform
@@ -243,18 +248,18 @@ def main():
     # Save refinements + affine diagnostics
     if args.output_refinements:
         json_refinements = {
-            'horizontal': {f"{k[0]},{k[1]}": v for k, v in refinements['horizontal'].items()},
-            'vertical': {f"{k[0]},{k[1]}": v for k, v in refinements['vertical'].items()},
-            'stats': refinements['stats'],
-            'displacement_model': diagnostics,
-            'parameters': {
-                'overlap_fraction': args.overlap_fraction,
-                'max_refinement_px': args.max_refinement_px,
-                'refinement_mode': args.refinement_mode,
-                'input_transform': args.input_transform,
-            }
+            "horizontal": {f"{k[0]},{k[1]}": v for k, v in refinements["horizontal"].items()},
+            "vertical": {f"{k[0]},{k[1]}": v for k, v in refinements["vertical"].items()},
+            "stats": refinements["stats"],
+            "displacement_model": diagnostics,
+            "parameters": {
+                "overlap_fraction": args.overlap_fraction,
+                "max_refinement_px": args.max_refinement_px,
+                "refinement_mode": args.refinement_mode,
+                "input_transform": args.input_transform,
+            },
         }
-        with open(args.output_refinements, 'w') as f:
+        with open(args.output_refinements, "w") as f:
             json.dump(json_refinements, f, indent=2)
         logger.info(f"Refinements saved to: {args.output_refinements}")
 
@@ -263,14 +268,22 @@ def main():
     # Stitch with affine positions
     logger.info(f"Stitching with {args.blending_method} blending...")
     output = stitch_with_refinements(
-        volume, tile_shape, positions, args.blending_method,
-        args.refinement_mode, refinements, output_shape
+        volume,
+        tile_shape,
+        positions,
+        args.blending_method,
+        args.refinement_mode,
+        refinements,
+        output_shape,
+        args.overlap_fraction,
     )
 
     # Save output
     logger.info(f"Saving to: {output_file}")
-    from linumpy.io.zarr import save_omezarr
     import dask.array as da
+
+    from linumpy.io.zarr import save_omezarr
+
     save_omezarr(da.from_array(output), str(output_file), resolution, n_levels=3)
 
     logger.info("Done!")

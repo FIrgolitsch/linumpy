@@ -2,18 +2,24 @@
 import os as _os
 
 from linumpy._thread_config import (
-    configure_thread_limits,
-    apply_threadpool_limits,
-    configure_all_libraries,
-    configure_sitk,
+    apply_threadpool_limits as apply_threadpool_limits,
+)
+from linumpy._thread_config import (
+    configure_all_libraries as configure_all_libraries,
+)
+from linumpy._thread_config import (
+    configure_sitk as configure_sitk,
+)
+from linumpy._thread_config import (
+    configure_thread_limits as configure_thread_limits,
 )
 
 
 def get_home():
-    """ Set a user-writeable file-system location to put files. """
-    if 'LINUMPY_HOME' in _os.environ:
-        return _os.environ['LINUMPY_HOME']
-    return _os.path.join(_os.path.expanduser('~'), '.linumpy')
+    """Set a user-writeable file-system location to put files."""
+    if "LINUMPY_HOME" in _os.environ:
+        return _os.environ["LINUMPY_HOME"]
+    return _os.path.join(_os.path.expanduser("~"), ".linumpy")
 
 
 def get_root():

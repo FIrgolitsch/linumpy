@@ -8,7 +8,7 @@ from . import GPU_AVAILABLE, to_cpu
 def fix_galvo_shift(volume, shift, axis=1, use_gpu=True):
     """
     GPU-accelerated galvo shift correction.
-    
+
     Parameters
     ----------
     volume : np.ndarray
@@ -19,7 +19,7 @@ def fix_galvo_shift(volume, shift, axis=1, use_gpu=True):
         Axis along which to shift
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -30,6 +30,7 @@ def fix_galvo_shift(volume, shift, axis=1, use_gpu=True):
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         vol_gpu = cp.asarray(volume)
         result = cp.roll(vol_gpu, shift, axis=axis)
         return to_cpu(result)
@@ -37,13 +38,12 @@ def fix_galvo_shift(volume, shift, axis=1, use_gpu=True):
         return np.roll(volume, shift, axis=axis)
 
 
-def detect_and_fix_galvo_shift(volume, n_pixel_return=40, threshold=0.5,
-                               axis=1, use_gpu=True):
+def detect_and_fix_galvo_shift(volume, n_pixel_return=40, threshold=0.5, axis=1, use_gpu=True):
     """
     Detect and conditionally fix galvo shift.
-    
+
     Note: Detection uses CPU (GPU offers no benefit). Only the fix uses GPU.
-    
+
     Parameters
     ----------
     volume : np.ndarray
@@ -56,7 +56,7 @@ def detect_and_fix_galvo_shift(volume, n_pixel_return=40, threshold=0.5,
         A-line axis
     use_gpu : bool
         Whether to use GPU for the fix operation
-        
+
     Returns
     -------
     np.ndarray
@@ -72,14 +72,10 @@ def detect_and_fix_galvo_shift(volume, n_pixel_return=40, threshold=0.5,
     # Detect shift using CPU (GPU offers no benefit for detection)
     shift, confidence = detect_galvo_shift(aip, n_pixel_return)
 
-    result = {
-        'shift': shift,
-        'confidence': confidence,
-        'fixed': False
-    }
+    result = {"shift": shift, "confidence": confidence, "fixed": False}
 
     if confidence >= threshold:
         volume = fix_galvo_shift(volume, shift, axis=axis, use_gpu=use_gpu)
-        result['fixed'] = True
+        result["fixed"] = True
 
     return volume, result

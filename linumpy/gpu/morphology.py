@@ -13,7 +13,7 @@ from . import GPU_AVAILABLE, to_cpu
 def binary_closing(mask, iterations=1, structure=None, use_gpu=True):
     """
     GPU-accelerated binary closing.
-    
+
     Parameters
     ----------
     mask : np.ndarray
@@ -24,7 +24,7 @@ def binary_closing(mask, iterations=1, structure=None, use_gpu=True):
         Structuring element
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -62,7 +62,7 @@ def binary_closing(mask, iterations=1, structure=None, use_gpu=True):
 def binary_opening(mask, iterations=1, structure=None, use_gpu=True):
     """
     GPU-accelerated binary opening.
-    
+
     Parameters
     ----------
     mask : np.ndarray
@@ -73,7 +73,7 @@ def binary_opening(mask, iterations=1, structure=None, use_gpu=True):
         Structuring element
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -111,7 +111,7 @@ def binary_opening(mask, iterations=1, structure=None, use_gpu=True):
 def binary_dilation(mask, iterations=1, structure=None, use_gpu=True):
     """
     GPU-accelerated binary dilation.
-    
+
     Parameters
     ----------
     mask : np.ndarray
@@ -122,7 +122,7 @@ def binary_dilation(mask, iterations=1, structure=None, use_gpu=True):
         Structuring element
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -160,7 +160,7 @@ def binary_dilation(mask, iterations=1, structure=None, use_gpu=True):
 def binary_erosion(mask, iterations=1, structure=None, use_gpu=True):
     """
     GPU-accelerated binary erosion.
-    
+
     Parameters
     ----------
     mask : np.ndarray
@@ -171,7 +171,7 @@ def binary_erosion(mask, iterations=1, structure=None, use_gpu=True):
         Structuring element
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -209,14 +209,14 @@ def binary_erosion(mask, iterations=1, structure=None, use_gpu=True):
 def binary_fill_holes(mask, use_gpu=True):
     """
     GPU-accelerated binary hole filling.
-    
+
     Parameters
     ----------
     mask : np.ndarray
         Binary mask
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -236,13 +236,14 @@ def binary_fill_holes(mask, use_gpu=True):
         return output
     else:
         from scipy.ndimage import binary_fill_holes as scipy_fill
+
         return scipy_fill(mask)
 
 
 def gaussian_filter(image, sigma, use_gpu=True):
     """
     GPU-accelerated Gaussian filter.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -251,7 +252,7 @@ def gaussian_filter(image, sigma, use_gpu=True):
         Standard deviation for Gaussian kernel
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -271,13 +272,14 @@ def gaussian_filter(image, sigma, use_gpu=True):
         return output
     else:
         from scipy.ndimage import gaussian_filter as scipy_gaussian
+
         return scipy_gaussian(image, sigma=sigma)
 
 
 def median_filter(image, size, use_gpu=True):
     """
     GPU-accelerated median filter.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -286,7 +288,7 @@ def median_filter(image, size, use_gpu=True):
         Filter size
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -306,14 +308,14 @@ def median_filter(image, size, use_gpu=True):
         return output
     else:
         from scipy.ndimage import median_filter as scipy_median
+
         return scipy_median(image, size=size)
 
 
-def create_tissue_mask(image, sigma=2, threshold=None, fill_holes=True,
-                       min_opening=1, use_gpu=True):
+def create_tissue_mask(image, sigma=2, threshold=None, fill_holes=True, min_opening=1, use_gpu=True):
     """
     GPU-accelerated tissue mask creation.
-    
+
     Parameters
     ----------
     image : np.ndarray
@@ -328,7 +330,7 @@ def create_tissue_mask(image, sigma=2, threshold=None, fill_holes=True,
         Opening iterations for noise removal
     use_gpu : bool
         Whether to use GPU
-        
+
     Returns
     -------
     np.ndarray
@@ -345,6 +347,7 @@ def create_tissue_mask(image, sigma=2, threshold=None, fill_holes=True,
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         smoothed_gpu = cp.asarray(smoothed)
         mask = smoothed_gpu > threshold
         mask = to_cpu(mask)
@@ -364,17 +367,17 @@ def create_tissue_mask(image, sigma=2, threshold=None, fill_holes=True,
 def label_connected_components(mask, use_gpu=True):
     """
     Label connected components in a binary mask.
-    
+
     Note: CuPy's connected components is limited. Falls back to CPU
     for complex cases.
-    
+
     Parameters
     ----------
     mask : np.ndarray
         Binary mask
     use_gpu : bool
         Whether to attempt GPU (may fall back to CPU)
-        
+
     Returns
     -------
     np.ndarray
@@ -384,20 +387,21 @@ def label_connected_components(mask, use_gpu=True):
     """
     # CuPy's label function is limited, use CPU for reliability
     from scipy.ndimage import label as scipy_label
+
     return scipy_label(mask)
 
 
 def get_largest_component(mask, use_gpu=True):
     """
     Get the largest connected component from a mask.
-    
+
     Parameters
     ----------
     mask : np.ndarray
         Binary mask
     use_gpu : bool
         Whether to use GPU for histogram
-        
+
     Returns
     -------
     np.ndarray
@@ -410,6 +414,7 @@ def get_largest_component(mask, use_gpu=True):
 
     if use_gpu and GPU_AVAILABLE:
         import cupy as cp
+
         labeled_gpu = cp.asarray(labeled)
 
         # Find largest component (excluding background 0)

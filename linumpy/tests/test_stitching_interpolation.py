@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for linumpy/stitching/interpolation.py"""
+
 import numpy as np
-import pytest
 
 from linumpy.stitching.interpolation import (
     assess_degraded_slice_quality,
@@ -19,6 +19,7 @@ def _vol(shape=(8, 16, 16), seed=0):
 # ---------------------------------------------------------------------------
 # interpolate_average
 # ---------------------------------------------------------------------------
+
 
 def test_interpolate_average_shape():
     before = _vol()
@@ -54,6 +55,7 @@ def test_interpolate_average_dtype_float32():
 # interpolate_weighted
 # ---------------------------------------------------------------------------
 
+
 def test_interpolate_weighted_shape():
     before = _vol()
     after = _vol(seed=1)
@@ -83,6 +85,7 @@ def test_interpolate_weighted_smoothing_reduces_variance():
 # ---------------------------------------------------------------------------
 # blend_with_degraded
 # ---------------------------------------------------------------------------
+
 
 def test_blend_with_degraded_pure_interpolated():
     """quality_weight=0 → output equals interpolated."""
@@ -119,6 +122,7 @@ def test_blend_with_degraded_shape_preserved():
 # assess_degraded_slice_quality
 # ---------------------------------------------------------------------------
 
+
 def test_assess_degraded_slice_quality_perfect_quality():
     """If degraded == reference, quality score should be near 1."""
     rng = np.random.default_rng(10)
@@ -144,6 +148,5 @@ def test_assess_degraded_slice_quality_returns_metrics_dict():
     rng = np.random.default_rng(12)
     vol = rng.random((6, 12, 12)).astype(np.float32)
     _, metrics = assess_degraded_slice_quality(vol, vol, vol)
-    expected_keys = {'ssim_before', 'ssim_after', 'ssim_mean',
-                     'edge_preservation', 'variance_ratio', 'overall'}
+    expected_keys = {"ssim_before", "ssim_after", "ssim_mean", "edge_preservation", "variance_ratio", "overall"}
     assert expected_keys.issubset(set(metrics.keys()))

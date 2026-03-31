@@ -4,12 +4,12 @@ from linumpy.io.test_data import get_data
 
 
 def test_help(script_runner):
-    ret = script_runner.run(['linum_detect_focal_curvature.py', '--help'])
+    ret = script_runner.run(["linum_detect_focal_curvature.py", "--help"])
     assert ret.success
 
 
 def test_execute(script_runner, tmp_path):
-    input = get_data('mosaic_3d_omezarr')
-    output = tmp_path / 'fix_focal.ome.zarr'
-    ret = script_runner.run(['linum_detect_focal_curvature.py', input, output])
+    input = get_data("mosaic_3d_omezarr")
+    output = tmp_path / "fix_focal.ome.zarr"
+    ret = script_runner.run(["linum_detect_focal_curvature.py", input, output])
     assert ret.success

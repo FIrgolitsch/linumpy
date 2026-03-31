@@ -6,23 +6,19 @@ bias field.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
+
 import dask.array as da
 
-from linumpy.io.zarr import save_omezarr, read_omezarr
+import linumpy._thread_config  # noqa: F401
+from linumpy.io.zarr import read_omezarr, save_omezarr
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input",
-                   help="Input volume (.ome.zarr)")
-    p.add_argument("bias",
-                   help="Attenuation bias field (.ome.zarr)")
-    p.add_argument("output",
-                   help="Compensated volume (.ome.zarr)")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input", help="Input volume (.ome.zarr)")
+    p.add_argument("bias", help="Attenuation bias field (.ome.zarr)")
+    p.add_argument("output", help="Compensated volume (.ome.zarr)")
 
     return p
 
@@ -43,10 +39,7 @@ def main():
     vol_dask /= bias_dask
 
     # Save the output
-    save_omezarr(vol_dask.astype(da.float32),
-              args.output,
-              voxel_size=res,
-              chunks=chunks)
+    save_omezarr(vol_dask.astype(da.float32), args.output, voxel_size=res, chunks=chunks)
 
 
 if __name__ == "__main__":

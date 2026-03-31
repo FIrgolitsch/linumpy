@@ -9,24 +9,20 @@ a 16-bit PNG for QC visualization.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 from pathlib import Path
 
 import numpy as np
 from skimage.io import imsave
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.io.zarr import read_omezarr
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("input_zarr",
-                   help="Full path to the input mosaic grid OME-Zarr volume.")
-    p.add_argument("output_png",
-                   help="Full path to the output PNG file.")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("input_zarr", help="Full path to the input mosaic grid OME-Zarr volume.")
+    p.add_argument("output_png", help="Full path to the output PNG file.")
     return p
 
 
@@ -50,8 +46,7 @@ def main():
             rmax = (i + 1) * tile_shape[1]
             cmin = j * tile_shape[2]
             cmax = (j + 1) * tile_shape[2]
-            aip[rmin:rmax, cmin:cmax] = np.asarray(
-                vol[:, rmin:rmax, cmin:cmax]).mean(axis=0)
+            aip[rmin:rmax, cmin:cmax] = np.asarray(vol[:, rmin:rmax, cmin:cmax]).mean(axis=0)
 
     vmin = np.percentile(aip, 0.1)
     vmax = np.percentile(aip, 99.9)

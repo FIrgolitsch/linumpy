@@ -33,11 +33,11 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 __all__ = [
-    'setup_jax_cuda_env',
-    'get_cuda12_ld_path',
-    'check_patchelf_needed',
-    'apply_patchelf_fix',
-    'verify_jax_cuda',
+    "setup_jax_cuda_env",
+    "get_cuda12_ld_path",
+    "check_patchelf_needed",
+    "apply_patchelf_fix",
+    "verify_jax_cuda",
 ]
 
 
@@ -110,11 +110,11 @@ def get_cuda12_ld_path(include_existing: bool = True) -> Tuple[str, List[str]]:
             break
 
     # Build path string
-    new_ld_path = ':'.join(cuda_paths)
+    new_ld_path = ":".join(cuda_paths)
 
     # Optionally append existing LD_LIBRARY_PATH
     if include_existing:
-        existing = os.environ.get('LD_LIBRARY_PATH', '')
+        existing = os.environ.get("LD_LIBRARY_PATH", "")
         if existing:
             new_ld_path = f"{new_ld_path}:{existing}"
 
@@ -140,14 +140,11 @@ def check_patchelf_needed() -> Tuple[bool, Optional[str]]:
 
     # Check if it has executable stack using execstack or readelf
     try:
-        result = subprocess.run(
-            ['readelf', '-l', plugin_path],
-            capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["readelf", "-l", plugin_path], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             # Look for GNU_STACK with RWE (read-write-execute)
-            for line in result.stdout.split('\n'):
-                if 'GNU_STACK' in line and 'RWE' in line:
+            for line in result.stdout.split("\n"):
+                if "GNU_STACK" in line and "RWE" in line:
                     return True, plugin_path
         return False, plugin_path
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -162,7 +159,7 @@ def apply_patchelf_fix(verbose: bool = False) -> bool:
     Returns True if successful, False if patchelf not available.
     """
     try:
-        subprocess.run(['patchelf', '--version'], capture_output=True, check=True)
+        subprocess.run(["patchelf", "--version"], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         if verbose:
             print("patchelf not installed. Install with: sudo apt install patchelf")
@@ -175,13 +172,11 @@ def apply_patchelf_fix(verbose: bool = False) -> bool:
     jaxlib = None
     try:
         import jaxlib
+
         jaxlib_path = jaxlib.__path__[0]
         for so_file in Path(jaxlib_path).rglob("*.so"):
             try:
-                subprocess.run(
-                    ['patchelf', '--clear-execstack', str(so_file)],
-                    capture_output=True, check=True
-                )
+                subprocess.run(["patchelf", "--clear-execstack", str(so_file)], capture_output=True, check=True)
                 patched_count += 1
             except subprocess.CalledProcessError:
                 pass
@@ -194,10 +189,7 @@ def apply_patchelf_fix(verbose: bool = False) -> bool:
     if os.path.isdir(jax_plugins_path):
         for so_file in Path(jax_plugins_path).rglob("*.so"):
             try:
-                subprocess.run(
-                    ['patchelf', '--clear-execstack', str(so_file)],
-                    capture_output=True, check=True
-                )
+                subprocess.run(["patchelf", "--clear-execstack", str(so_file)], capture_output=True, check=True)
                 patched_count += 1
             except subprocess.CalledProcessError:
                 pass
@@ -209,9 +201,9 @@ def apply_patchelf_fix(verbose: bool = False) -> bool:
 
 
 def setup_jax_cuda_env(
-        auto_patchelf: bool = True,
-        verbose: bool = False,
-        warn_on_failure: bool = True,
+    auto_patchelf: bool = True,
+    verbose: bool = False,
+    warn_on_failure: bool = True,
 ) -> bool:
     """
     Set up the environment for JAX CUDA support.
@@ -241,7 +233,7 @@ def setup_jax_cuda_env(
     >>> print(jax.devices())
     """
     # Check if JAX is already imported - warn that it may be too late
-    if 'jax' in sys.modules:
+    if "jax" in sys.modules:
         if warn_on_failure:
             warnings.warn(
                 "JAX is already imported. setup_jax_cuda_env() should be called "
@@ -264,7 +256,7 @@ def setup_jax_cuda_env(
             )
         return False
 
-    os.environ['LD_LIBRARY_PATH'] = new_ld_path
+    os.environ["LD_LIBRARY_PATH"] = new_ld_path
 
     if verbose:
         print(f"Set LD_LIBRARY_PATH with {len(cuda_paths)} CUDA library paths")
@@ -307,9 +299,10 @@ def verify_jax_cuda(verbose: bool = True) -> bool:
     """
     try:
         import jax
+
         devices = jax.devices()
 
-        has_gpu = any('cuda' in str(d).lower() for d in devices)
+        has_gpu = any("cuda" in str(d).lower() for d in devices)
 
         if verbose:
             print(f"JAX devices: {devices}")
@@ -321,11 +314,12 @@ def verify_jax_cuda(verbose: bool = True) -> bool:
 
         # Test SVD (used by BaSiCPy)
         import jax.numpy as jnp
+
         a = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         result = jnp.linalg.svd(a)
 
         if verbose:
-            print(f"✅ JAX GPU working - SVD test passed")
+            print("✅ JAX GPU working - SVD test passed")
             print(f"   Singular values: {result[1]}")
 
         return True

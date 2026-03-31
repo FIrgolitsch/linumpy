@@ -74,33 +74,42 @@ OCT_AXIAL_RES_UM = 3.5
 # CLI
 # =============================================================================
 
+
 def _build_arg_parser():
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("shifts_file", help="Motor-positions CSV file (shifts_xy.csv)")
+    p.add_argument("output_dir", help="Directory for the report and suggested config snippet")
+    p.add_argument(
+        "--data_dir",
+        default=None,
+        help="Raw data directory (contains state.json and\n"
+        "slice_z##/ subdirectories, or their cleaned\n"
+        "equivalent with slices under metadata/). Used\n"
+        "to read slice thickness, tile overlap, and tile\n"
+        "dimensions. Both raw and cleaned layouts are\n"
+        "detected automatically.",
     )
-    p.add_argument("shifts_file",
-                   help="Motor-positions CSV file (shifts_xy.csv)")
-    p.add_argument("output_dir",
-                   help="Directory for the report and suggested config snippet")
-    p.add_argument("--data_dir", default=None,
-                   help="Raw data directory (contains state.json and\n"
-                        "slice_z##/ subdirectories, or their cleaned\n"
-                        "equivalent with slices under metadata/). Used\n"
-                        "to read slice thickness, tile overlap, and tile\n"
-                        "dimensions. Both raw and cleaned layouts are\n"
-                        "detected automatically.")
-    p.add_argument("--n_calibration_slices", type=int, default=1,
-                   help="Number of leading calibration slices to skip when\n"
-                        "reading per-slice metadata (default: 1, i.e. skip\n"
-                        "slice_z00 which is a calibration slice). [%(default)s]")
-    p.add_argument("--axial_res_um", type=float, default=OCT_AXIAL_RES_UM,
-                   help=f"OCT axial resolution in µm/pixel [%(default)s µm].\n"
-                        f"Used to convert tile depth (pixels) → µm.")
-    p.add_argument("--resolution_um", type=float, default=None,
-                   help="Override target pipeline resolution in µm/pixel.\n"
-                        "Derived automatically from tile dimensions if not given.")
-    p.add_argument("-f", "--overwrite", action="store_true",
-                   help="Overwrite existing output directory")
+    p.add_argument(
+        "--n_calibration_slices",
+        type=int,
+        default=1,
+        help="Number of leading calibration slices to skip when\n"
+        "reading per-slice metadata (default: 1, i.e. skip\n"
+        "slice_z00 which is a calibration slice). [%(default)s]",
+    )
+    p.add_argument(
+        "--axial_res_um",
+        type=float,
+        default=OCT_AXIAL_RES_UM,
+        help="OCT axial resolution in µm/pixel [%(default)s µm].\nUsed to convert tile depth (pixels) → µm.",
+    )
+    p.add_argument(
+        "--resolution_um",
+        type=float,
+        default=None,
+        help="Override target pipeline resolution in µm/pixel.\nDerived automatically from tile dimensions if not given.",
+    )
+    p.add_argument("-f", "--overwrite", action="store_true", help="Overwrite existing output directory")
     return p
 
 
@@ -108,9 +117,10 @@ def _build_arg_parser():
 # Shifts loading and analysis
 # =============================================================================
 
+
 def load_shifts(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
-    required = ['fixed_id', 'moving_id', 'x_shift_mm', 'y_shift_mm']
+    required = ["fixed_id", "moving_id", "x_shift_mm", "y_shift_mm"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Missing columns in shifts file: {missing}")
@@ -153,21 +163,23 @@ def detect_slice_gaps(df: pd.DataFrame) -> list[dict]:
     """
     gaps = []
     for _, row in df.iterrows():
-        skip = int(row['moving_id']) - int(row['fixed_id']) - 1
+        skip = int(row["moving_id"]) - int(row["fixed_id"]) - 1
         if skip > 0:
-            gaps.append({
-                'fixed_id': int(row['fixed_id']),
-                'moving_id': int(row['moving_id']),
-                'n_missing': skip,
-            })
+            gaps.append(
+                {
+                    "fixed_id": int(row["fixed_id"]),
+                    "moving_id": int(row["moving_id"]),
+                    "n_missing": skip,
+                }
+            )
     return gaps
 
 
 def analyze_shifts(df: pd.DataFrame) -> dict:
     """Compute all shift-derived parameter estimates."""
-    mag = np.sqrt(df['x_shift_mm'] ** 2 + df['y_shift_mm'] ** 2).values
+    mag = np.sqrt(df["x_shift_mm"] ** 2 + df["y_shift_mm"] ** 2).values
     df = df.copy()
-    df['magnitude_mm'] = mag
+    df["magnitude_mm"] = mag
 
     is_rehoming = detect_rehoming(mag)
     normal_mag = mag[~is_rehoming]
@@ -183,9 +195,9 @@ def analyze_shifts(df: pd.DataFrame) -> dict:
     # common_space_max_step_mm: 95th pct of consecutive shift magnitude changes.
     normal_df = df[~is_rehoming].reset_index(drop=True)
     if len(normal_df) > 1:
-        dx = normal_df['x_shift_mm'].diff().abs()
-        dy = normal_df['y_shift_mm'].diff().abs()
-        step_mag = np.sqrt(dx ** 2 + dy ** 2).dropna()
+        dx = normal_df["x_shift_mm"].diff().abs()
+        dy = normal_df["y_shift_mm"].diff().abs()
+        step_mag = np.sqrt(dx**2 + dy**2).dropna()
         max_step = float(np.percentile(step_mag, 95)) if len(step_mag) else 0.5
     else:
         max_step = 0.5
@@ -194,21 +206,21 @@ def analyze_shifts(df: pd.DataFrame) -> dict:
     gaps = detect_slice_gaps(df)
 
     return {
-        'df': df,
-        'is_rehoming': is_rehoming,
-        'rehoming_rows': df[is_rehoming],
-        'normal_rows': df[~is_rehoming],
-        'n_rehoming': int(is_rehoming.sum()),
-        'has_rehoming': bool(is_rehoming.any()),
-        'max_shift_mm': max_shift,
-        'max_step_mm': max_step,
-        'gaps': gaps,
-        'has_gaps': bool(gaps),
-        'normal_mag_stats': {
-            'mean': float(normal_mag.mean()) if len(normal_mag) else 0.0,
-            'std': float(normal_mag.std()) if len(normal_mag) else 0.0,
-            'max': float(normal_mag.max()) if len(normal_mag) else 0.0,
-            'p95': float(np.percentile(normal_mag, 95)) if len(normal_mag) else 0.0,
+        "df": df,
+        "is_rehoming": is_rehoming,
+        "rehoming_rows": df[is_rehoming],
+        "normal_rows": df[~is_rehoming],
+        "n_rehoming": int(is_rehoming.sum()),
+        "has_rehoming": bool(is_rehoming.any()),
+        "max_shift_mm": max_shift,
+        "max_step_mm": max_step,
+        "gaps": gaps,
+        "has_gaps": bool(gaps),
+        "normal_mag_stats": {
+            "mean": float(normal_mag.mean()) if len(normal_mag) else 0.0,
+            "std": float(normal_mag.std()) if len(normal_mag) else 0.0,
+            "max": float(normal_mag.max()) if len(normal_mag) else 0.0,
+            "p95": float(np.percentile(normal_mag, 95)) if len(normal_mag) else 0.0,
         },
     }
 
@@ -216,6 +228,7 @@ def analyze_shifts(df: pd.DataFrame) -> dict:
 # =============================================================================
 # Raw metadata reading
 # =============================================================================
+
 
 def _parse_info_txt(path: Path) -> dict:
     """
@@ -243,8 +256,7 @@ def _parse_info_txt(path: Path) -> dict:
     return info
 
 
-def analyze_metadata(data_dir: str, axial_res_um: float,
-                     n_calibration_slices: int = 1) -> dict:
+def analyze_metadata(data_dir: str, axial_res_um: float, n_calibration_slices: int = 1) -> dict:
     """
     Extract acquisition parameters from the raw data directory.
 
@@ -262,7 +274,7 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
     Returns a dict with 'ok', 'sources', and the extracted parameters.
     """
     data_dir = Path(data_dir)
-    result: dict = {'ok': False, 'sources': [], 'warnings': []}
+    result: dict = {"ok": False, "sources": [], "warnings": []}
 
     # ── 1. Per-slice metadata.json (skip calibration slices) ─────────────────
     slice_meta: dict = {}
@@ -274,14 +286,14 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
         if metadata_subdir.is_dir():
             slice_dirs = sorted(metadata_subdir.glob("slice_z*/"))
             if slice_dirs:
-                result['warnings'].append(
+                result["warnings"].append(
                     "Detected cleaned data structure: reading slice metadata "
                     "from metadata/ subdirectory (bin files have been removed)."
                 )
 
     tissue_dirs = slice_dirs[n_calibration_slices:]  # skip leading calibration slices
     if not tissue_dirs:
-        result['warnings'].append(
+        result["warnings"].append(
             f"No tissue slice directories found after skipping "
             f"{n_calibration_slices} calibration slice(s) "
             f"(found {len(slice_dirs)} total). "
@@ -292,21 +304,19 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
         meta_path = tissue_dirs[0] / "metadata.json"
         if meta_path.exists():
             slice_meta = json.loads(meta_path.read_text())
-            result['sources'].append(str(meta_path))
+            result["sources"].append(str(meta_path))
         else:
-            result['warnings'].append(
-                f"metadata.json not found in {tissue_dirs[0].name}"
-            )
+            result["warnings"].append(f"metadata.json not found in {tissue_dirs[0].name}")
 
     # ── 2. Global state.json ──────────────────────────────────────────────────
     state: dict = {}
     state_path = data_dir / "state.json"
     if state_path.exists():
         state = json.loads(state_path.read_text())
-        result['sources'].append(str(state_path))
+        result["sources"].append(str(state_path))
 
     if not slice_meta and not state:
-        result['error'] = "No metadata.json or state.json found in data_dir"
+        result["error"] = "No metadata.json or state.json found in data_dir"
         return result
 
     # ── 3. Tile info.txt (from the same tissue slice) ─────────────────────────
@@ -318,7 +328,7 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
             info_path = td / "info.txt"
             if info_path.exists():
                 tile_info = _parse_info_txt(info_path)
-                result['sources'].append(str(info_path))
+                result["sources"].append(str(info_path))
                 break
 
     # ── Extract parameters (metadata.json takes priority over state.json) ────
@@ -328,36 +338,34 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
                 return src[key]
         return None
 
-    tile_size_um = get('tile_size_um', slice_meta, state)
-    tile_n_samples = get('tile_n_samples', slice_meta, state)
-    slice_thickness = get('slice_thickness', slice_meta, state)
-    overlap_fraction = get('overlap_fraction', slice_meta, state)
+    tile_size_um = get("tile_size_um", slice_meta, state)
+    tile_n_samples = get("tile_n_samples", slice_meta, state)
+    slice_thickness = get("slice_thickness", slice_meta, state)
+    overlap_fraction = get("overlap_fraction", slice_meta, state)
 
     # Lateral pixel size
     if tile_size_um and tile_n_samples:
         native_lateral_um = tile_size_um / tile_n_samples
     else:
         native_lateral_um = None
-        result['warnings'].append("Could not compute native lateral resolution "
-                                  "(tile_size_um or tile_n_samples missing)")
+        result["warnings"].append("Could not compute native lateral resolution (tile_size_um or tile_n_samples missing)")
 
     # Axial depth from tile info.txt
-    top_z = tile_info.get('top_z')
-    bottom_z = tile_info.get('bottom_z')
-    focus_z = tile_info.get('focus_z')
+    top_z = tile_info.get("top_z")
+    bottom_z = tile_info.get("bottom_z")
+    focus_z = tile_info.get("focus_z")
 
     if bottom_z is not None and top_z is not None:
         n_depth_pixels = bottom_z - top_z + 1
         total_depth_um = n_depth_pixels * axial_res_um
     else:
-        n_depth_pixels = state.get('z_max', None)
-        if n_depth_pixels and state.get('z_min') is not None:
-            n_depth_pixels = state['z_max'] - state['z_min']
+        n_depth_pixels = state.get("z_max", None)
+        if n_depth_pixels and state.get("z_min") is not None:
+            n_depth_pixels = state["z_max"] - state["z_min"]
             total_depth_um = n_depth_pixels * axial_res_um
         else:
             n_depth_pixels = total_depth_um = None
-        result['warnings'].append("top_z/bottom_z not found in tile info.txt; "
-                                  "fell back to state.json z_min/z_max")
+        result["warnings"].append("top_z/bottom_z not found in tile info.txt; fell back to state.json z_min/z_max")
 
     # Estimate crop depth: depth of tissue below interface.
     # focus_z marks where the tissue surface is in the OCT depth axis.
@@ -370,25 +378,28 @@ def analyze_metadata(data_dir: str, axial_res_um: float,
     else:
         crop_depth_um = None
 
-    result.update({
-        'ok': True,
-        'slice_thickness_mm': slice_thickness,
-        'overlap_fraction': overlap_fraction,
-        'tile_size_um': tile_size_um,
-        'tile_n_samples': tile_n_samples,
-        'native_lateral_um': native_lateral_um,
-        'n_depth_pixels': n_depth_pixels,
-        'total_depth_um': total_depth_um,
-        'focus_z': focus_z,
-        'crop_depth_um': crop_depth_um,
-        'axial_res_um': axial_res_um,
-    })
+    result.update(
+        {
+            "ok": True,
+            "slice_thickness_mm": slice_thickness,
+            "overlap_fraction": overlap_fraction,
+            "tile_size_um": tile_size_um,
+            "tile_n_samples": tile_n_samples,
+            "native_lateral_um": native_lateral_um,
+            "n_depth_pixels": n_depth_pixels,
+            "total_depth_um": total_depth_um,
+            "focus_z": focus_z,
+            "crop_depth_um": crop_depth_um,
+            "axial_res_um": axial_res_um,
+        }
+    )
     return result
 
 
 # =============================================================================
 # Rounding helpers
 # =============================================================================
+
 
 def ceil_to(value: float, step: float) -> float:
     return float(np.ceil(value / step) * step)
@@ -406,10 +417,11 @@ def suggest_target_resolution(native_xy_um: float) -> int:
 # Report
 # =============================================================================
 
+
 def build_report(shift_stats: dict, acq: dict, shifts_path: str) -> str:
-    df = shift_stats['df']
-    s = shift_stats['normal_mag_stats']
-    normal = shift_stats['normal_rows']
+    df = shift_stats["df"]
+    s = shift_stats["normal_mag_stats"]
+    normal = shift_stats["normal_rows"]
 
     lines = [
         "=" * 62,
@@ -425,32 +437,35 @@ def build_report(shift_stats: dict, acq: dict, shifts_path: str) -> str:
     ]
 
     # Acquisition metadata section
-    if acq.get('ok'):
+    if acq.get("ok"):
         lines += [""]
         lines += ["ACQUISITION METADATA", "-" * 40]
-        if acq.get('slice_thickness_mm') is not None:
-            lines.append(f"  Slice thickness :   {acq['slice_thickness_mm']:.3f} mm"
-                         "  → registration_slicing_interval_mm")
-        if acq.get('overlap_fraction') is not None:
-            lines.append(f"  Tile overlap    :   {acq['overlap_fraction']:.0%}"
-                         "           → stitch_overlap_fraction")
-        if acq.get('native_lateral_um') is not None:
-            lines.append(f"  Tile size       :   {acq['tile_size_um']:.0f} µm "
-                         f"/ {acq['tile_n_samples']} px "
-                         f"= {acq['native_lateral_um']:.2f} µm/px native lateral")
-        if acq.get('total_depth_um') is not None:
-            lines.append(f"  OCT depth       :   {acq['n_depth_pixels']} px "
-                         f"× {acq['axial_res_um']:.1f} µm/px "
-                         f"= {acq['total_depth_um']:.0f} µm total axial range")
-        if acq.get('focus_z') is not None:
-            below = acq['n_depth_pixels'] - acq['focus_z']
-            below_um = below * acq['axial_res_um']
-            lines.append(f"  Focus position  :   z={acq['focus_z']} px "
-                         f"({below} px = {below_um:.0f} µm below interface)")
-        if acq.get('crop_depth_um') is not None:
-            lines.append(f"  → suggested crop_interface_out_depth ≈ {acq['crop_depth_um']} µm"
-                         "  (30 % of depth below focus; verify from preview)")
-        for w in acq.get('warnings', []):
+        if acq.get("slice_thickness_mm") is not None:
+            lines.append(f"  Slice thickness :   {acq['slice_thickness_mm']:.3f} mm  → registration_slicing_interval_mm")
+        if acq.get("overlap_fraction") is not None:
+            lines.append(f"  Tile overlap    :   {acq['overlap_fraction']:.0%}           → stitch_overlap_fraction")
+        if acq.get("native_lateral_um") is not None:
+            lines.append(
+                f"  Tile size       :   {acq['tile_size_um']:.0f} µm "
+                f"/ {acq['tile_n_samples']} px "
+                f"= {acq['native_lateral_um']:.2f} µm/px native lateral"
+            )
+        if acq.get("total_depth_um") is not None:
+            lines.append(
+                f"  OCT depth       :   {acq['n_depth_pixels']} px "
+                f"× {acq['axial_res_um']:.1f} µm/px "
+                f"= {acq['total_depth_um']:.0f} µm total axial range"
+            )
+        if acq.get("focus_z") is not None:
+            below = acq["n_depth_pixels"] - acq["focus_z"]
+            below_um = below * acq["axial_res_um"]
+            lines.append(f"  Focus position  :   z={acq['focus_z']} px ({below} px = {below_um:.0f} µm below interface)")
+        if acq.get("crop_depth_um") is not None:
+            lines.append(
+                f"  → suggested crop_interface_out_depth ≈ {acq['crop_depth_um']} µm"
+                "  (30 % of depth below focus; verify from preview)"
+            )
+        for w in acq.get("warnings", []):
             lines.append(f"  [!] {w}")
         lines.append(f"  Sources: {', '.join(Path(s).name for s in acq.get('sources', []))}")
 
@@ -463,11 +478,11 @@ def build_report(shift_stats: dict, acq: dict, shifts_path: str) -> str:
         f"  95th percentile: {s['p95']:.3f} mm",
         f"  Maximum        : {s['max']:.3f} mm",
         f"  → suggested max_shift_mm = {shift_stats['max_shift_mm']:.3f} mm",
-        f"    (IQR upper bound of non-re-homing shifts)",
+        "    (IQR upper bound of non-re-homing shifts)",
     ]
 
-    if shift_stats['has_rehoming']:
-        rh = shift_stats['rehoming_rows']
+    if shift_stats["has_rehoming"]:
+        rh = shift_stats["rehoming_rows"]
         lines += ["", "RE-HOMING EVENTS DETECTED", "-" * 40]
         for _, row in rh.iterrows():
             lines.append(
@@ -488,22 +503,18 @@ def build_report(shift_stats: dict, acq: dict, shifts_path: str) -> str:
             "NO RE-HOMING EVENTS DETECTED",
         ]
 
-    if shift_stats['has_gaps']:
-        n_total = sum(g['n_missing'] for g in shift_stats['gaps'])
+    if shift_stats["has_gaps"]:
+        n_total = sum(g["n_missing"] for g in shift_stats["gaps"])
         lines += ["", "MISSING SLICES DETECTED", "-" * 40]
-        for g in shift_stats['gaps']:
-            label = "slice" if g['n_missing'] == 1 else "slices"
-            lines.append(
-                f"  Gap between slice {g['fixed_id']:02d} and {g['moving_id']:02d}: "
-                f"{g['n_missing']} missing {label}"
-            )
+        for g in shift_stats["gaps"]:
+            label = "slice" if g["n_missing"] == 1 else "slices"
+            lines.append(f"  Gap between slice {g['fixed_id']:02d} and {g['moving_id']:02d}: {g['n_missing']} missing {label}")
         lines += [
             f"  Total missing slices: {n_total}",
             "  → interpolate_missing_slices = true  (recommended)",
         ]
     else:
-        lines += ["", "NO MISSING SLICES DETECTED",
-                  "  interpolate_missing_slices = false"]
+        lines += ["", "NO MISSING SLICES DETECTED", "  interpolate_missing_slices = false"]
 
     lines += ["", "=" * 62]
     return "\n".join(lines)
@@ -513,6 +524,7 @@ def build_report(shift_stats: dict, acq: dict, shifts_path: str) -> str:
 # Config snippet
 # =============================================================================
 
+
 def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
     """Return a nextflow.config parameter block with estimated values."""
 
@@ -520,28 +532,24 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
     if args.resolution_um:
         res_um = int(args.resolution_um)
         res_comment = "// set by --resolution_um"
-    elif acq.get('ok') and acq.get('native_lateral_um'):
-        native = acq['native_lateral_um']
+    elif acq.get("ok") and acq.get("native_lateral_um"):
+        native = acq["native_lateral_um"]
         res_um = suggest_target_resolution(native)
-        res_comment = (f"// native lateral resolution = {native:.2f} µm/px → "
-                       f"smallest standard res >= native")
+        res_comment = f"// native lateral resolution = {native:.2f} µm/px → smallest standard res >= native"
     else:
         res_um = "TODO"
-        res_comment = ("// set to the smallest standard resolution "
-                       "(5/10/15/20/25/50) >= native pixel size in µm")
+        res_comment = "// set to the smallest standard resolution (5/10/15/20/25/50) >= native pixel size in µm"
 
     # ── Crop depth ───────────────────────────────────────────────────────────
-    if acq.get('ok') and acq.get('crop_depth_um'):
-        crop_depth = acq['crop_depth_um']
-        depth_comment = ("// 30 % of OCT depth below tissue interface — "
-                         "verify against cross-section preview")
+    if acq.get("ok") and acq.get("crop_depth_um"):
+        crop_depth = acq["crop_depth_um"]
+        depth_comment = "// 30 % of OCT depth below tissue interface — verify against cross-section preview"
     else:
         crop_depth = "TODO"
-        depth_comment = ("// depth in µm to keep below the tissue interface; "
-                         "inspect a cross-section preview to set correctly")
+        depth_comment = "// depth in µm to keep below the tissue interface; inspect a cross-section preview to set correctly"
 
     # ── Slicing interval and overlap (from metadata) ─────────────────────────
-    if acq.get('ok') and acq.get('slice_thickness_mm') is not None:
+    if acq.get("ok") and acq.get("slice_thickness_mm") is not None:
         slicing = f"{acq['slice_thickness_mm']:.3f}"
         drifting = f"{acq['slice_thickness_mm'] / 2:.3f}"
         slice_src = "// from slice_thickness in metadata"
@@ -550,7 +558,7 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
         drifting = "TODO  // ← typically half the slicing interval"
         slice_src = ""
 
-    if acq.get('ok') and acq.get('overlap_fraction') is not None:
+    if acq.get("ok") and acq.get("overlap_fraction") is not None:
         overlap = f"{acq['overlap_fraction']:.2f}"
         overlap_src = "// from overlap_fraction in metadata"
     else:
@@ -558,15 +566,15 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
         overlap_src = ""
 
     # ── Shift-based params ────────────────────────────────────────────────────
-    max_shift = ceil_to(shift_stats['max_shift_mm'], 0.05)
-    max_step = float(np.clip(ceil_to(shift_stats['max_step_mm'], 0.05), 0.05, 2.0))
+    max_shift = ceil_to(shift_stats["max_shift_mm"], 0.05)
+    max_step = float(np.clip(ceil_to(shift_stats["max_step_mm"], 0.05), 0.05, 2.0))
 
     # ── Registration max translation ─────────────────────────────────────────
     # The optimizer bound must comfortably exceed any real inter-slice
     # translation. Setting it to the tile size in pixels at the target
     # resolution ensures the optimizer is never clamped for whole-tile shifts.
-    if acq.get('ok') and acq.get('tile_size_um') and isinstance(res_um, (int, float)):
-        max_trans_px = int(np.ceil(acq['tile_size_um'] / res_um / 10) * 10)
+    if acq.get("ok") and acq.get("tile_size_um") and isinstance(res_um, (int, float)):
+        max_trans_px = int(np.ceil(acq["tile_size_um"] / res_um / 10) * 10)
         max_trans_comment = (
             f"// tile {acq['tile_size_um']:.0f} µm / {res_um} µm·px⁻¹ "
             f"= {acq['tile_size_um'] / res_um:.0f} px, rounded up to nearest 10"
@@ -576,12 +584,9 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
         max_trans_comment = "// default — set to tile width in pixels at target resolution"
 
     # ── Missing slice interpolation ───────────────────────────────────────────
-    if shift_stats['has_gaps']:
+    if shift_stats["has_gaps"]:
         interp_val = "true"
-        gap_detail = ", ".join(
-            f"{g['fixed_id']}→{g['moving_id']} ({g['n_missing']} missing)"
-            for g in shift_stats['gaps']
-        )
+        gap_detail = ", ".join(f"{g['fixed_id']}→{g['moving_id']} ({g['n_missing']} missing)" for g in shift_stats["gaps"])
         interp_comment = f"// gaps detected: {gap_detail}"
     else:
         interp_val = "false"
@@ -622,9 +627,9 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
         "  // Flags sudden per-step jumps that IQR alone may miss.",
     ]
 
-    if shift_stats['has_rehoming']:
-        rh = shift_stats['rehoming_rows']
-        slice_ids = ", ".join(str(int(r['moving_id'])) for _, r in rh.iterrows())
+    if shift_stats["has_rehoming"]:
+        rh = shift_stats["rehoming_rows"]
+        slice_ids = ", ".join(str(int(r["moving_id"])) for _, r in rh.iterrows())
         lines += [
             "",
             f"// ── Re-homing events detected at slices: {slice_ids} ──────────",
@@ -640,14 +645,14 @@ def build_config_snippet(shift_stats: dict, acq: dict, args) -> str:
 # Main
 # =============================================================================
 
+
 def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     if out_dir.exists() and not args.overwrite:
-        print(f"Output directory already exists: {out_dir}  (use -f to overwrite)",
-              file=sys.stderr)
+        print(f"Output directory already exists: {out_dir}  (use -f to overwrite)", file=sys.stderr)
         sys.exit(1)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -660,13 +665,11 @@ def main():
     acq: dict = {}
     if args.data_dir:
         print(f"Reading acquisition metadata: {args.data_dir}")
-        acq = analyze_metadata(args.data_dir, args.axial_res_um,
-                               args.n_calibration_slices)
-        if not acq.get('ok'):
-            print(f"Warning: {acq.get('error', 'could not read metadata')}",
-                  file=sys.stderr)
-        elif acq.get('warnings'):
-            for w in acq['warnings']:
+        acq = analyze_metadata(args.data_dir, args.axial_res_um, args.n_calibration_slices)
+        if not acq.get("ok"):
+            print(f"Warning: {acq.get('error', 'could not read metadata')}", file=sys.stderr)
+        elif acq.get("warnings"):
+            for w in acq["warnings"]:
                 print(f"Warning: {w}", file=sys.stderr)
 
     # Build outputs
@@ -684,12 +687,7 @@ def main():
     report_path = out_dir / "param_estimation_report.txt"
     config_path = out_dir / "suggested_params.config"
 
-    report_path.write_text(
-        report + "\n\n"
-        + "SUGGESTED NEXTFLOW.CONFIG PARAMETERS\n"
-        + sep + "\n"
-        + snippet + "\n"
-    )
+    report_path.write_text(report + "\n\n" + "SUGGESTED NEXTFLOW.CONFIG PARAMETERS\n" + sep + "\n" + snippet + "\n")
     config_path.write_text(snippet + "\n")
 
     print(f"\nWrote:\n  {report_path}\n  {config_path}")

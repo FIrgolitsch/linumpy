@@ -11,8 +11,6 @@ Falls back to CPU if GPU is not available.
 """
 
 # Configure thread limits before numpy/scipy imports
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 import itertools
 import time
@@ -21,27 +19,25 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from tqdm import tqdm
 
+import linumpy._thread_config  # noqa: F401
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
-from linumpy.io import read_omezarr, OmeZarrWriter
+from linumpy.io import OmeZarrWriter, read_omezarr
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('in_mosaic',
-                   help='Input mosaic grid in .ome.zarr.')
-    p.add_argument('out_mosaic',
-                   help='Output resampled mosaic .ome.zarr.')
-    p.add_argument('--resolution', '-r', type=float, default=10.0,
-                   help='Isotropic resolution for resampling in microns.')
-    p.add_argument('--n_levels', type=int, default=5,
-                   help='Number of levels in pyramid decomposition [%(default)s].')
-    p.add_argument('--use_gpu', default=True,
-                   action=argparse.BooleanOptionalAction,
-                   help='Use GPU acceleration if available. [%(default)s]')
-    p.add_argument('--verbose', '-v', action='store_true',
-                   help='Print GPU information and timing')
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("in_mosaic", help="Input mosaic grid in .ome.zarr.")
+    p.add_argument("out_mosaic", help="Output resampled mosaic .ome.zarr.")
+    p.add_argument("--resolution", "-r", type=float, default=10.0, help="Isotropic resolution for resampling in microns.")
+    p.add_argument("--n_levels", type=int, default=5, help="Number of levels in pyramid decomposition [%(default)s].")
+    p.add_argument(
+        "--use_gpu",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use GPU acceleration if available. [%(default)s]",
+    )
+    p.add_argument("--verbose", "-v", action="store_true", help="Print GPU information and timing")
     return p
 
 
@@ -80,12 +76,10 @@ def rescale_gpu(image, scale, order=1, use_gpu=True):
 
 def _read_tile(vol, i, j, tile_shape):
     """Read one tile from the input zarr array (I/O stage of the pipeline)."""
-    return np.asarray(vol[:, i * tile_shape[1]:(i + 1) * tile_shape[1],
-                          j * tile_shape[2]:(j + 1) * tile_shape[2]])
+    return np.asarray(vol[:, i * tile_shape[1] : (i + 1) * tile_shape[1], j * tile_shape[2] : (j + 1) * tile_shape[2]])
 
 
-def _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape,
-                   scaling_factor, use_gpu):
+def _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape, scaling_factor, use_gpu):
     """Process tiles with a prefetch pipeline.
 
     A background thread reads the next tile from the input zarr while the
@@ -101,6 +95,7 @@ def _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape,
     if use_gpu:
         try:
             import cupy as cp
+
             cupy_available = True
         except Exception:
             pass
@@ -120,8 +115,9 @@ def _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape,
 
             # GPU resize + zarr write (concurrent with prefetch of tile k+1).
             resampled = rescale_gpu(tile, scaling_factor, order=1, use_gpu=use_gpu)
-            out_zarr[:, i * out_tile_shape[1]:(i + 1) * out_tile_shape[1],
-                     j * out_tile_shape[2]:(j + 1) * out_tile_shape[2]] = resampled
+            out_zarr[
+                :, i * out_tile_shape[1] : (i + 1) * out_tile_shape[1], j * out_tile_shape[2] : (j + 1) * out_tile_shape[2]
+            ] = resampled
 
             # Periodically free the GPU memory pool to avoid fragmentation.
             if cupy_available and k % 10 == 9:
@@ -145,6 +141,7 @@ def main():
         # Try to verify CUDA is working
         try:
             import cupy as cp
+
             device = cp.cuda.Device()
             print(f"  Device: {device.id} - {cp.cuda.runtime.getDeviceProperties(device.id)['name'].decode()}")
             mem_info = device.mem_info
@@ -166,7 +163,7 @@ def main():
 
     print(f"  Volume shape: {vol.shape}")
     print(f"  Tile shape: {tile_shape}")
-    print(f"  Source resolution: {[f'{r*1000:.2f}' for r in source_res]} µm")
+    print(f"  Source resolution: {[f'{r * 1000:.2f}' for r in source_res]} µm")
     print(f"  Target resolution: {args.resolution} µm")
     print(f"  Scale factor: {scaling_factor}")
 
@@ -180,8 +177,7 @@ def main():
     out_shape = (out_tile_shape[0], nx * out_tile_shape[1], ny * out_tile_shape[2])
     print(f"  Output shape: {out_shape} ({total_tiles} tiles)")
 
-    out_zarr = OmeZarrWriter(args.out_mosaic, out_shape, out_tile_shape,
-                             dtype=vol.dtype, overwrite=True)
+    out_zarr = OmeZarrWriter(args.out_mosaic, out_shape, out_tile_shape, dtype=vol.dtype, overwrite=True)
 
     # Process all tiles with the prefetch pipeline.
     tile_iter = list(itertools.product(range(nx), range(ny)))
@@ -194,5 +190,5 @@ def main():
     print(f"Done in {elapsed:.1f}s ({total_tiles / elapsed:.1f} tiles/s)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

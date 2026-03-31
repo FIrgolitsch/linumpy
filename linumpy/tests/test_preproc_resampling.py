@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for linumpy/preproc/resampling.py"""
+
 import numpy as np
 import pytest
 import zarr
@@ -7,8 +8,7 @@ import zarr
 from linumpy.preproc.resampling import resample_mosaic_grid
 
 
-def _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2,
-                      tile_shape=(4, 8, 8), fill=1.0, dtype=np.float32):
+def _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2, tile_shape=(4, 8, 8), fill=1.0, dtype=np.float32):
     """
     Create a zarr array mosaic grid.
 
@@ -18,8 +18,7 @@ def _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2,
     """
     nz, th, tw = tile_shape
     shape = (nz, n_tiles_x * th, n_tiles_y * tw)
-    arr = zarr.open(str(tmp_path / "mosaic.zarr"), mode='w', shape=shape,
-                    chunks=tile_shape, dtype=dtype)
+    arr = zarr.open(str(tmp_path / "mosaic.zarr"), mode="w", shape=shape, chunks=tile_shape, dtype=dtype)
     arr[:] = fill
     return arr
 
@@ -27,6 +26,7 @@ def _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2,
 # ---------------------------------------------------------------------------
 # resample_mosaic_grid — validation
 # ---------------------------------------------------------------------------
+
 
 def test_resample_mosaic_grid_raises_without_chunks():
     """Plain ndarray without 'chunks' attribute must raise ValueError."""
@@ -39,57 +39,47 @@ def test_resample_mosaic_grid_raises_without_chunks():
 # resample_mosaic_grid — source resolution in mm (< 1)
 # ---------------------------------------------------------------------------
 
+
 def test_resample_mosaic_grid_returns_array_when_no_outpath(tmp_path):
     """Returns an ndarray when out_path is not provided."""
-    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1,
-                            tile_shape=(4, 8, 8))
+    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1, tile_shape=(4, 8, 8))
     # source 0.01 mm = 10 µm, target 20 µm → half resolution
-    result = resample_mosaic_grid(vol, source_res=(0.01, 0.01, 0.01),
-                                  target_res_um=20.0)
+    result = resample_mosaic_grid(vol, source_res=(0.01, 0.01, 0.01), target_res_um=20.0)
     assert isinstance(result, np.ndarray)
 
 
 def test_resample_mosaic_grid_output_is_smaller_for_downscale(tmp_path):
     """Down-sampling (target > source) must produce a smaller volume."""
-    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2,
-                            tile_shape=(8, 16, 16))
+    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=2, n_tiles_y=2, tile_shape=(8, 16, 16))
     # source 0.005 mm = 5 µm, target 20 µm → factor 0.25
-    result = resample_mosaic_grid(vol, source_res=(0.005, 0.005, 0.005),
-                                  target_res_um=20.0)
-    assert (result.shape[1] < vol.shape[1] or result.shape[0] < vol.shape[0])
+    result = resample_mosaic_grid(vol, source_res=(0.005, 0.005, 0.005), target_res_um=20.0)
+    assert result.shape[1] < vol.shape[1] or result.shape[0] < vol.shape[0]
 
 
 def test_resample_mosaic_grid_output_is_larger_for_upscale(tmp_path):
     """Up-sampling (target < source) must produce a larger volume."""
-    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1,
-                            tile_shape=(4, 8, 8))
+    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1, tile_shape=(4, 8, 8))
     # source 0.050 mm = 50 µm, target 10 µm → scale ×5
-    result = resample_mosaic_grid(vol, source_res=(0.05, 0.05, 0.05),
-                                  target_res_um=10.0)
+    result = resample_mosaic_grid(vol, source_res=(0.05, 0.05, 0.05), target_res_um=10.0)
     assert result.shape[0] > vol.shape[0]
 
 
 def test_resample_mosaic_grid_um_source_resolution(tmp_path):
     """source_res >= 1 is treated as µm (not mm)."""
-    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1,
-                            tile_shape=(4, 8, 8))
+    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1, tile_shape=(4, 8, 8))
     # source 10 µm, target 20 µm → factor 0.5
-    result = resample_mosaic_grid(vol, source_res=(10.0, 10.0, 10.0),
-                                  target_res_um=20.0)
+    result = resample_mosaic_grid(vol, source_res=(10.0, 10.0, 10.0), target_res_um=20.0)
     assert isinstance(result, np.ndarray)
     assert result.shape[1] <= vol.shape[1]
 
 
 def test_resample_mosaic_grid_to_file(tmp_path):
     """With out_path, the function writes to disk and returns None."""
-    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1,
-                            tile_shape=(4, 8, 8))
+    vol = _make_zarr_mosaic(tmp_path, n_tiles_x=1, n_tiles_y=1, tile_shape=(4, 8, 8))
     out = str(tmp_path / "resampled.ome.zarr")
-    result = resample_mosaic_grid(vol, source_res=(0.01, 0.01, 0.01),
-                                  target_res_um=20.0,
-                                  n_levels=1, out_path=out)
+    result = resample_mosaic_grid(vol, source_res=(0.01, 0.01, 0.01), target_res_um=20.0, n_levels=1, out_path=out)
     assert result is None
-    ds = zarr.open(out, mode='r')
+    ds = zarr.open(out, mode="r")
     assert ds is not None
 
 

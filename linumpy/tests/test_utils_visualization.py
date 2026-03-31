@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for linumpy/utils/visualization.py"""
-import re
 
 import numpy as np
-import pytest
 
 from linumpy.utils.visualization import (
     add_z_slice_labels,
@@ -21,6 +19,7 @@ def _make_volume(shape=(16, 32, 32)):
 # ---------------------------------------------------------------------------
 # save_orthogonal_views
 # ---------------------------------------------------------------------------
+
 
 def test_save_orthogonal_views_creates_file(tmp_path):
     vol = _make_volume((16, 24, 24))
@@ -41,6 +40,7 @@ def test_save_orthogonal_views_custom_slices(tmp_path):
 # estimate_n_slices_from_zarr
 # ---------------------------------------------------------------------------
 
+
 def test_estimate_n_slices_from_zarr_no_file(tmp_path):
     result = estimate_n_slices_from_zarr(str(tmp_path / "nonexistent.ome.zarr"))
     assert result is None
@@ -59,43 +59,46 @@ def test_estimate_n_slices_from_zarr_non_contiguous(tmp_path):
     for i in [0, 3, 7]:
         (tmp_path / f"slice_z{i:02d}.ome.zarr").mkdir()
     result = estimate_n_slices_from_zarr(str(tmp_path / "slice_z00.ome.zarr"))
-    assert result == 8   # 7 - 0 + 1
+    assert result == 8  # 7 - 0 + 1
 
 
 # ---------------------------------------------------------------------------
 # add_z_slice_labels
 # ---------------------------------------------------------------------------
 
+
 def test_add_z_slice_labels_runs_without_error():
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
-    ax.imshow(np.zeros((100, 50)), cmap='gray')
+    ax.imshow(np.zeros((100, 50)), cmap="gray")
     add_z_slice_labels(ax, n_input_slices=5, img_height=100, font_size=6)
     plt.close(fig)
 
 
 def test_add_z_slice_labels_with_slice_ids():
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
-    ax.imshow(np.zeros((100, 50)), cmap='gray')
-    add_z_slice_labels(ax, n_input_slices=3, img_height=100,
-                       slice_ids=['01', '05', '09'])
+    ax.imshow(np.zeros((100, 50)), cmap="gray")
+    add_z_slice_labels(ax, n_input_slices=3, img_height=100, slice_ids=["01", "05", "09"])
     plt.close(fig)
 
 
 def test_add_z_slice_labels_label_every():
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
-    ax.imshow(np.zeros((100, 50)), cmap='gray')
+    ax.imshow(np.zeros((100, 50)), cmap="gray")
     # label_every=2: only even indices should be labelled
     add_z_slice_labels(ax, n_input_slices=6, img_height=100, label_every=2)
     plt.close(fig)
@@ -104,6 +107,7 @@ def test_add_z_slice_labels_label_every():
 # ---------------------------------------------------------------------------
 # save_annotated_views
 # ---------------------------------------------------------------------------
+
 
 def test_save_annotated_views_creates_file(tmp_path):
     vol = _make_volume((16, 24, 24))
@@ -116,8 +120,7 @@ def test_save_annotated_views_creates_file(tmp_path):
 def test_save_annotated_views_with_slice_ids(tmp_path):
     vol = _make_volume((16, 24, 24))
     out = tmp_path / "annotated_ids.png"
-    save_annotated_views(vol, str(out), n_input_slices=4,
-                         slice_ids=['00', '01', '02', '03'])
+    save_annotated_views(vol, str(out), n_input_slices=4, slice_ids=["00", "01", "02", "03"])
     assert out.exists()
 
 

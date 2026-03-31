@@ -15,8 +15,6 @@ The Z-matching finds where consecutive slices should overlap by correlating
 the bottom of one slice with the top of the next.
 """
 
-import linumpy._thread_config  # noqa: F401
-
 import argparse
 import csv
 import logging
@@ -28,165 +26,242 @@ import pandas as pd
 import SimpleITK as sitk
 from tqdm import tqdm
 
-from linumpy.io.zarr import read_omezarr, AnalysisOmeZarrWriter
+import linumpy._thread_config  # noqa: F401
+from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
+from linumpy.shifts.utils import load_shifts_csv
 from linumpy.stitching.stacking import (
-    find_z_overlap, enforce_z_consistency, apply_2d_transform,
-    apply_transform_to_volume, apply_xy_shift, blend_overlap_z,
-    refine_z_blend_overlap
+    apply_transform_to_volume,
+    apply_xy_shift,
+    blend_overlap_z,
+    enforce_z_consistency,
+    find_z_overlap,
+    refine_z_blend_overlap,
 )
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
 from linumpy.utils.metrics import collect_stack_metrics
-from linumpy.shifts.utils import load_shifts_csv
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def _build_arg_parser():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('in_slices_dir',
-                   help='Directory containing slice volumes (.ome.zarr)')
-    p.add_argument('in_shifts',
-                   help='CSV file with XY shifts (shifts_xy.csv)')
-    p.add_argument('out_stack',
-                   help='Output stacked volume (.ome.zarr)')
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("in_slices_dir", help="Directory containing slice volumes (.ome.zarr)")
+    p.add_argument("in_shifts", help="CSV file with XY shifts (shifts_xy.csv)")
+    p.add_argument("out_stack", help="Output stacked volume (.ome.zarr)")
 
     # Registration refinements (optional)
-    p.add_argument('--transforms_dir', type=str, default=None,
-                   help='Directory containing pairwise registration outputs.\n'
-                        'If provided, applies rotation/translation refinements.')
-    p.add_argument('--rotation_only', action='store_true',
-                   help='Apply only rotation from registration transforms, ignore translation.\n'
-                        'Use this to prevent XY drift when motor positions are trusted.')
-    p.add_argument('--max_rotation_deg', type=float, default=1.0,
-                   help='Maximum rotation to apply per slice (degrees). Larger rotations\n'
-                        'are clamped to prevent registration errors from causing drift. [%(default)s]')
-    p.add_argument('--accumulate_translations', action='store_true',
-                   help='Accumulate pairwise translations cumulatively across slices.\n'
-                        'Each slice gets the sum of all preceding pairwise translations.\n'
-                        'This propagates corrections through the stack, fixing cumulative\n'
-                        'drift and motor position errors. Rotation stays per-slice.')
-    p.add_argument('--max_pairwise_translation', type=float, default=0,
-                   help='Maximum reliable pairwise translation magnitude (pixels).\n'
-                        'Translations at or above this value are assumed to be registration\n'
-                        'failures (hitting the optimizer boundary) and excluded from\n'
-                        'accumulation. Set to registration_max_translation. 0 = disabled.\n'
-                        '[%(default)s]')
-    p.add_argument('--confidence_weight_translations', action='store_true',
-                   help='Weight each pairwise translation by its confidence score before\n'
-                        'accumulating. High-confidence translations contribute fully;\n'
-                        'low-confidence ones are attenuated proportionally.')
-    p.add_argument('--max_cumulative_drift_px', type=float, default=0,
-                   help='Maximum allowed cumulative translation drift from motor baseline\n'
-                        '(pixels). If total accumulated drift exceeds this, it is clamped.\n'
-                        '0 = disabled (unlimited drift). [%(default)s]')
-    p.add_argument('--smooth_window', type=int, default=0,
-                   help='Smooth accumulated translations with a moving average of this\n'
-                        'window size (in slices). Smooths only the pairwise-accumulated\n'
-                        'component, preserving motor baseline positions. 0 = disabled.\n'
-                        '[%(default)s]')
-    p.add_argument('--skip_error_transforms', action='store_true',
-                   help='Skip registration transforms flagged as overall_status="error"\n'
-                        'in pairwise_registration_metrics.json.  Error-status registrations\n'
-                        'are typically spurious (e.g. registered against an interpolated\n'
-                        'slice) and applying them introduces large rotation/translation\n'
-                        'artifacts at those slice boundaries.')
-    p.add_argument('--skip_warning_transforms', action='store_true',
-                   help='Also skip transforms with overall_status="warning".\n'
-                        'Warning-status registrations hit the optimizer boundary (e.g. large\n'
-                        'translation clamped at max_translation_px), making their fixed_z/\n'
-                        'moving_z Z-offsets unreliable. Discarding them falls back to the\n'
-                        'default moving_z_first_index, preventing Z gaps caused by bad\n'
-                        'Z-overlap estimates from failed registrations.')
-    p.add_argument('--no_xy_shift', action='store_true',
-                   help='Skip XY shifting from motor positions.\n'
-                        'Use when slices are already in common space (e.g., from bring_to_common_space).')
+    p.add_argument(
+        "--transforms_dir",
+        type=str,
+        default=None,
+        help="Directory containing pairwise registration outputs.\nIf provided, applies rotation/translation refinements.",
+    )
+    p.add_argument(
+        "--rotation_only",
+        action="store_true",
+        help="Apply only rotation from registration transforms, ignore translation.\n"
+        "Use this to prevent XY drift when motor positions are trusted.",
+    )
+    p.add_argument(
+        "--max_rotation_deg",
+        type=float,
+        default=1.0,
+        help="Maximum rotation to apply per slice (degrees). Larger rotations\n"
+        "are clamped to prevent registration errors from causing drift. [%(default)s]",
+    )
+    p.add_argument(
+        "--accumulate_translations",
+        action="store_true",
+        help="Accumulate pairwise translations cumulatively across slices.\n"
+        "Each slice gets the sum of all preceding pairwise translations.\n"
+        "This propagates corrections through the stack, fixing cumulative\n"
+        "drift and motor position errors. Rotation stays per-slice.",
+    )
+    p.add_argument(
+        "--max_pairwise_translation",
+        type=float,
+        default=0,
+        help="Maximum reliable pairwise translation magnitude (pixels).\n"
+        "Translations at or above this value are assumed to be registration\n"
+        "failures (hitting the optimizer boundary) and excluded from\n"
+        "accumulation. Set to registration_max_translation. 0 = disabled.\n"
+        "[%(default)s]",
+    )
+    p.add_argument(
+        "--confidence_weight_translations",
+        action="store_true",
+        help="Weight each pairwise translation by its confidence score before\n"
+        "accumulating. High-confidence translations contribute fully;\n"
+        "low-confidence ones are attenuated proportionally.",
+    )
+    p.add_argument(
+        "--max_cumulative_drift_px",
+        type=float,
+        default=0,
+        help="Maximum allowed cumulative translation drift from motor baseline\n"
+        "(pixels). If total accumulated drift exceeds this, it is clamped.\n"
+        "0 = disabled (unlimited drift). [%(default)s]",
+    )
+    p.add_argument(
+        "--smooth_window",
+        type=int,
+        default=0,
+        help="Smooth accumulated translations with a moving average of this\n"
+        "window size (in slices). Smooths only the pairwise-accumulated\n"
+        "component, preserving motor baseline positions. 0 = disabled.\n"
+        "[%(default)s]",
+    )
+    p.add_argument(
+        "--skip_error_transforms",
+        action="store_true",
+        help='Skip registration transforms flagged as overall_status="error"\n'
+        "in pairwise_registration_metrics.json.  Error-status registrations\n"
+        "are typically spurious (e.g. registered against an interpolated\n"
+        "slice) and applying them introduces large rotation/translation\n"
+        "artifacts at those slice boundaries.",
+    )
+    p.add_argument(
+        "--skip_warning_transforms",
+        action="store_true",
+        help='Also skip transforms with overall_status="warning".\n'
+        "Warning-status registrations hit the optimizer boundary (e.g. large\n"
+        "translation clamped at max_translation_px), making their fixed_z/\n"
+        "moving_z Z-offsets unreliable. Discarding them falls back to the\n"
+        "default moving_z_first_index, preventing Z gaps caused by bad\n"
+        "Z-overlap estimates from failed registrations.",
+    )
+    p.add_argument(
+        "--no_xy_shift",
+        action="store_true",
+        help="Skip XY shifting from motor positions.\n"
+        "Use when slices are already in common space (e.g., from bring_to_common_space).",
+    )
     # Z-matching parameters
-    p.add_argument('--slicing_interval_mm', type=float, default=0.200,
-                   help='Physical slice thickness in mm [%(default)s]')
-    p.add_argument('--search_range_mm', type=float, default=0.100,
-                   help='Search range for Z-matching in mm [%(default)s]')
-    p.add_argument('--use_expected_overlap', action='store_true',
-                   help='Use expected overlap from slicing_interval instead of correlation')
-    p.add_argument('--z_overlap_min_corr', type=float, default=0.5,
-                   help='When using correlation-based Z-overlap (not --use_expected_overlap),\n'
-                        'fall back to expected overlap if the best correlation is below this\n'
-                        'threshold. Prevents failed tissue contact from causing wrong\n'
-                        'Z-positioning. 0 = always trust correlation result. [%(default)s]')
-    p.add_argument('--moving_z_first_index', type=int, default=8,
-                   help='Starting Z-index in moving volume to skip noisy data [%(default)s]')
+    p.add_argument("--slicing_interval_mm", type=float, default=0.200, help="Physical slice thickness in mm [%(default)s]")
+    p.add_argument("--search_range_mm", type=float, default=0.100, help="Search range for Z-matching in mm [%(default)s]")
+    p.add_argument(
+        "--use_expected_overlap", action="store_true", help="Use expected overlap from slicing_interval instead of correlation"
+    )
+    p.add_argument(
+        "--z_overlap_min_corr",
+        type=float,
+        default=0.5,
+        help="When using correlation-based Z-overlap (not --use_expected_overlap),\n"
+        "fall back to expected overlap if the best correlation is below this\n"
+        "threshold. Prevents failed tissue contact from causing wrong\n"
+        "Z-positioning. 0 = always trust correlation result. [%(default)s]",
+    )
+    p.add_argument(
+        "--moving_z_first_index",
+        type=int,
+        default=8,
+        help="Starting Z-index in moving volume to skip noisy data [%(default)s]",
+    )
 
     # Blending
-    p.add_argument('--blend', action='store_true',
-                   help='Blend overlapping regions using a cosine (Hann) ramp')
-    p.add_argument('--blend_depth', type=int, default=None,
-                   help='Number of z-slices to blend (default: auto from overlap)')
-    p.add_argument('--blend_refinement_px', type=float, default=0,
-                   help='Enable Z-blend refinement: phase-correlation-based XY shift\n'
-                        'correction applied in the overlap zone before blending, analogous\n'
-                        'to stitch_3d_with_refinement for tiles. Set to the maximum\n'
-                        'allowed shift in pixels (e.g. 10). 0 disables. [%(default)s]')
-    p.add_argument('--blend_z_refine_vox', type=int, default=0,
-                   help='Z-blend position search: scan N voxels below the expected overlap\n'
-                        'boundary (when --use_expected_overlap) for the best-correlated tissue\n'
-                        'plane and set the blend there. Z-spacing stays fixed at slicing_interval;\n'
-                        'only the blend zone moves. Useful when tissue overlap is smaller than\n'
-                        'the imaging depth implies (e.g. deeper cuts). 0 = disabled. [%(default)s]')
+    p.add_argument("--blend", action="store_true", help="Blend overlapping regions using a cosine (Hann) ramp")
+    p.add_argument("--blend_depth", type=int, default=None, help="Number of z-slices to blend (default: auto from overlap)")
+    p.add_argument(
+        "--blend_refinement_px",
+        type=float,
+        default=0,
+        help="Enable Z-blend refinement: phase-correlation-based XY shift\n"
+        "correction applied in the overlap zone before blending, analogous\n"
+        "to stitch_3d_with_refinement for tiles. Set to the maximum\n"
+        "allowed shift in pixels (e.g. 10). 0 disables. [%(default)s]",
+    )
+    p.add_argument(
+        "--blend_z_refine_vox",
+        type=int,
+        default=0,
+        help="Z-blend position search: scan N voxels below the expected overlap\n"
+        "boundary (when --use_expected_overlap) for the best-correlated tissue\n"
+        "plane and set the blend there. Z-spacing stays fixed at slicing_interval;\n"
+        "only the blend zone moves. Useful when tissue overlap is smaller than\n"
+        "the imaging depth implies (e.g. deeper cuts). 0 = disabled. [%(default)s]",
+    )
 
     # Output options
-    p.add_argument('--pyramid_resolutions', type=float, nargs='+',
-                   default=[10, 25, 50, 100],
-                   help='Target resolutions for pyramid levels in microns')
-    p.add_argument('--make_isotropic', action='store_true', default=True,
-                   help='Resample to isotropic voxels')
-    p.add_argument('--no_isotropic', dest='make_isotropic', action='store_false')
+    p.add_argument(
+        "--pyramid_resolutions",
+        type=float,
+        nargs="+",
+        default=[10, 25, 50, 100],
+        help="Target resolutions for pyramid levels in microns",
+    )
+    p.add_argument("--make_isotropic", action="store_true", default=True, help="Resample to isotropic voxels")
+    p.add_argument("--no_isotropic", dest="make_isotropic", action="store_false")
 
     # Debug
-    p.add_argument('--max_slices', type=int, default=None,
-                   help='Maximum slices to process (for testing)')
-    p.add_argument('--output_z_matches', type=str, default=None,
-                   help='Output CSV with Z-matching results')
-    p.add_argument('--output_stacking_decisions', type=str, default=None,
-                   help='Output CSV with per-slice stacking decisions (transform\'s\n'
-                        'status, confidence, action taken, overlap source, etc.)')
+    p.add_argument("--max_slices", type=int, default=None, help="Maximum slices to process (for testing)")
+    p.add_argument("--output_z_matches", type=str, default=None, help="Output CSV with Z-matching results")
+    p.add_argument(
+        "--output_stacking_decisions",
+        type=str,
+        default=None,
+        help="Output CSV with per-slice stacking decisions (transform's\n"
+        "status, confidence, action taken, overlap source, etc.)",
+    )
 
-    p.add_argument('--confidence_high', type=float, default=0.6,
-                   help='Registration confidence above which the full transform is applied.\n'
-                        'Between confidence_low and confidence_high, rotation-only is forced\n'
-                        'regardless of --rotation_only. Based on registration_confidence in\n'
-                        'pairwise_registration_metrics.json. [%(default)s]')
-    p.add_argument('--confidence_low', type=float, default=0.3,
-                   help='Registration confidence below which the transform is skipped entirely.\n'
-                        'Prevents bad registrations from introducing XY drift. [%(default)s]')
-    p.add_argument('--blend_z_refine_min_confidence', type=float, default=0.5,
-                   help='Minimum registration confidence for blend_z_refine to run.\n'
-                        'Slices below this threshold skip the Z-blend position search and\n'
-                        'use the expected overlap directly. Higher than confidence_low to\n'
-                        'prevent marginal slices from snapping to wrong overlap. [%(default)s]')
-    p.add_argument('--force_skip_slices', type=str, default=None,
-                   help='CSV file listing slice IDs whose transforms should be force-skipped\n'
-                        '(motor-only positioning). Generated by linum_auto_exclude_slices.py\n'
-                        'for consecutive low-quality registration clusters. [%(default)s]')
-    p.add_argument('--load_min_zcorr', type=float, default=0.0,
-                   help='Metric-based transform gating: minimum z_correlation to load a\n'
-                        'transform. When > 0 (together with --load_max_rotation), the per-\n'
-                        'metric thresholds replace the status-based --skip_error/warning\n'
-                        'flags. Recovers transforms marked error purely due to large\n'
-                        'translation. 0 = disabled (use status-based gating). [%(default)s]')
-    p.add_argument('--load_max_rotation', type=float, default=0.0,
-                   help='Metric-based transform gating: maximum rotation (degrees) to load\n'
-                        'a transform. Paired with --load_min_zcorr. 0 = disabled. [%(default)s]')
+    p.add_argument(
+        "--confidence_high",
+        type=float,
+        default=0.6,
+        help="Registration confidence above which the full transform is applied.\n"
+        "Between confidence_low and confidence_high, rotation-only is forced\n"
+        "regardless of --rotation_only. Based on registration_confidence in\n"
+        "pairwise_registration_metrics.json. [%(default)s]",
+    )
+    p.add_argument(
+        "--confidence_low",
+        type=float,
+        default=0.3,
+        help="Registration confidence below which the transform is skipped entirely.\n"
+        "Prevents bad registrations from introducing XY drift. [%(default)s]",
+    )
+    p.add_argument(
+        "--blend_z_refine_min_confidence",
+        type=float,
+        default=0.5,
+        help="Minimum registration confidence for blend_z_refine to run.\n"
+        "Slices below this threshold skip the Z-blend position search and\n"
+        "use the expected overlap directly. Higher than confidence_low to\n"
+        "prevent marginal slices from snapping to wrong overlap. [%(default)s]",
+    )
+    p.add_argument(
+        "--force_skip_slices",
+        type=str,
+        default=None,
+        help="CSV file listing slice IDs whose transforms should be force-skipped\n"
+        "(motor-only positioning). Generated by linum_auto_exclude_slices.py\n"
+        "for consecutive low-quality registration clusters. [%(default)s]",
+    )
+    p.add_argument(
+        "--load_min_zcorr",
+        type=float,
+        default=0.0,
+        help="Metric-based transform gating: minimum z_correlation to load a\n"
+        "transform. When > 0 (together with --load_max_rotation), the per-\n"
+        "metric thresholds replace the status-based --skip_error/warning\n"
+        "flags. Recovers transforms marked error purely due to large\n"
+        "translation. 0 = disabled (use status-based gating). [%(default)s]",
+    )
+    p.add_argument(
+        "--load_max_rotation",
+        type=float,
+        default=0.0,
+        help="Metric-based transform gating: maximum rotation (degrees) to load\n"
+        "a transform. Paired with --load_min_zcorr. 0 = disabled. [%(default)s]",
+    )
 
     add_overwrite_arg(p)
     return p
 
 
-def load_registration_transforms(transforms_dir, slice_ids,
-                                 skip_error_status=False,
-                                 skip_warning_status=False,
-                                 load_min_zcorr=0.0,
-                                 load_max_rotation=0.0):
+def load_registration_transforms(
+    transforms_dir, slice_ids, skip_error_status=False, skip_warning_status=False, load_min_zcorr=0.0, load_max_rotation=0.0
+):
     """
     Load pairwise registration transforms from directory.
 
@@ -228,8 +303,7 @@ def load_registration_transforms(transforms_dir, slice_ids,
     for slice_id in slice_ids[1:]:  # First slice has no transform
         # Find transform directory for this slice
         # Pattern: slice_z{id}_* or similar
-        matching_dirs = list(transforms_dir.glob(f"*z{slice_id:02d}*")) + \
-                       list(transforms_dir.glob(f"*z{slice_id}*"))
+        matching_dirs = list(transforms_dir.glob(f"*z{slice_id:02d}*")) + list(transforms_dir.glob(f"*z{slice_id}*"))
 
         if not matching_dirs:
             logger.warning(f"No transform found for slice {slice_id}")
@@ -256,9 +330,7 @@ def load_registration_transforms(transforms_dir, slice_ids,
                     metrics_data = json.load(f)
                 status = metrics_data.get("overall_status", "ok")
                 try:
-                    confidence = float(
-                        metrics_data["metrics"]["registration_confidence"]["value"]
-                    )
+                    confidence = float(metrics_data["metrics"]["registration_confidence"]["value"])
                 except (KeyError, TypeError, ValueError):
                     confidence = 1.0  # fallback for older JSONs without confidence score
 
@@ -285,12 +357,10 @@ def load_registration_transforms(transforms_dir, slice_ids,
                         f"(zcorr={zcorr:.3f}, rot={rot_deg:.2f}°, status={status})"
                     )
                 else:
-                    should_skip = (status == "error" and skip_error_status) or \
-                                  (status == "warning" and skip_warning_status)
+                    should_skip = (status == "error" and skip_error_status) or (status == "warning" and skip_warning_status)
                     if should_skip:
                         logger.warning(
-                            f"Slice {slice_id}: skipping transform with "
-                            f"overall_status='{status}' (unreliable registration)"
+                            f"Slice {slice_id}: skipping transform with overall_status='{status}' (unreliable registration)"
                         )
                         transforms[slice_id] = None
                         continue
@@ -350,12 +420,12 @@ def main():
     assert_output_exists(output_path, p, args)
 
     # Find slice files
-    slice_files_list = sorted(slices_dir.glob('*.ome.zarr'))
+    slice_files_list = sorted(slices_dir.glob("*.ome.zarr"))
     if not slice_files_list:
         p.error(f"No .ome.zarr files found in {slices_dir}")
 
     # Extract slice IDs
-    pattern = re.compile(r'slice_z(\d+)')
+    pattern = re.compile(r"slice_z(\d+)")
     slice_files = {}
     for f in slice_files_list:
         match = pattern.search(f.name)
@@ -368,7 +438,7 @@ def main():
 
     available_ids = sorted(slice_files.keys())
     if args.max_slices:
-        available_ids = available_ids[:args.max_slices]
+        available_ids = available_ids[: args.max_slices]
         slice_files = {k: slice_files[k] for k in available_ids}
 
     logger.info(f"Found {len(slice_files)} slices: {available_ids[0]} to {available_ids[-1]}")
@@ -388,7 +458,7 @@ def main():
     res_y_mm = first_res[1] if len(first_res) >= 2 else first_res[0]
     res_x_mm = first_res[2] if len(first_res) >= 3 else first_res[0]
 
-    logger.info(f"Resolution: Z={res_z_mm*1000:.2f} µm, Y={res_y_mm*1000:.2f} µm, X={res_x_mm*1000:.2f} µm")
+    logger.info(f"Resolution: Z={res_z_mm * 1000:.2f} µm, Y={res_y_mm * 1000:.2f} µm, X={res_x_mm * 1000:.2f} µm")
 
     # Handle XY shifts
     if args.no_xy_shift:
@@ -429,11 +499,13 @@ def main():
         if transforms_dir.exists():
             logger.info(f"Loading registration transforms from {transforms_dir}")
             registration_transforms = load_registration_transforms(
-                transforms_dir, available_ids,
+                transforms_dir,
+                available_ids,
                 skip_error_status=args.skip_error_transforms,
                 skip_warning_status=args.skip_warning_transforms,
                 load_min_zcorr=args.load_min_zcorr,
-                load_max_rotation=args.load_max_rotation)
+                load_max_rotation=args.load_max_rotation,
+            )
             n_loaded = sum(1 for v in registration_transforms.values() if v is not None)
             logger.info(f"Loaded {n_loaded} transforms for refinement")
 
@@ -445,15 +517,16 @@ def main():
                     with open(force_skip_path) as f:
                         reader = csv.DictReader(f)
                         for row in reader:
-                            force_skip_ids.add(int(row['slice_id']))
+                            force_skip_ids.add(int(row["slice_id"]))
                     n_forced = 0
                     for sid in force_skip_ids:
                         if sid in registration_transforms and registration_transforms[sid] is not None:
                             registration_transforms[sid] = None
                             n_forced += 1
                     if force_skip_ids:
-                        logger.info(f"Force-skipped {n_forced} transforms from "
-                                    f"auto-exclude list ({len(force_skip_ids)} slices listed)")
+                        logger.info(
+                            f"Force-skipped {n_forced} transforms from auto-exclude list ({len(force_skip_ids)} slices listed)"
+                        )
         else:
             logger.warning(f"Transforms directory not found: {transforms_dir}")
 
@@ -484,13 +557,14 @@ def main():
                 tx, ty = pairwise_translations[slice_id]
                 mag = np.sqrt(tx**2 + ty**2)
                 if mag >= boundary:
-                    logger.warning(f"Slice {slice_id}: excluding boundary translation "
-                                   f"tx={tx:.1f}, ty={ty:.1f} (mag={mag:.1f} >= {boundary:.1f})")
+                    logger.warning(
+                        f"Slice {slice_id}: excluding boundary translation "
+                        f"tx={tx:.1f}, ty={ty:.1f} (mag={mag:.1f} >= {boundary:.1f})"
+                    )
                     pairwise_translations[slice_id] = (0.0, 0.0)
                     n_excluded += 1
             n_total = len(pairwise_translations)
-            logger.info(f"Translation filter: excluded {n_excluded}/{n_total} pairs "
-                        f"at boundary (>= {boundary:.1f} px)")
+            logger.info(f"Translation filter: excluded {n_excluded}/{n_total} pairs at boundary (>= {boundary:.1f} px)")
 
         # Second pass: accumulate filtered translations
         # Optionally weight each translation by its confidence score
@@ -511,8 +585,10 @@ def main():
                 cumulative_ty += ty
                 if tx != 0 or ty != 0:
                     n_accumulated += 1
-                logger.debug(f"Slice {slice_id}: pairwise tx={tx:.2f}, ty={ty:.2f} -> "
-                             f"cumulative tx={cumulative_tx:.2f}, ty={cumulative_ty:.2f}")
+                logger.debug(
+                    f"Slice {slice_id}: pairwise tx={tx:.2f}, ty={ty:.2f} -> "
+                    f"cumulative tx={cumulative_tx:.2f}, ty={cumulative_ty:.2f}"
+                )
             # Cumulative drift cap: clamp total drift from motor baseline
             capped_tx, capped_ty = cumulative_tx, cumulative_ty
             if args.max_cumulative_drift_px > 0:
@@ -521,21 +597,23 @@ def main():
                     scale = args.max_cumulative_drift_px / drift
                     capped_tx = cumulative_tx * scale
                     capped_ty = cumulative_ty * scale
-                    logger.warning(f"Slice {slice_id}: clamping cumulative drift "
-                                   f"{drift:.1f} -> {args.max_cumulative_drift_px:.1f} px")
+                    logger.warning(
+                        f"Slice {slice_id}: clamping cumulative drift {drift:.1f} -> {args.max_cumulative_drift_px:.1f} px"
+                    )
             accumulated_offsets[slice_id] = (capped_tx, capped_ty)
             # Apply to cumsum_px: sign is negated because SimpleITK tx=+N shifts
             # content LEFT but cumsum_px dx=+N places content RIGHT
             prev_dx, prev_dy = cumsum_px[slice_id]
             cumsum_px[slice_id] = (prev_dx - capped_tx, prev_dy - capped_ty)
-        logger.info(f"Accumulated translations for {n_accumulated} slices "
-                     f"(final cumulative: tx={cumulative_tx:.2f}, ty={cumulative_ty:.2f})")
+        logger.info(
+            f"Accumulated translations for {n_accumulated} slices "
+            f"(final cumulative: tx={cumulative_tx:.2f}, ty={cumulative_ty:.2f})"
+        )
         if args.confidence_weight_translations:
             logger.info("Confidence-weighted accumulation enabled")
         if args.max_cumulative_drift_px > 0:
             final_drift = np.sqrt(capped_tx**2 + capped_ty**2)
-            logger.info(f"Cumulative drift cap: {args.max_cumulative_drift_px:.1f} px "
-                        f"(final drift: {final_drift:.1f} px)")
+            logger.info(f"Cumulative drift cap: {args.max_cumulative_drift_px:.1f} px (final drift: {final_drift:.1f} px)")
 
         # Targeted smoothing: smooth only the accumulated pairwise component,
         # preserving motor baseline positions (which may contain legitimate jumps
@@ -548,8 +626,8 @@ def main():
             w = min(args.smooth_window, len(acc_x))
             if w >= 2:
                 kernel = np.ones(w) / w
-                acc_x_smooth = np.convolve(acc_x, kernel, mode='same')
-                acc_y_smooth = np.convolve(acc_y, kernel, mode='same')
+                acc_x_smooth = np.convolve(acc_x, kernel, mode="same")
+                acc_y_smooth = np.convolve(acc_y, kernel, mode="same")
 
                 # Keep original values at edges where the kernel doesn't fully overlap
                 half_w = w // 2
@@ -560,24 +638,22 @@ def main():
 
                 max_correction = 0.0
                 for j, sid in enumerate(ids_list):
-                    correction = np.sqrt((acc_x_smooth[j] - acc_x[j])**2 +
-                                         (acc_y_smooth[j] - acc_y[j])**2)
+                    correction = np.sqrt((acc_x_smooth[j] - acc_x[j]) ** 2 + (acc_y_smooth[j] - acc_y[j]) ** 2)
                     max_correction = max(max_correction, correction)
                     # Reconstruct cumsum_px = motor_baseline - smoothed_accumulated
                     base_dx, base_dy = motor_baseline[sid]
-                    cumsum_px[sid] = (base_dx - float(acc_x_smooth[j]),
-                                     base_dy - float(acc_y_smooth[j]))
+                    cumsum_px[sid] = (base_dx - float(acc_x_smooth[j]), base_dy - float(acc_y_smooth[j]))
 
-                logger.info(f"Smoothed accumulated translations with window={w} "
-                            f"(max correction: {max_correction:.1f} px)")
+                logger.info(f"Smoothed accumulated translations with window={w} (max correction: {max_correction:.1f} px)")
 
         # Center accumulated offsets around the middle slice to prevent
         # asymmetric drift expanding the canvas in one direction.
         middle_id = available_ids[len(available_ids) // 2]
         center_dx, center_dy = cumsum_px[middle_id]
         cumsum_px = {k: (dx - center_dx, dy - center_dy) for k, (dx, dy) in cumsum_px.items()}
-        logger.info(f"Centered accumulated translations around slice {middle_id} "
-                     f"(offset: dx={center_dx:.1f}, dy={center_dy:.1f})")
+        logger.info(
+            f"Centered accumulated translations around slice {middle_id} (offset: dx={center_dx:.1f}, dy={center_dy:.1f})"
+        )
 
         # Recompute output XY shape to fit the shifted slices
         out_ny, out_nx, x0, y0 = compute_output_shape(slice_files, cumsum_px, first_vol.shape)
@@ -591,9 +667,9 @@ def main():
     # This runs regardless of accumulate_translations.
     smoothed_rotations = {}
     if args.smooth_window > 0 and registration_transforms:
-        ids_with_tfm = [sid for sid in available_ids
-                        if sid in registration_transforms
-                        and registration_transforms[sid] is not None]
+        ids_with_tfm = [
+            sid for sid in available_ids if sid in registration_transforms and registration_transforms[sid] is not None
+        ]
         if ids_with_tfm:
             angle_ids = sorted(ids_with_tfm)
             raw_angles = []
@@ -616,13 +692,12 @@ def main():
                 smooth_angles = raw_angles.copy()
             else:
                 kernel = np.ones(w) / w
-                smooth_angles = np.convolve(raw_angles, kernel, mode='same')
+                smooth_angles = np.convolve(raw_angles, kernel, mode="same")
                 half_w = w // 2
                 smooth_angles[:half_w] = raw_angles[:half_w]
                 smooth_angles[-half_w:] = raw_angles[-half_w:]
             max_rot_corr = float(np.max(np.abs(smooth_angles - raw_angles)))
-            logger.info(f"Smoothed rotations with window={w} "
-                        f"(max correction: {np.degrees(max_rot_corr):.3f}°)")
+            logger.info(f"Smoothed rotations with window={w} (max correction: {np.degrees(max_rot_corr):.3f}°)")
             for j, sid in enumerate(angle_ids):
                 smoothed_rotations[sid] = float(smooth_angles[j])
 
@@ -659,8 +734,10 @@ def main():
             overlap = vol.shape[0] - (moving_z or 0) - interval_voxels
             overlap = max(0, overlap)
             corr = 0.0
-            logger.debug(f"Slice {slice_id}: expected overlap={overlap} voxels "
-                         f"(vol_depth={vol.shape[0]}, moving_z={moving_z} [fixed], interval={interval_voxels})")
+            logger.debug(
+                f"Slice {slice_id}: expected overlap={overlap} voxels "
+                f"(vol_depth={vol.shape[0]}, moving_z={moving_z} [fixed], interval={interval_voxels})"
+            )
             # Optionally search below expected_overlap for the best-correlated tissue
             # boundary to blend at, while keeping z-spacing fixed at slicing_interval.
             # This handles cases where the actual tissue overlap is smaller than the
@@ -675,7 +752,7 @@ def main():
                 else:
                     # Transform was skipped (error/warning) — treat as zero confidence
                     slice_confidence = 0.0
-            refine_ok = (slice_confidence is None or slice_confidence >= args.blend_z_refine_min_confidence)
+            refine_ok = slice_confidence is None or slice_confidence >= args.blend_z_refine_min_confidence
             if args.blend_z_refine_vox > 0 and overlap > 0 and refine_ok:
                 search_vox = args.blend_z_refine_vox
                 min_ov = max(1, overlap - search_vox)
@@ -688,7 +765,7 @@ def main():
                 best_ref_corr = -np.inf
                 for ov in range(min_ov, max_ov + 1):
                     f_reg = prev_vol[-ov:, y_sl, x_sl]
-                    m_reg = vol[crop_z: crop_z + ov, y_sl, x_sl]
+                    m_reg = vol[crop_z : crop_z + ov, y_sl, x_sl]
                     if m_reg.shape[0] < ov:
                         break
                     f_n = (f_reg - f_reg.mean()) / (f_reg.std() + 1e-8)
@@ -697,11 +774,15 @@ def main():
                     if c > best_ref_corr:
                         best_ref_corr = c
                         blend_overlap = ov
-                logger.debug(f"Slice {slice_id}: blend_z_refine: expected_overlap={overlap}, "
-                             f"blend_overlap={blend_overlap} (corr={best_ref_corr:.3f})")
+                logger.debug(
+                    f"Slice {slice_id}: blend_z_refine: expected_overlap={overlap}, "
+                    f"blend_overlap={blend_overlap} (corr={best_ref_corr:.3f})"
+                )
             elif not refine_ok:
-                logger.info(f"Slice {slice_id}: skipping blend_z_refine (confidence "
-                            f"{slice_confidence:.3f} < {args.blend_z_refine_min_confidence})")
+                logger.info(
+                    f"Slice {slice_id}: skipping blend_z_refine (confidence "
+                    f"{slice_confidence:.3f} < {args.blend_z_refine_min_confidence})"
+                )
         elif fixed_z is not None:
             # We have registration-derived indices
             # fixed_z: Z-index in prev_vol where overlap starts
@@ -715,10 +796,7 @@ def main():
         else:
             # find_z_overlap expects resolution in µm for its internal calculation
             res_z_um = res_z_mm * 1000
-            overlap, corr = find_z_overlap(
-                prev_vol, vol,
-                args.slicing_interval_mm, args.search_range_mm, res_z_um
-            )
+            overlap, corr = find_z_overlap(prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um)
             # Fall back to expected overlap when correlation is too low to trust
             if args.z_overlap_min_corr > 0 and corr < args.z_overlap_min_corr:
                 interval_voxels = int(args.slicing_interval_mm / res_z_mm)
@@ -734,14 +812,16 @@ def main():
             blend_overlap = overlap
             moving_z = args.moving_z_first_index  # Use default
 
-        z_matches.append({
-            'fixed_id': prev_id,
-            'moving_id': slice_id,
-            'overlap_voxels': overlap,
-            'blend_overlap_voxels': blend_overlap,
-            'moving_z_start': moving_z,  # Z-index in moving volume where to start
-            'correlation': corr
-        })
+        z_matches.append(
+            {
+                "fixed_id": prev_id,
+                "moving_id": slice_id,
+                "overlap_voxels": overlap,
+                "blend_overlap_voxels": blend_overlap,
+                "moving_z_start": moving_z,  # Z-index in moving volume where to start
+                "correlation": corr,
+            }
+        )
 
         # Account for moving_z_start when computing total depth
         # We add (vol_depth - moving_z - overlap) new voxels
@@ -758,15 +838,10 @@ def main():
 
     # Enforce Z-consistency: replace outlier overlaps using neighbor interpolation.
     # High-confidence registrations (confidence >= confidence_high) are protected.
-    confidence_per_slice = {
-        sid: tfm_tuple[3]
-        for sid, tfm_tuple in registration_transforms.items()
-        if tfm_tuple is not None
-    }
-    overlaps_before = [m['overlap_voxels'] for m in z_matches]
+    confidence_per_slice = {sid: tfm_tuple[3] for sid, tfm_tuple in registration_transforms.items() if tfm_tuple is not None}
+    overlaps_before = [m["overlap_voxels"] for m in z_matches]
     logger.info(
-        f"Z-overlap consistency check: median={np.median(overlaps_before):.1f}, "
-        f"std={np.std(overlaps_before):.1f} voxels"
+        f"Z-overlap consistency check: median={np.median(overlaps_before):.1f}, std={np.std(overlaps_before):.1f} voxels"
     )
     z_matches, z_corrections = enforce_z_consistency(
         z_matches,
@@ -776,33 +851,26 @@ def main():
     )
     if z_corrections:
         for c in z_corrections:
-            logger.warning(
-                f"Slice {c['moving_id']}: corrected outlier {c['field']} "
-                f"{c['old_value']} -> {c['new_value']}"
-            )
+            logger.warning(f"Slice {c['moving_id']}: corrected outlier {c['field']} {c['old_value']} -> {c['new_value']}")
         # Recompute total_z after corrections
         total_z = volume_shapes[first_id][0]
         for match in z_matches:
-            sid = match['moving_id']
-            mz = match.get('moving_z_start', 0) or 0
-            ov = match['overlap_voxels']
+            sid = match["moving_id"]
+            mz = match.get("moving_z_start", 0) or 0
+            ov = match["overlap_voxels"]
             vol_nz = volume_shapes[sid][0]
             total_z += max(0, vol_nz - mz - ov)
         logger.info(f"Recomputed total Z after consistency enforcement: {total_z}")
 
     # Log Z-match summary
-    overlaps = [m['overlap_voxels'] for m in z_matches]
+    overlaps = [m["overlap_voxels"] for m in z_matches]
     logger.info(f"Z-overlap: mean={np.mean(overlaps):.1f}, std={np.std(overlaps):.1f} voxels")
 
     # Second pass: assemble volume
     logger.info(f"Assembling volume: {total_z} x {out_ny} x {out_nx}")
     output_shape = (total_z, out_ny, out_nx)
 
-    output = AnalysisOmeZarrWriter(
-        str(output_path), output_shape,
-        chunk_shape=(100, 100, 100),
-        dtype=np.float32
-    )
+    output = AnalysisOmeZarrWriter(str(output_path), output_shape, chunk_shape=(100, 100, 100), dtype=np.float32)
 
     # Place first slice
     first_dx, first_dy = cumsum_px[first_id]
@@ -811,18 +879,18 @@ def main():
 
     if shifted_first is not None:
         y0, y1, x0, x1 = first_coords
-        output[:first_vol.shape[0], y0:y1, x0:x1] = shifted_first
+        output[: first_vol.shape[0], y0:y1, x0:x1] = shifted_first
         logger.info(f"  First slice: shift=({first_dx:.1f}, {first_dy:.1f}) px, xy=[{y0}:{y1}, {x0}:{x1}]")
 
     z_cursor = first_vol.shape[0]
 
     # Stack remaining slices
     for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
-        slice_id = match['moving_id']
-        overlap = match['overlap_voxels']
+        slice_id = match["moving_id"]
+        overlap = match["overlap_voxels"]
         # blend_overlap may be < overlap when z-blend refinement found a tighter tissue match
-        blend_overlap = min(match.get('blend_overlap_voxels', overlap), overlap)
-        moving_z_start = match.get('moving_z_start', 0) or 0
+        blend_overlap = min(match.get("blend_overlap_voxels", overlap), overlap)
+        moving_z_start = match.get("moving_z_start", 0) or 0
 
         vol, _ = read_omezarr(str(slice_files[slice_id]), level=0)
         vol = np.array(vol[:]).astype(np.float32)
@@ -838,20 +906,27 @@ def main():
             # Adaptive degradation: skip, force rotation-only, or apply full transform
             # based on the per-registration confidence score.
             if args.confidence_low is not None and confidence < args.confidence_low:
-                logger.warning(f"Slice {slice_id}: skipping transform "
-                               f"(confidence={confidence:.2f} < confidence_low={args.confidence_low:.2f})")
+                logger.warning(
+                    f"Slice {slice_id}: skipping transform "
+                    f"(confidence={confidence:.2f} < confidence_low={args.confidence_low:.2f})"
+                )
             else:
                 if args.confidence_high is not None and confidence < args.confidence_high:
                     use_rotation_only = True
-                    logger.debug(f"Slice {slice_id}: forcing rotation-only "
-                                 f"(confidence={confidence:.2f} < confidence_high={args.confidence_high:.2f})")
+                    logger.debug(
+                        f"Slice {slice_id}: forcing rotation-only "
+                        f"(confidence={confidence:.2f} < confidence_high={args.confidence_high:.2f})"
+                    )
                 else:
                     use_rotation_only = args.rotation_only or args.accumulate_translations
                 override_rot = smoothed_rotations.get(slice_id)  # None if no smoothing
-                vol = apply_transform_to_volume(vol, transform,
-                                               rotation_only=use_rotation_only,
-                                               max_rotation_deg=args.max_rotation_deg,
-                                               override_rotation=override_rot)
+                vol = apply_transform_to_volume(
+                    vol,
+                    transform,
+                    rotation_only=use_rotation_only,
+                    max_rotation_deg=args.max_rotation_deg,
+                    override_rotation=override_rot,
+                )
                 if use_rotation_only:
                     logger.debug(f"Applied rotation-only transform to slice {slice_id} (max_rot={args.max_rotation_deg}°)")
                 else:
@@ -874,7 +949,7 @@ def main():
         # Ensure we don't exceed output bounds
         if z_end > output_shape[0]:
             z_end = output_shape[0]
-            shifted = shifted[:z_end - z_start]
+            shifted = shifted[: z_end - z_start]
 
         if args.blend and blend_overlap > 0 and z_start < z_cursor:
             # Blend the region [z_cursor - blend_overlap, z_cursor].
@@ -890,7 +965,7 @@ def main():
             if overlap_depth > 0:
                 # Get overlap regions from output and shifted
                 existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
-                moving_overlap = shifted[s_blend_start:s_blend_start + overlap_depth]
+                moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
                 # Intensity matching: adjust moving slice to match existing in overlap
                 # This reduces visible bands at slice transitions
@@ -909,14 +984,12 @@ def main():
                         if abs(scale - 1.0) > 0.01:
                             # Apply scaling to the entire shifted volume, not just overlap
                             shifted = shifted * scale
-                            moving_overlap = shifted[s_blend_start:s_blend_start + overlap_depth]
+                            moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
                             logger.debug(f"Slice {slice_id}: intensity scale={scale:.3f}")
 
                 # Z-blend refinement: correct residual XY misalignment in the overlap zone
                 if args.blend_refinement_px > 0:
-                    moving_overlap, ref_mag = refine_z_blend_overlap(
-                        existing, moving_overlap, args.blend_refinement_px
-                    )
+                    moving_overlap, ref_mag = refine_z_blend_overlap(existing, moving_overlap, args.blend_refinement_px)
                     if ref_mag > 0:
                         logger.debug(f"Slice {slice_id}: z-blend XY refinement {ref_mag:.2f} px")
 
@@ -939,39 +1012,37 @@ def main():
     if args.output_stacking_decisions:
         decisions = []
         for match in z_matches:
-            sid = match['moving_id']
+            sid = match["moving_id"]
             has_tfm = sid in registration_transforms and registration_transforms[sid] is not None
             conf = registration_transforms[sid][3] if has_tfm else None
             # Determine overlap source
             if args.use_expected_overlap:
-                overlap_src = 'expected'
+                overlap_src = "expected"
             elif has_tfm:
-                overlap_src = 'registration'
+                overlap_src = "registration"
             else:
-                overlap_src = 'correlation'
-            decisions.append({
-                'slice_id': sid,
-                'fixed_id': match['fixed_id'],
-                'transform_loaded': has_tfm,
-                'confidence': round(conf, 4) if conf is not None else '',
-                'overlap_source': overlap_src,
-                'overlap_voxels': match['overlap_voxels'],
-                'blend_overlap_voxels': match.get('blend_overlap_voxels', match['overlap_voxels']),
-                'correlation': round(match['correlation'], 4),
-            })
+                overlap_src = "correlation"
+            decisions.append(
+                {
+                    "slice_id": sid,
+                    "fixed_id": match["fixed_id"],
+                    "transform_loaded": has_tfm,
+                    "confidence": round(conf, 4) if conf is not None else "",
+                    "overlap_source": overlap_src,
+                    "overlap_voxels": match["overlap_voxels"],
+                    "blend_overlap_voxels": match.get("blend_overlap_voxels", match["overlap_voxels"]),
+                    "correlation": round(match["correlation"], 4),
+                }
+            )
         pd.DataFrame(decisions).to_csv(args.output_stacking_decisions, index=False)
         logger.info(f"Stacking decisions saved to {args.output_stacking_decisions}")
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
-    output.finalize(
-        first_res,
-        target_resolutions_um=args.pyramid_resolutions,
-        make_isotropic=args.make_isotropic
-    )
+    output.finalize(first_res, target_resolutions_um=args.pyramid_resolutions, make_isotropic=args.make_isotropic)
 
     # Collect metrics
-    z_offsets = np.array([m['overlap_voxels'] for m in z_matches])
+    z_offsets = np.array([m["overlap_voxels"] for m in z_matches])
     collect_stack_metrics(
         output_shape=output_shape,
         z_offsets=z_offsets,
@@ -979,11 +1050,11 @@ def main():
         resolution=list(first_res),
         output_path=str(output_path),
         blend_enabled=args.blend,
-        normalize_enabled=False
+        normalize_enabled=False,
     )
 
     logger.info(f"Done! Output saved to {output_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

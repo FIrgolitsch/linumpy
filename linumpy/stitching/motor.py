@@ -4,18 +4,18 @@ Motor-position-based tile placement for mosaic stitching.
 
 Consolidated from linum_stitch_3d_refined.py and linum_stitch_motor_only.py.
 """
+
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def compute_motor_positions(nx: int, ny: int, tile_shape: tuple,
-                            overlap_fraction: float,
-                            scale_factor: float = 1.0,
-                            rotation_deg: float = 0.0):
+def compute_motor_positions(
+    nx: int, ny: int, tile_shape: tuple, overlap_fraction: float, scale_factor: float = 1.0, rotation_deg: float = 0.0
+):
     """Compute tile positions based on motor grid (ideal positions).
 
     Assumes a regular grid where tiles are spaced by (1 - overlap) * tile_size.
@@ -68,11 +68,9 @@ def compute_motor_positions(nx: int, ny: int, tile_shape: tuple,
     return positions, step_y, step_x
 
 
-def compute_registration_refinements(volume: np.ndarray,
-                                     tile_shape: tuple,
-                                     nx: int, ny: int,
-                                     overlap_fraction: float,
-                                     max_refinement_px: float = 10.0) -> dict:
+def compute_registration_refinements(
+    volume: np.ndarray, tile_shape: tuple, nx: int, ny: int, overlap_fraction: float, max_refinement_px: float = 10.0
+) -> dict:
     """Correlate neighboring tiles within a slice to measure displacement errors.
 
     Phase-correlates overlapping regions of adjacent tiles (horizontal and
@@ -116,16 +114,10 @@ def compute_registration_refinements(volume: np.ndarray,
     step_x = tile_width * (1.0 - overlap_fraction)
 
     refinements = {
-        'horizontal': {},
-        'vertical': {},
-        'pairs': [],  # absolute displacements for affine estimation
-        'stats': {
-            'total_pairs': 0,
-            'valid_pairs': 0,
-            'clamped_pairs': 0,
-            'mean_refinement': 0.0,
-            'max_refinement': 0.0
-        }
+        "horizontal": {},
+        "vertical": {},
+        "pairs": [],  # absolute displacements for affine estimation
+        "stats": {"total_pairs": 0, "valid_pairs": 0, "clamped_pairs": 0, "mean_refinement": 0.0, "max_refinement": 0.0},
     }
 
     all_shifts = []
@@ -140,38 +132,40 @@ def compute_registration_refinements(volume: np.ndarray,
             c1_end = (j + 1) * tile_width
             c2_start = (j + 1) * tile_width
 
-            overlap1 = volume[z_mid, r1_start:r1_end, c1_end - overlap_x:c1_end]
-            overlap2 = volume[z_mid, r1_start:r1_end, c2_start:c2_start + overlap_x]
+            overlap1 = volume[z_mid, r1_start:r1_end, c1_end - overlap_x : c1_end]
+            overlap2 = volume[z_mid, r1_start:r1_end, c2_start : c2_start + overlap_x]
 
             if np.mean(overlap1 > 0) < 0.1 or np.mean(overlap2 > 0) < 0.1:
                 continue
 
-            refinements['stats']['total_pairs'] += 1
+            refinements["stats"]["total_pairs"] += 1
             try:
                 dy, dx = pairWisePhaseCorrelation(overlap1, overlap2)
 
                 # Store absolute displacement for affine estimation (unclamped)
                 # Horizontal pair: row_delta=0, col_delta=1
                 # Measured position = expected_step + residual
-                refinements['pairs'].append({
-                    'row_delta': 0,
-                    'col_delta': 1,
-                    'measured_dy': float(dy),       # cross-axis residual
-                    'measured_dx': float(step_x + dx),  # along-axis: step + residual
-                })
+                refinements["pairs"].append(
+                    {
+                        "row_delta": 0,
+                        "col_delta": 1,
+                        "measured_dy": float(dy),  # cross-axis residual
+                        "measured_dx": float(step_x + dx),  # along-axis: step + residual
+                    }
+                )
 
                 magnitude = np.sqrt(dx**2 + dy**2)
                 if magnitude > max_refinement_px:
                     scale = max_refinement_px / magnitude
                     dx *= scale
                     dy *= scale
-                    refinements['stats']['clamped_pairs'] += 1
+                    refinements["stats"]["clamped_pairs"] += 1
 
-                refinements['horizontal'][(i, j)] = {'dx': float(dx), 'dy': float(dy)}
-                refinements['stats']['valid_pairs'] += 1
+                refinements["horizontal"][(i, j)] = {"dx": float(dx), "dy": float(dy)}
+                refinements["stats"]["valid_pairs"] += 1
                 all_shifts.append(magnitude)
             except Exception as e:
-                logger.debug(f"Registration failed for h-pair ({i},{j})-({i},{j+1}): {e}")
+                logger.debug(f"Registration failed for h-pair ({i},{j})-({i},{j + 1}): {e}")
 
     # Vertical refinements (between rows: tile (i,j) → (i+1,j))
     # The expected displacement is (step_y, 0); registration measures residual
@@ -182,47 +176,48 @@ def compute_registration_refinements(volume: np.ndarray,
             c_start = j * tile_width
             c_end = (j + 1) * tile_width
 
-            overlap1 = volume[z_mid, r1_end - overlap_y:r1_end, c_start:c_end]
-            overlap2 = volume[z_mid, r2_start:r2_start + overlap_y, c_start:c_end]
+            overlap1 = volume[z_mid, r1_end - overlap_y : r1_end, c_start:c_end]
+            overlap2 = volume[z_mid, r2_start : r2_start + overlap_y, c_start:c_end]
 
             if np.mean(overlap1 > 0) < 0.1 or np.mean(overlap2 > 0) < 0.1:
                 continue
 
-            refinements['stats']['total_pairs'] += 1
+            refinements["stats"]["total_pairs"] += 1
             try:
                 dy, dx = pairWisePhaseCorrelation(overlap1, overlap2)
 
                 # Store absolute displacement for affine estimation (unclamped)
                 # Vertical pair: row_delta=1, col_delta=0
-                refinements['pairs'].append({
-                    'row_delta': 1,
-                    'col_delta': 0,
-                    'measured_dy': float(step_y + dy),  # along-axis: step + residual
-                    'measured_dx': float(dx),            # cross-axis residual
-                })
+                refinements["pairs"].append(
+                    {
+                        "row_delta": 1,
+                        "col_delta": 0,
+                        "measured_dy": float(step_y + dy),  # along-axis: step + residual
+                        "measured_dx": float(dx),  # cross-axis residual
+                    }
+                )
 
                 magnitude = np.sqrt(dx**2 + dy**2)
                 if magnitude > max_refinement_px:
                     scale = max_refinement_px / magnitude
                     dx *= scale
                     dy *= scale
-                    refinements['stats']['clamped_pairs'] += 1
+                    refinements["stats"]["clamped_pairs"] += 1
 
-                refinements['vertical'][(i, j)] = {'dx': float(dx), 'dy': float(dy)}
-                refinements['stats']['valid_pairs'] += 1
+                refinements["vertical"][(i, j)] = {"dx": float(dx), "dy": float(dy)}
+                refinements["stats"]["valid_pairs"] += 1
                 all_shifts.append(magnitude)
             except Exception as e:
-                logger.debug(f"Registration failed for v-pair ({i},{j})-({i+1},{j}): {e}")
+                logger.debug(f"Registration failed for v-pair ({i},{j})-({i + 1},{j}): {e}")
 
     if all_shifts:
-        refinements['stats']['mean_refinement'] = float(np.mean(all_shifts))
-        refinements['stats']['max_refinement'] = float(np.max(all_shifts))
+        refinements["stats"]["mean_refinement"] = float(np.mean(all_shifts))
+        refinements["stats"]["max_refinement"] = float(np.max(all_shifts))
 
     return refinements
 
 
-def estimate_affine_from_pairs(pairs: list, tile_shape: tuple,
-                               overlap_fraction: float) -> Tuple[np.ndarray, dict]:
+def estimate_affine_from_pairs(pairs: list, tile_shape: tuple, overlap_fraction: float) -> Tuple[np.ndarray, dict]:
     """Estimate a 2x2 affine displacement model from neighbor tile correlations.
 
     Fits the Lefebvre et al. (2017) motor displacement model using
@@ -259,7 +254,7 @@ def estimate_affine_from_pairs(pairs: list, tile_shape: tuple,
         step_y = tile_shape[1] * (1.0 - overlap_fraction)
         step_x = tile_shape[2] * (1.0 - overlap_fraction)
         transform = np.array([[step_y, 0.0], [0.0, step_x]])
-        return transform, {'fallback': True, 'reason': 'no pairs'}
+        return transform, {"fallback": True, "reason": "no pairs"}
 
     n = len(pairs)
     # System:  A_mat @ x = b_vec
@@ -273,28 +268,26 @@ def estimate_affine_from_pairs(pairs: list, tile_shape: tuple,
     a_mat = np.zeros((2 * n, 4))
     b_vec = np.zeros((2 * n, 1))
     for idx, p in enumerate(pairs):
-        r, c = p['row_delta'], p['col_delta']
+        r, c = p["row_delta"], p["col_delta"]
         a_mat[2 * idx, :] = [r, c, 0, 0]
-        b_vec[2 * idx, 0] = p['measured_dy']
+        b_vec[2 * idx, 0] = p["measured_dy"]
         a_mat[2 * idx + 1, :] = [0, 0, r, c]
-        b_vec[2 * idx + 1, 0] = p['measured_dx']
+        b_vec[2 * idx + 1, 0] = p["measured_dx"]
 
     result = np.linalg.lstsq(a_mat, b_vec, rcond=None)
     transform = result[0].reshape((2, 2))
     residuals = result[1] if len(result[1]) > 0 else np.array([0.0])
 
     # Extract Lefebvre displacement model parameters for diagnostics
-    diagnostics = _extract_displacement_params(transform, tile_shape,
-                                               overlap_fraction)
-    diagnostics['n_pairs'] = n
-    diagnostics['lstsq_residual'] = float(np.sum(residuals))
-    diagnostics['fallback'] = False
+    diagnostics = _extract_displacement_params(transform, tile_shape, overlap_fraction)
+    diagnostics["n_pairs"] = n
+    diagnostics["lstsq_residual"] = float(np.sum(residuals))
+    diagnostics["fallback"] = False
 
     return transform, diagnostics
 
 
-def _extract_displacement_params(transform: np.ndarray, tile_shape: tuple,
-                                 overlap_fraction: float) -> dict:
+def _extract_displacement_params(transform: np.ndarray, tile_shape: tuple, overlap_fraction: float) -> dict:
     """Extract Lefebvre motor model parameters from a 2x2 affine transform.
 
     Given the fitted transform ``A`` where ``pixel_pos = A @ [i, j]^T``,
@@ -340,18 +333,17 @@ def _extract_displacement_params(transform: np.ndarray, tile_shape: tuple,
     Oy_fraction = 1.0 - horizontal_step / tile_w
 
     return {
-        'theta_deg': float(np.degrees(theta_rad)),
-        'phi_deg': float(np.degrees(phi_rad)),
-        'Ox_fraction': float(Ox_fraction),
-        'Oy_fraction': float(Oy_fraction),
-        'expected_overlap': float(overlap_fraction),
-        'off_diagonal_px': [float(b), float(c)],
-        'transform': transform.tolist(),
+        "theta_deg": float(np.degrees(theta_rad)),
+        "phi_deg": float(np.degrees(phi_rad)),
+        "Ox_fraction": float(Ox_fraction),
+        "Oy_fraction": float(Oy_fraction),
+        "expected_overlap": float(overlap_fraction),
+        "off_diagonal_px": [float(b), float(c)],
+        "transform": transform.tolist(),
     }
 
 
-def compute_affine_positions(nx: int, ny: int,
-                             transform: np.ndarray) -> List[Tuple[int, int]]:
+def compute_affine_positions(nx: int, ny: int, transform: np.ndarray) -> List[Tuple[int, int]]:
     """Compute tile positions using a 2x2 affine displacement model.
 
     This is the corrected version of :func:`compute_motor_positions` that
@@ -379,8 +371,7 @@ def compute_affine_positions(nx: int, ny: int,
     return positions
 
 
-def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple,
-                                transform: np.ndarray) -> Tuple[int, int, int]:
+def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple, transform: np.ndarray) -> Tuple[int, int, int]:
     """Compute the output mosaic shape from affine tile positions.
 
     With off-diagonal terms, tiles may extend beyond what the diagonal model
@@ -419,9 +410,7 @@ def compute_affine_output_shape(nx: int, ny: int, tile_shape: tuple,
     return (nz, output_height, output_width)
 
 
-def apply_blend_shift_refinement(tile: np.ndarray,
-                                 refinements_for_tile: list,
-                                 overlap_fraction: float) -> np.ndarray:
+def apply_blend_shift_refinement(tile: np.ndarray, refinements_for_tile: list, overlap_fraction: float) -> np.ndarray:
     """Apply registration refinement by shifting tile data in overlap regions.
 
     Applies a small sub-pixel shift (averaged from all neighbors) to improve
@@ -446,8 +435,8 @@ def apply_blend_shift_refinement(tile: np.ndarray,
     if not refinements_for_tile:
         return tile
 
-    total_dy = sum(ref.get('dy', 0) for ref in refinements_for_tile)
-    total_dx = sum(ref.get('dx', 0) for ref in refinements_for_tile)
+    total_dy = sum(ref.get("dy", 0) for ref in refinements_for_tile)
+    total_dx = sum(ref.get("dx", 0) for ref in refinements_for_tile)
     count = len(refinements_for_tile)
 
     avg_dy = total_dy / count / 2
@@ -458,13 +447,11 @@ def apply_blend_shift_refinement(tile: np.ndarray,
 
     nonzero_vals = tile[tile > 0]
     cval = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
-    shifted = ndi_shift(tile, (0, avg_dy, avg_dx), order=1, mode='constant', cval=cval)
+    shifted = ndi_shift(tile, (0, avg_dy, avg_dx), order=1, mode="constant", cval=cval)
     return shifted
 
 
-def compare_motor_vs_registration(motor_positions: list,
-                                  reg_positions: list,
-                                  output_path: str = None) -> dict:
+def compare_motor_vs_registration(motor_positions: list, reg_positions: list, output_path: str = None) -> dict:
     """Compare motor-based positions with registration-based positions.
 
     Used diagnostically to identify stage calibration issues (systematic offset,
@@ -491,42 +478,40 @@ def compare_motor_vs_registration(motor_positions: list,
     diff = reg_arr - motor_arr
 
     comparison = {
-        'n_tiles': len(motor_positions),
-        'mean_diff_y': float(np.mean(diff[:, 0])),
-        'mean_diff_x': float(np.mean(diff[:, 1])),
-        'std_diff_y': float(np.std(diff[:, 0])),
-        'std_diff_x': float(np.std(diff[:, 1])),
-        'max_diff_y': float(np.max(np.abs(diff[:, 0]))),
-        'max_diff_x': float(np.max(np.abs(diff[:, 1]))),
-        'mean_magnitude': float(np.mean(np.sqrt(diff[:, 0]**2 + diff[:, 1]**2))),
-        'max_magnitude': float(np.max(np.sqrt(diff[:, 0]**2 + diff[:, 1]**2))),
+        "n_tiles": len(motor_positions),
+        "mean_diff_y": float(np.mean(diff[:, 0])),
+        "mean_diff_x": float(np.mean(diff[:, 1])),
+        "std_diff_y": float(np.std(diff[:, 0])),
+        "std_diff_x": float(np.std(diff[:, 1])),
+        "max_diff_y": float(np.max(np.abs(diff[:, 0]))),
+        "max_diff_x": float(np.max(np.abs(diff[:, 1]))),
+        "mean_magnitude": float(np.mean(np.sqrt(diff[:, 0] ** 2 + diff[:, 1] ** 2))),
+        "max_magnitude": float(np.max(np.sqrt(diff[:, 0] ** 2 + diff[:, 1] ** 2))),
     }
 
-    if abs(comparison['mean_diff_y']) > 5 or abs(comparison['mean_diff_x']) > 5:
-        comparison['systematic_offset'] = True
-        comparison['offset_warning'] = (
-            f"Systematic offset detected: "
-            f"({comparison['mean_diff_y']:.1f}, {comparison['mean_diff_x']:.1f}) pixels"
+    if abs(comparison["mean_diff_y"]) > 5 or abs(comparison["mean_diff_x"]) > 5:
+        comparison["systematic_offset"] = True
+        comparison["offset_warning"] = (
+            f"Systematic offset detected: ({comparison['mean_diff_y']:.1f}, {comparison['mean_diff_x']:.1f}) pixels"
         )
     else:
-        comparison['systematic_offset'] = False
+        comparison["systematic_offset"] = False
 
     tile_indices = np.arange(len(motor_positions))
-    diff_magnitude = np.sqrt(diff[:, 0]**2 + diff[:, 1]**2)
+    diff_magnitude = np.sqrt(diff[:, 0] ** 2 + diff[:, 1] ** 2)
     if len(tile_indices) > 10:
         correlation = np.corrcoef(tile_indices, diff_magnitude)[0, 1]
-        comparison['index_error_correlation'] = float(correlation)
+        comparison["index_error_correlation"] = float(correlation)
         if abs(correlation) > 0.5:
-            comparison['dilation_indicator'] = True
-            comparison['dilation_warning'] = (
-                f"Error increases with tile index (r={correlation:.2f}), "
-                f"suggesting dilation/scaling"
+            comparison["dilation_indicator"] = True
+            comparison["dilation_warning"] = (
+                f"Error increases with tile index (r={correlation:.2f}), suggesting dilation/scaling"
             )
         else:
-            comparison['dilation_indicator'] = False
+            comparison["dilation_indicator"] = False
 
     if output_path:
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(comparison, f, indent=2)
 
     return comparison
