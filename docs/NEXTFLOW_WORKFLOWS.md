@@ -173,8 +173,7 @@ nextflow run soct_3d_reconst.nf \
     --resolution 10 \
     --processes 4 \
     --fix_curvature_enabled true \
-    --fix_illum_enabled true \
-    --create_registration_masks true
+    --fix_illum_enabled true
 ```
 
 ### Parameters
@@ -257,17 +256,6 @@ Computes small corrections (rotation, sub-pixel translation) between consecutive
 | `moving_slice_first_index` | `4` | Starting Z-index in the moving volume |
 | `registration_slicing_interval_mm` | `0.200` | Physical slice thickness (mm) |
 | `registration_allowed_drifting_mm` | `0.100` | Z-search range (mm) |
-
-**Registration Masks:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `create_registration_masks` | `true` | Create tissue masks to focus registration on tissue |
-| `mask_smoothing_sigma` | `5.0` | Gaussian smoothing sigma for mask creation (µm) |
-| `selem_radius` | `1` | Morphological structuring element radius (pixels) |
-| `min_size` | `100` | Minimum mask component size (pixels²) |
-| `mask_normalize` | `true` | Normalize intensities before masking |
-| `mask_fill_holes` | `'slicewise'` | Hole filling: `none`, `3d`, `slicewise` |
 
 #### Stacking & Output
 
@@ -450,7 +438,6 @@ allen_registration_level = 2
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `analyze_shifts` | `false` | Generate shifts analysis report and drift plots |
-| `mask_preview` | `false` | Save mask preview images alongside mask zarrs |
 | `debug_slices` | `""` | Comma-separated slice IDs or ranges to process (e.g. `"25,26"` or `"25-29"`); leave empty to process all |
 
 The `analyze_shifts` option runs drift analysis on the shifts file before processing, producing:
@@ -506,7 +493,6 @@ output/
 ├── crop_interface/
 ├── normalize/
 ├── bring_to_common_space/
-├── create_registration_masks/
 ├── register_pairwise/
 ├── stack/
 │   ├── 3d_volume.ome.zarr
@@ -546,7 +532,6 @@ Both workflows support GPU acceleration using NVIDIA CUDA via CuPy. GPU processi
 | `soct_3d_reconst.nf` | `fix_illumination` | BaSiCPy background correction (JAX on GPU) |
 | `soct_3d_reconst.nf` | `estimate_xy_transformation` | Phase correlation (FFT) |
 | `soct_3d_reconst.nf` | `normalize` | Intensity normalization, percentile clipping |
-| `soct_3d_reconst.nf` | `create_registration_masks` | Gaussian filter, morphology |
 
 ### Usage
 
@@ -587,7 +572,6 @@ On NVIDIA A6000 (48GB):
 | Phase correlation | 10-15x |
 | Volume resize | 5-10x |
 | AIP projection | 3-4x |
-| Mask creation | 2-4x |
 
 ---
 

@@ -47,7 +47,6 @@ Mosaic Grids (*.ome.zarr) + shifts_xy.csv + slice_config.csv
 │ • Crop at interface           │
 │ • Normalize intensities       │
 │ • Align to common space       │
-│ • [opt] Create reg. masks     │
 │ • Pairwise registration       │
 │ • Stack into 3D volume        │
 │ • [opt] Z-intensity normalize │
@@ -256,15 +255,7 @@ bring_to_common_space
 - Enable `common_space_preview = true` to generate preview images
 - Check `bring_to_common_space/` output directory for aligned slices
 
-#### 11. Registration Mask Creation (Optional)
-
-```
-create_registration_masks
-```
-- Creates binary masks for pairwise registration
-- Enabled by `create_registration_masks = true`
-
-#### 12. Slice Registration
+#### 11. Slice Registration
 
 ```
 register_pairwise
@@ -277,7 +268,7 @@ register_pairwise
 
 The `bring_to_common_space` step (step 10) provides initial XY alignment using microscope metadata, while pairwise registration fine-tunes the alignment between adjacent slices.
 
-#### 13. Volume Stacking
+#### 12. Volume Stacking
 
 ```
 stack
@@ -341,7 +332,6 @@ The final 3D volume is stored as an OME-Zarr with multiple resolution levels opt
 | `stitch_overlap_fraction` | `0.2` | Expected tile overlap fraction |
 | `stitch_blending_method` | `'diffusion'` | Tile blending: `'none'`, `'average'`, `'diffusion'` |
 | `max_blend_refinement_px` | `10` | Maximum sub-pixel refinement shift during blending (pixels) |
-| `create_registration_masks` | `true` | Create registration masks |
 | `registration_transform` | `'euler'` | Transform type: `euler` (XY + rotation) or `translation` |
 | `registration_max_translation` | `200.0` | Optimizer bound on translation (pixels) |
 | `registration_max_rotation` | `5.0` | Optimizer bound on rotation (degrees) |
@@ -364,14 +354,11 @@ The pairwise registration uses a two-step approach:
 
 2. **Intensity-Based Refinement**: SimpleITK gradient descent with a Pearson correlation metric (`SetMetricAsCorrelation`) using a multiscale pyramid. The transform type is controlled by `registration_transform`: `euler` (rotation + translation) or `translation` (XY only).
 
-3. **Masking**: Registration masks created by `create_registration_masks` focus registration on tissue content, reducing sensitivity to background edges. The `mask_fill_holes` parameter (`none`, `3d`, `slicewise`) controls hole-filling in masks.
-
-4. **Transform application** (motor stacking): When `apply_rotation_only = true` only the rotation component is used during stacking; XY translation comes from motor positions. Rotation is clamped to `max_rotation_deg`. Transforms flagged as `error` are skipped when `skip_error_transforms = true`.
+3. **Transform application** (motor stacking): When `apply_rotation_only = true` only the rotation component is used during stacking; XY translation comes from motor positions. Rotation is clamped to `max_rotation_deg`. Transforms flagged as `error` are skipped when `skip_error_transforms = true`.
 
 **Recommendations:**
 - Use `euler` transform to correct small rotations between slices
 - Keep `registration_max_translation` large (optimizer bound only — actual corrections are controlled by `apply_rotation_only` and `max_rotation_deg`)
-- Enable `create_registration_masks` to focus registration on tissue
 - Set `registration_slicing_interval_mm` to match your actual slice thickness
 
 
@@ -392,7 +379,6 @@ Both pipelines support optional GPU acceleration using NVIDIA CUDA via CuPy. GPU
 | 3D Reconstruction | `fix_illumination` | BaSiCPy background correction (JAX on GPU) |
 | 3D Reconstruction | `estimate_xy_transformation` | Phase correlation (FFT) |
 | 3D Reconstruction | `normalize` | Intensity normalization, percentile clipping |
-| 3D Reconstruction | `create_registration_masks` | Filtering, morphology |
 
 ### Running with GPU
 
@@ -459,7 +445,6 @@ The pipeline automatically collects quality metrics at each processing step to h
 | Step | Metrics Collected |
 |------|-------------------|
 | **XY Transform Estimation** | Tile pairs used, transform matrix, estimated overlap, RMS residual |
-| **Create Masks** | Mask coverage, per-slice coverage, min/std slice coverage |
 | **Crop Interface** | Interface depth (voxels/µm), crop indices, interface quality |
 | **PSF Compensation** | PSF max, peak depth, agarose coverage, profile quality |
 | **Normalize Intensities** | Agarose coverage, Otsu threshold, background stats |
