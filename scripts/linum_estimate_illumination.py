@@ -26,7 +26,8 @@ def _build_arg_parser():
     p.add_argument(
         "--output_darkfield",
         default=None,
-        help="Optional darkfield filename (if none is given, the darkfield won't be estimated). (must be a .nii or .nii.gz file).",
+        help="Optional darkfield filename (if none is given, the darkfield won't be estimated). "
+        "(must be a .nii or .nii.gz file).",
     )
     p.add_argument(
         "-t",

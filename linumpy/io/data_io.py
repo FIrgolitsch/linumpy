@@ -5,9 +5,11 @@
 
 """
 
+import contextlib
 import csv
-import os
 import re
+from pathlib import Path
+from typing import cast
 
 import nibabel as nib
 import numpy as np
@@ -15,16 +17,16 @@ from PIL import Image
 
 
 def listSlicesInDir(directory, extension=".nii", returnIndices=False):
-    slice_list = list()
-    content = os.listdir(directory)
+    slice_list = []
+    content = list(Path(directory).iterdir())
     for elem in content:
-        if elem.endswith(extension):
-            slice_list.append(os.path.join(directory, elem))
+        if str(elem).endswith(extension):
+            slice_list.append(str(Path(directory) / elem))
 
     zlist = getSliceListIndices(slice_list)
 
     # Sort
-    tmp = sorted(zip(zlist, slice_list))
+    tmp = sorted(zip(zlist, slice_list, strict=False))
     slice_list = [elem[1] for elem in tmp]
     zlist = [elem[0] for elem in tmp]
     if returnIndices:
@@ -34,7 +36,7 @@ def listSlicesInDir(directory, extension=".nii", returnIndices=False):
 
 
 def getSliceListIndices(slice_list):
-    zList = list()
+    zList = []
     for this_file in slice_list:
         filename_rx = re.compile(r".*z(\d+).*")
         tmp = filename_rx.match(this_file)
@@ -65,16 +67,17 @@ def load_volume(
 
     :returns: ndarray containing the imported volume.
 
-    .. note:: This method can load nifti files (*.nii* and *.nii.gz*) or binary files saved by matlab using the Fortran Order (*.bin*)
+    .. note:: This method can load nifti files (*.nii* and *.nii.gz*) or binary files
+       saved by matlab using the Fortran Order (*.bin*)
 
     """
     if len(vol_shape) == 2 or vol_shape[2] == 1:  # This is an image
         prefix = "image"  # FIXME: hardcoded
         precision = "float64"  # FIXME: hardcoded
 
-    filename = os.path.join(
-        directory,
-        prefix + "_" + "x%02.0f" % (pos[0]) + "_" + "y%02.0f" % (pos[1]) + "_" + "z%02.0f" % (pos[2]) + suffix + extension,
+    filename = str(
+        Path(directory)
+        / (prefix + "_" + f"x{pos[0]:02.0f}" + "_" + f"y{pos[1]:02.0f}" + "_" + f"z{pos[2]:02.0f}" + suffix + extension)
     )
     return load_volumeByFilename(filename, vol_shape, precision)
 
@@ -100,9 +103,9 @@ def load_slice(directory, z, prototype="slice_z%d", extension=".nii"):
 
     """
     try:
-        filename = os.path.join(directory, prototype % (z) + extension)
+        filename = str(Path(directory) / (prototype % (z) + extension))
         return load_volumeByFilename(filename)
-    except:
+    except Exception:
         print("Unable to create filename for this slice.")
         return -1
 
@@ -130,7 +133,8 @@ def load_volumeByFilename(
         An array containing the imported volume
 
     file handle
-        If an h5 file is opened, the file handle is also returned as the second element of a list. This file must be closed by user.
+        If an h5 file is opened, the file handle is also returned as the second element
+        of a list. This file must be closed by user.
 
     Notes
     -----
@@ -147,7 +151,7 @@ def load_volumeByFilename(
     assert extension in available_formats, f"Supported formats are: {available_formats}"
 
     if extension in [".nii", ".nii.gz"]:
-        img = nib.load(filename)
+        img = cast(nib.Nifti1Image, nib.load(filename))
         volume = img.get_fdata()
         if len(np.unique(volume)) == 2 and convert2Bool:
             volume = volume.astype(bool)
@@ -163,6 +167,8 @@ def load_volumeByFilename(
 
     elif extension in [".npy"]:
         volume = np.load(filename)
+    else:
+        raise NotImplementedError(f"Loading not implemented for extension: {extension}")
 
     return volume
 
@@ -251,7 +257,6 @@ def save_rgbNifti(vol, filename):
         vol_reshaped[:, :, :, 0, 0] = np.reshape(vol[:, :, 0], [nx, ny, 1])
         vol_reshaped[:, :, :, 0, 1] = np.reshape(vol[:, :, 1], [nx, ny, 1])
         vol_reshaped[:, :, :, 0, 2] = np.reshape(vol[:, :, 2], [nx, ny, 1])
-
     elif vol.ndim == 4:  # This is a volume
         nx, ny, nz, nc = vol.shape
         nt = 1
@@ -259,6 +264,8 @@ def save_rgbNifti(vol, filename):
         vol_reshaped[:, :, :, 0, 0] = vol[:, :, :, 0]
         vol_reshaped[:, :, :, 0, 1] = vol[:, :, :, 1]
         vol_reshaped[:, :, :, 0, 2] = vol[:, :, :, 2]
+    else:
+        raise ValueError(f"Expected 3D or 4D volume, got {vol.ndim}D")
 
     # Affine transformation matrix
     afft = np.eye(4, 4)
@@ -278,7 +285,7 @@ def save_png(vol, filename):
     .. note:: Image intensity is normalized on a 2^8 intensity scale.
     """
     vol = np.squeeze(vol)
-    if not (vol.ndim == 2):
+    if vol.ndim != 2:
         print("Dimension of array should be 2")
         raise
 
@@ -291,22 +298,21 @@ def save_png(vol, filename):
 
 def load_acqinfo_from_csv(filename):
     """Import the acquisition information from a csv file"""
-    with open(filename, "rb") as f:
+    with Path(filename).open("r") as f:
         reader = csv.reader(f)
-        info = dict()
+        info = {}
+        header: list[str] = []
 
-        rownum = 0
-        for row in reader:
+        for rownum, row in enumerate(reader):
             # Save header row.
             if rownum == 0:
                 header = row
             else:
                 colnum = 0
                 for col in row:
-                    if not len(header[colnum]) == 0:
+                    if len(header[colnum]) != 0:
                         info[header[colnum]] = _convert2num(col)
                         colnum += 1
-            rownum += 1
         info["dx"] = info["fovX"] / info["nAlinesPerBframe"] * 1000.0
         info["dy"] = info["fovY"] / info["nBframes"] * 1000.0
         if "fovZ" in info:
@@ -323,14 +329,10 @@ def load_acqinfo_from_csv(filename):
 def _convert2num(s):
     """Convert string to number, unless it is a string"""
     a = s  # Default is str
-    try:
+    with contextlib.suppress(ValueError):
         a = int(s)
-    except ValueError:
-        pass  # Not an int
 
-    try:
+    with contextlib.suppress(ValueError):
         a = float(s)
-    except ValueError:
-        pass  # Not a float
 
     return a

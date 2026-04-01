@@ -27,7 +27,9 @@ def _build_arg_parser():
         "output_image",
         nargs="?",
         default=None,
-        help="Full path to a 2D mosaic grid image with the fixed illumination. If not provided, a new file with the same name as the input + `_compensated` suffix will be created.",
+        help="Full path to a 2D mosaic grid image with the fixed illumination. "
+        "If not provided, a new file with the same name as the input + "
+        "`_compensated` suffix will be created.",
     )
     p.add_argument("--flatfield", required=True, help="Full path to precomputed flatfield")
     p.add_argument("--darkfield", required=True, help="Full path to precomputed darkfield ")
@@ -83,8 +85,7 @@ def main():
     # Apply shading correction.
     # epsilon = 1e-6
     epsilon = 0.0
-    clip = True
-    for tile, pos in zip(tiles, tile_pos):
+    for tile, pos in zip(tiles, tile_pos, strict=False):
         if np.all(tile == 0):  # Ignoring empty tiles
             continue
         fixed_tile = (tile.astype(np.float64) - darkfield) / (flatfield + epsilon)

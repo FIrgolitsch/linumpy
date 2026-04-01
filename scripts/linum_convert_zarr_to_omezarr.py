@@ -45,10 +45,7 @@ def main():
 
     # Convert the resolution to mm
     scales = []
-    if len(resolution) == 1:
-        scales = [resolution[0] * 1e-3] * 3
-    else:
-        scales = [r * 1e-3 for r in resolution]
+    scales = [resolution[0] * 0.001] * 3 if len(resolution) == 1 else [r * 0.001 for r in resolution]
 
     foo = zarr.open(input_file, mode="r")
     out_dask = da.from_zarr(foo)

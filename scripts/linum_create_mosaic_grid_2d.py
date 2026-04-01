@@ -7,9 +7,11 @@ Notes
 - jpg output should only be used for visualization purposes due to loss of data from the 8bit conversion.
 """
 
+# Configure thread limits before numpy/scipy imports
+import linumpy._thread_config  # noqa: F401
+
 import argparse
 import json
-import multiprocessing
 import shutil
 from pathlib import Path
 
@@ -21,6 +23,7 @@ from skimage.transform import resize
 
 from linumpy import reconstruction
 from linumpy.microscope.oct import OCT
+from linumpy.utils.io import get_available_cpus
 
 
 def _build_arg_parser():
@@ -32,7 +35,8 @@ def _build_arg_parser():
         "--resolution",
         type=float,
         default=-1,
-        help="Output isotropic resolution in micron per pixel. (Use -1 to keep the original resolution). (default=%(default)s)",
+        help="Output isotropic resolution in micron per pixel. "
+        "(Use -1 to keep the original resolution). (default=%(default)s)",
     )
     p.add_argument("-z", "--slice", type=int, default=0, help="Slice to process (default=%(default)s)")
     p.add_argument(
@@ -50,7 +54,7 @@ def _build_arg_parser():
     return p
 
 
-def get_volume(filename: str, config: dict = None) -> np.ndarray:
+def get_volume(filename: str, config: dict | None = None) -> np.ndarray:
     """Load and preprocess an OCT volume
 
     Parameters
@@ -121,7 +125,8 @@ def main():
 
     # Load the JSON config file
     if args.config is not None:
-        mosaic_config = json.load(open(args.config))
+        with Path(args.config).open() as f:
+            mosaic_config = json.load(f)
     else:
         mosaic_config = {}
 
@@ -129,15 +134,12 @@ def main():
     tiles_directory = Path(args.tiles_directory)
     output_file = Path(args.output_file)
     assert output_file.suffix in [".jpg", ".tiff", ".zarr"], "The output file must be .jpg, .tiff, or .zarr file."
-    if output_file.suffix == ".zarr":
-        zarr_file = output_file
-    else:
-        zarr_file = output_file.with_suffix(".zarr")
+    zarr_file = output_file if output_file.suffix == ".zarr" else output_file.with_suffix(".zarr")
     z = args.slice
     output_resolution = args.resolution
     n_cpus = args.n_cpus
     if n_cpus == -1:
-        n_cpus = multiprocessing.cpu_count() - 2
+        n_cpus = get_available_cpus()
 
     # Analyze the tiles
     tiles, tiles_pos = reconstruction.get_tiles_ids(tiles_directory, z=z)
@@ -170,7 +172,7 @@ def main():
     tile_size = (tile_size[0], tile_size[1])
     tile_pos_px = []
     for i in range(len(tiles_pos)):
-        mx, my, mz = tiles_pos[i]
+        mx, my, _mz = tiles_pos[i]
         rmin = (mx - mx_min) * tile_size[0]
         rmax = rmin + tile_size[0]
         cmin = (my - my_min) * tile_size[1]

@@ -6,7 +6,6 @@
 
 import itertools
 import logging
-import os
 import pickle as pcl
 import re
 from collections import defaultdict
@@ -31,18 +30,19 @@ class Subject:
     subj_id = "None"
     data_dir = "None"
     result_dir = "None"
-    data = list()
 
     def __init__(self, new_id):
         """Subject class constructor"""
         self.subj_id = new_id
+        self.bin_files: list[Path] = []
+        self.data: list = []
 
     def __str__(self):
         object_str = (
             "Subject object with attributes :\n"
-            + "  - subj_id : '%s'\n" % (self.subj_id)
-            + "  - datadir : '%s'\n" % (self.data_dir)
-            + "  - result_dir : '%s'\n" % (self.result_dir)
+            + f"  - subj_id : '{self.subj_id}'\n"
+            + f"  - datadir : '{self.data_dir}'\n"
+            + f"  - result_dir : '{self.result_dir}'\n"
             + "  - acqinfo : "
             + str(self.info)
             + "\n"
@@ -60,7 +60,7 @@ class Subject:
         :returns: True/False if directory is valid or not.
 
         """
-        if os.path.isdir(data_dir):
+        if Path(data_dir).is_dir():
             self.data_dir = data_dir
             return True
         else:
@@ -76,7 +76,7 @@ class Subject:
         OUTPUT
             True/False if directory is valid or not.
         """
-        if os.path.isdir(result_dir):
+        if Path(result_dir).is_dir():
             self.result_dir = result_dir
             return True
         else:
@@ -115,8 +115,8 @@ class Subject:
         if isFluo:
             nFiles *= 2
         fileCount = 0
-        for file in os.listdir(self.getDataDir()):
-            if file.endswith(".bin"):
+        for file in Path(self.getDataDir()).iterdir():
+            if file.suffix == ".bin":
                 fileCount += 1
 
         flag = nFiles == fileCount
@@ -171,7 +171,7 @@ class Subject:
     def __setstate__(self, state):
         """To control how this class is loaded by pickle"""
         datalist, sbj_members = state
-        self.data = list()
+        self.data = []
 
         # Adding subjects in each group
         for this_data in datalist:
@@ -194,10 +194,10 @@ class Study:
 
     study_id = "None"
     result_dir = "None"
-    categories = defaultdict(list)
 
     def __init__(self, new_id):
         self.study_id = new_id
+        self.categories = defaultdict(list)
 
     def setResultDir(self, result_dir):
         """Sets output data directory for this study
@@ -206,11 +206,11 @@ class Study:
         OUTPUT
             True/False if directory is valid or not.
         """
-        result_dir = os.path.join(result_dir, self.study_id)
-        d = os.path.dirname(result_dir)
-        if not os.path.exists(d):
-            os.makedirs(d)
-        self.result_dir = result_dir
+        result_dir = Path(result_dir) / self.study_id
+        d = result_dir.parent
+        if not d.exists():
+            d.mkdir(parents=True)
+        self.result_dir = str(result_dir)
 
     def getResultDir(self):
         """Get output data directory for this study
@@ -232,9 +232,9 @@ class Study:
 
         # Create the subject directory within the category it is assigned to
         self.categories[category].append(subject)
-        study_dir = os.path.join(self.result_dir, category, subject.subj_id)
-        if not os.path.exists(study_dir):
-            os.makedirs(study_dir)
+        study_dir = Path(self.result_dir) / category / subject.subj_id
+        if not study_dir.exists():
+            study_dir.mkdir(parents=True)
 
         # Inform the subject of where result data should be saved
         subject.setResultDir(study_dir)
@@ -270,7 +270,7 @@ class Study:
 
     def __setstate__(self, state):
         """To control how this class is loaded by pickle"""
-        categories, subjectCategory, subjects, study_members = state
+        _categories, subjectCategory, subjects, study_members = state
         nSubjects = len(subjectCategory)
 
         self.categories = defaultdict(list)
@@ -307,11 +307,13 @@ class SlicerData:
         name="data",
         prototype="volume_x%02.0f_y%02.0f_z%02.0f",
         extension=".bin",
-        volshape=[512, 512, 120],
+        volshape=None,
         pixelFormat="float32",
         detect_data=False,
     ):
         """Creating a new data object"""
+        if volshape is None:
+            volshape = [512, 512, 120]
         self.datadir = datadir
 
         # Try to detect the data information
@@ -340,18 +342,18 @@ class SlicerData:
 
     def __str__(self):
         object_str = (
-            f"<{__class__.__name__}> object with attributes :\n"
-            + "  - name : '%s'\n" % (self.name)
-            + "  - datadir : '%s'\n" % (self.datadir)
-            + "  - prototype : '%s'\n" % (self.prototype)
-            + "  - extension : '%s'\n" % (self.extension)
+            f"<{self.__class__.__name__}> object with attributes :\n"
+            + f"  - name : '{self.name}'\n"
+            + f"  - datadir : '{self.datadir}'\n"
+            + f"  - prototype : '{self.prototype}'\n"
+            + f"  - extension : '{self.extension}'\n"
             + "  - volshape : "
             + str(self.volshape)
             + "\n"
             + "  - gridshape : "
             + str(self.gridshape)
             + "\n"
-            + "  - format : '%s'\n" % (self.format)
+            + f"  - format : '{self.format}'\n"
             + "  - resolution : "
             + str(self.resolution)
             + "\n"
@@ -362,7 +364,7 @@ class SlicerData:
         return object_str
 
     def save(self, filename):
-        with open(filename, "w") as f:
+        with Path(filename).open("wb") as f:
             pcl.dump(self, f)
 
     def checkVolShape(self):
@@ -378,6 +380,7 @@ class SlicerData:
         valid_origins = ["top-left", "top-right", "bottom-right", "bottom-left"]
         assert origin in valid_origins, f"Unknown origin. Must be one of these: {valid_origins}"
         self.grid_origin = origin
+        assert self.gridshape is not None, "gridshape must be set before calling set_gridOrigin with a non-default origin"
         if origin == "top-left":
             gridOrigin = (0, 0, 0)
             direction = (1, 1, 1)
@@ -390,6 +393,8 @@ class SlicerData:
         elif origin == "bottom-left":
             gridOrigin = (0, self.gridshape[1] - 1, 0)
             direction = (1, -1, 1)
+        else:
+            raise ValueError(f"Invalid origin: {origin}")
 
         nx, ny, nz = self.gridshape[:]
         self.gridPosConversionMatrix = np.zeros((nx, ny, nz, 3), dtype=np.uint8)
@@ -406,9 +411,9 @@ class SlicerData:
 
     def get_tile_path(self, pos):
         x, y, z = pos
-        filename = os.path.join(
-            self.datadir,
-            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
+        filename = str(
+            Path(self.datadir)
+            / (self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension)
         )
         return filename
 
@@ -425,8 +430,8 @@ class SlicerData:
         """
         try:
             filename = self.get_tile_path(pos)
-            return data_io.load_volumeByFilename(filename, self.volshape, self.format)
-        except:
+            return data_io.load_volumeByFilename(filename, tuple(self.volshape), self.format)
+        except Exception:
             return None
 
     def loadFirstVolume(self):
@@ -447,35 +452,37 @@ class SlicerData:
 
         """
         x, y, z = pos
-        filename = os.path.join(
-            self.datadir,
-            self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension,
+        filename = str(
+            Path(self.datadir)
+            / (self.prototype % (x + self.startIdx[0], y + self.startIdx[1], z + self.startIdx[2]) + self.extension)
         )
 
         # Check if datadir exits
-        if not (os.path.exists(self.datadir)):
-            os.makedirs(self.datadir)
+        if not Path(self.datadir).exists():
+            Path(self.datadir).mkdir(parents=True)
 
         # Check if file exists
-        if not (os.path.exists(filename)) or overwrite:
+        if not Path(filename).exists() or overwrite:
             if self.extension in [".nii", ".nii.gz"]:
                 data_io.save_nifti(filename, vol, pixelFormat=self.format)
             else:
-                logger.info("Volume save is not implemented yet for extension '%s'" % self.extension)
+                logger.info(f"Volume save is not implemented yet for extension '{self.extension}'")
                 raise NotImplementedError
         else:
-            logger.info("This file already exists : '%s'" % (filename))
+            logger.info(f"This file already exists : '{filename}'")
 
     def volumeIterator(self, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all volumes
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param mask: (ndarray, default=None) This mask specify which volumes to keep in the iteration.
 
         :returns: vol
         :returns: vol, pos (if returnPos=True)
 
         """
+        assert self.gridshape is not None
         for z in range(self.gridshape[2]):
             if returnPosOnly:
                 for pos in self.sliceIterator(z, returnPos, mask, returnPosOnly):
@@ -492,13 +499,15 @@ class SlicerData:
         """Iterates over all volumes in slice z
 
         :param z: (int) Slice number over which the iteration occurs.
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param mask: (ndarray, default=None) This mask specify which volumes to keep in the iteration.
 
         :returns: vol
         :returns: vol, pos (if returnPos=True)
 
         """
+        assert self.gridshape is not None
         nx = list(range(self.gridshape[0]))
         ny = list(range(self.gridshape[1]))
         for x, y in itertools.product(nx, ny):
@@ -525,13 +534,14 @@ class SlicerData:
     def neighborIterator(self, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all neighbors
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
 
         :returns: vol1, vol2
         :returns: vol1, vol2, pos1, pos2 (if returnPos=True)
 
         """
-
+        assert self.gridshape is not None
         # Loop over all slices
         for z in range(self.gridshape[2]):
             if returnPosOnly:
@@ -548,13 +558,15 @@ class SlicerData:
     def neighborSliceIterator(self, z, returnPos=False, mask=None, returnPosOnly=False):
         """Iterates over all neighbors in slice z
 
-        :param returnPos: (bool, default=False) If set to True, the iterator will yield the position in addition to the volume at each iteration.
+        :param returnPos: (bool, default=False) If set to True, the iterator will yield
+            the position in addition to the volume at each iteration.
         :param z: (int) Slice number over which the iteration occurs.
 
         :returns: vol1, vol2
         :returns: vol1, vol2, pos1, pos2 (if returnPos=True)
 
         """
+        assert self.gridshape is not None
         nX = self.gridshape[0]
         nY = self.gridshape[1]
         this_topo = topology.generate_default(nX, nY)
@@ -606,6 +618,7 @@ class SlicerData:
         :returns: vol1, vol2, pos1, pos2
 
         """
+        assert self.gridshape is not None
         for z in range(self.gridshape[2]):
             if returnPosOnly:
                 for pos1, pos2 in self.singlePassNeighborSliceIterator(origin, z, method, mask, returnPosOnly):
@@ -625,6 +638,7 @@ class SlicerData:
         :returns: vol1, vol2, pos1, pos2
 
         """
+        assert self.gridshape is not None
         topo = topology.generate_default(self.gridshape[0], self.gridshape[1])
 
         # Remove agarose from topology
@@ -635,7 +649,7 @@ class SlicerData:
         sList, tList = topology.topoIterator(topo, root=origin, method=method)
 
         # Loop over source and target list
-        for source, target in zip(sList, tList):
+        for source, target in zip(sList, tList, strict=False):
             pos1 = (source[0], source[1], z)
             pos2 = (target[0], target[1], z)
             if returnPosOnly:
@@ -653,9 +667,11 @@ class SlicerData:
 def detect_gridshape(datadir, prototype="volume_x%02.0f_y%02.0f_z%02.0f", extension=".bin"):
     # List all files in datadir
     if isinstance(datadir, str):
-        fileList = os.listdir(datadir)
+        fileList = [f.name for f in Path(datadir).iterdir()]
     elif isinstance(datadir, list):
         fileList = datadir
+    else:
+        raise TypeError(f"datadir must be str or list, got {type(datadir)}")
 
     # Create a regex expression to find all files matching prototypes
     filename_rx_prototype = prototype + extension
@@ -689,24 +705,20 @@ def detect_gridshape(datadir, prototype="volume_x%02.0f_y%02.0f_z%02.0f", extens
                 maxY = int(b.group("y"))
             if maxZ < int(b.group("z")):
                 maxZ = int(b.group("z"))
-            if minX is None:
+            if minX is None or minX > int(b.group("x")):
                 minX = int(b.group("x"))
+            if minY is None or minY > int(b.group("y")):
                 minY = int(b.group("y"))
-                minZ = int(b.group("z"))
-
-            if minX > int(b.group("x")):
-                minX = int(b.group("x"))
-            if minY > int(b.group("y")):
-                minY = int(b.group("y"))
-            if minZ > int(b.group("z")):
+            if minZ is None or minZ > int(b.group("z")):
                 minZ = int(b.group("z"))
     try:
+        assert minX is not None and minY is not None and minZ is not None
         gridshape = (
             int(maxX) - int(minX) + 1,
             int(maxY) - int(minY) + 1,
             int(maxZ) - int(minZ) + 1,
         )
-    except:
+    except Exception:
         logger.info("Not able to detect gridshape. Setting to 0")
         gridshape = (0, 0, 0)
 
@@ -724,7 +736,7 @@ def dataSniffer(datadir: str) -> dict:
     data_info: dict
         Dictionary with extracted information.
     """
-    filelist = os.listdir(datadir)
+    filelist = [f.name for f in Path(datadir).iterdir()]
     filename_rx = re.compile(
         r"(?P<prefix>[A-Za-z-_]+)(?P<x>\d+)(?P<bXY>[A-Za-z-_]+)(?P<y>\d+)(?P<bYZ>[A-Za-z-_]+)(?P<z>\d+)(?P<suffix>.*)(?P<ext>\..*)"
     )
@@ -733,7 +745,7 @@ def dataSniffer(datadir: str) -> dict:
     )
 
     # Grap all volume-like files
-    dataList = list()
+    dataList = []
     prefix = set()
     suffix = set()
     extension = set()
@@ -746,6 +758,7 @@ def dataSniffer(datadir: str) -> dict:
     minX = None
     minY = None
     minZ = None
+    this_extension = ""
 
     for elem in filelist:
         b = filename_rx.match(elem)
@@ -758,6 +771,8 @@ def dataSniffer(datadir: str) -> dict:
 
             # Process the filename again
             b2 = filename_rx_woExt.match(filename_wo_ext)
+            if b2 is None:
+                continue
 
             if maxX < int(b2.group("x")):
                 maxX = int(b2.group("x"))
@@ -765,16 +780,11 @@ def dataSniffer(datadir: str) -> dict:
                 maxY = int(b2.group("y"))
             if maxZ < int(b2.group("z")):
                 maxZ = int(b2.group("z"))
-            if minX is None:
+            if minX is None or minX > int(b2.group("x")):
                 minX = int(b2.group("x"))
+            if minY is None or minY > int(b2.group("y")):
                 minY = int(b2.group("y"))
-                minZ = int(b2.group("z"))
-
-            if minX > int(b2.group("x")):
-                minX = int(b2.group("x"))
-            if minY > int(b2.group("y")):
-                minY = int(b2.group("y"))
-            if minZ > int(b2.group("z")):
+            if minZ is None or minZ > int(b2.group("z")):
                 minZ = int(b2.group("z"))
 
             prefix.add(b2.group("prefix"))
@@ -786,6 +796,7 @@ def dataSniffer(datadir: str) -> dict:
             lengthPos.add(len(b2.group("y")))
             lengthPos.add(len(b2.group("z")))
 
+    assert minX is not None and minY is not None and minZ is not None
     gridshape = (maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1)
 
     # Detect extension
@@ -801,11 +812,12 @@ def dataSniffer(datadir: str) -> dict:
     idxFormat = "%d"
     if min(lengthPos) >= 2:
         idxFormat = f"%0{min(lengthPos)}.0f"
-    prototype = list(prefix)[0] + idxFormat + list(bXY)[0] + idxFormat + list(bYZ)[0] + idxFormat + list(suffix)[0]
+    prototype = next(iter(prefix)) + idxFormat + next(iter(bXY)) + idxFormat + next(iter(bYZ)) + idxFormat + next(iter(suffix))
     logger.info(f"Generated file prototype: {prototype}")
 
     # Detect missing files
     data_mask = np.zeros(gridshape, dtype=bool)
+    assert minX is not None and minY is not None and minZ is not None
     for x in range(minX, maxX + 1):
         for y in range(minY, maxY + 1):
             for z in range(minZ, maxZ + 1):
@@ -817,7 +829,7 @@ def dataSniffer(datadir: str) -> dict:
     logger.info(f"There are {nVols - data_mask.sum()}/{nVols} missing files in this grid.")
 
     # Creating the output dict
-    data_info = dict()
+    data_info = {}
     data_info["datadir"] = datadir
     data_info["prototype"] = prototype
     data_info["extension"] = extension

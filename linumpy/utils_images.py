@@ -69,10 +69,10 @@ def match_shape(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndar
         pad_c_1 = max((n_cols - img.shape[1] - pad_c_0), 0)
         padded_images.append(np.pad(img, ((pad_r_0, pad_r_1), (pad_c_0, pad_c_1))))
 
-    return padded_images
+    return (padded_images[0], padded_images[1])
 
 
-def display_overlap(img1, img2, title=None, do_normalization=False):
+def display_overlap(img1: np.ndarray, img2: np.ndarray, title: str | None = None, do_normalization: bool = False) -> None:
     if do_normalization:
         img1 = normalize(img1)
         img2 = normalize(img2)
@@ -116,7 +116,13 @@ def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: int, dy: int) -> 
     resampler = sitk.ResampleImageFilter()
     resampler.SetReferenceImage(fixed)
     resampler.SetInterpolator(sitk.sitkLinear)
-    resampler.SetDefaultPixelValue(0)
+
+    # Use a small positive value instead of zero to avoid black dots at boundaries
+    # Get a representative value from the image for the default
+    nonzero_vals = img[img > 0]
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
+    resampler.SetDefaultPixelValue(default_val)
+
     resampler.SetTransform(transform)
     warped_moving_image = resampler.Execute(moving)
     img_warped = sitk.GetArrayFromImage(warped_moving_image)

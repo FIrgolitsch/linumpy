@@ -34,8 +34,8 @@ def generate_default(nX, nY):
     # Creating vertices
     xx, yy = np.meshgrid(list(range(nX)), list(range(nY)))
     vPos = {"x": xx.ravel(), "y": yy.ravel()}
-    nPosX = dict()
-    nPosY = dict()
+    nPosX = {}
+    nPosY = {}
     for ii in range(nX * nY):
         nPosX[ii] = vPos["x"][ii]
         nPosY[ii] = vPos["y"][ii]
@@ -53,13 +53,13 @@ def generate_default(nX, nY):
     # Creating edges (x)
     inX = np.tile(np.arange(nX - 1), (nY,))
     outX = np.tile(np.arange(1, nX), (nY,))
-    y = np.zeros(inX.shape, dtype=np.int)
+    y = np.zeros(inX.shape, dtype=int)
     for iY in range(nY):
         y[iY * (nX - 1) : iY * (nX - 1) + nX - 1] = iY
     inX += nX * y
     outX += nX * y
 
-    edgeX = np.zeros((len(inX), 2), dtype=np.int)
+    edgeX = np.zeros((len(inX), 2), dtype=int)
     edgeX[:, 0] = inX
     edgeX[:, 1] = outX
 
@@ -69,7 +69,7 @@ def generate_default(nX, nY):
     # Creating edges (y)
     inY = np.arange(nX * (nY - 1))
     outY = np.arange(nX, nX * nY)
-    edgeY = np.zeros((len(inY), 2), dtype=np.int)
+    edgeY = np.zeros((len(inY), 2), dtype=int)
     edgeY[:, 0] = inY
     edgeY[:, 1] = outY
     ey = tuple([tuple(row) for row in edgeY])
@@ -89,12 +89,12 @@ def generate_graphFromEdges(sources, targets):
     topo = nx.DiGraph()
     nSteps = len(sources)
     for iStep in range(nSteps):
-        inNode = "x%dy%d" % (sources[iStep][0], sources[iStep][1])
-        outNode = "x%dy%d" % (targets[iStep][0], targets[iStep][1])
+        inNode = f"x{sources[iStep][0]}y{sources[iStep][1]}"
+        outNode = f"x{targets[iStep][0]}y{targets[iStep][1]}"
         inAttr = {"x": sources[iStep][0], "y": sources[iStep][1]}
         outAttr = {"x": targets[iStep][0], "y": targets[iStep][1]}
-        topo.add_node(inNode, inAttr)
-        topo.add_node(outNode, outAttr)
+        topo.add_node(inNode, **inAttr)
+        topo.add_node(outNode, **outAttr)
         topo.add_edge(inNode, outNode)
 
     return topo
@@ -109,7 +109,7 @@ def remove_agarose(topo, tissueMask):
 
     """
     agarosePos = np.where(tissueMask == 0)
-    agaroseIds = list()
+    agaroseIds = []
     for ii in range(len(agarosePos[0])):
         this_pos = (agarosePos[0][ii], agarosePos[1][ii])
         agaroseIds.append(_pos2id(topo, this_pos))
@@ -128,16 +128,17 @@ def topoIterator(topo, root=(1, 1), method="dfs"):
     :returns: sourceList, targetList : Lists of source and target node positions.
 
     """
-    sourceList = list()
-    targetList = list()
+    sourceList = []
+    targetList = []
 
     # Find the edge corresponding to position = root
     idx = _pos2id(topo, root)
     if method == "bfs":
         edgeList = nx.bfs_edges(topo, source=idx)
-
     elif method == "dfs":
         edgeList = nx.dfs_edges(topo, source=idx)
+    else:
+        raise ValueError(f"Unknown traversal method: {method!r}. Use 'bfs' or 'dfs'.")
 
     xx = nx.get_node_attributes(topo, "x")
     yy = nx.get_node_attributes(topo, "y")
@@ -167,10 +168,10 @@ def get_unvisitedEdges(topo, sList, tList):
 
         try:
             edgeList.remove(this_edge1)
-        except:
+        except Exception:
             try:
                 edgeList.remove(this_edge2)
-            except:
+            except Exception:
                 continue
 
     return edgeList
@@ -190,9 +191,9 @@ def _pos2id(topo, pos):
 
     """
     # Find the edge corresponding to position
-    nList = list()
-    xx = list()
-    yy = list()
+    nList = []
+    xx = []
+    yy = []
 
     # Extracting the node x positions
     for this_node, this_x in list(nx.get_node_attributes(topo, "x").items()):
@@ -200,7 +201,7 @@ def _pos2id(topo, pos):
         xx.append(this_x)
 
     # Extracting the node y positions
-    for this_node, this_y in list(nx.get_node_attributes(topo, "y").items()):
+    for _this_node, this_y in list(nx.get_node_attributes(topo, "y").items()):
         yy.append(this_y)
 
     # Detecting the corresponding node

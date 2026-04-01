@@ -69,6 +69,14 @@ def _build_arg_parser():
         "(correct fewer spikes).  [%(default)s]",
     )
     p.add_argument(
+        "--max_shift_mm",
+        type=float,
+        default=0.5,
+        help="Steps with magnitude below this threshold are not\n"
+        "checked for spike patterns.  Lower this value to\n"
+        "catch smaller self-cancelling glitches.  [%(default)s]",
+    )
+    p.add_argument(
         "--tile_fov_mm",
         type=float,
         default=None,
@@ -155,7 +163,7 @@ def _save_diagnostics(
         "corrected_tile_offsets": [r for r in records if r["correction_type"] == "tile_offset"],
     }
     report_path = diag_dir / "rehoming_report.json"
-    with open(report_path, "w") as fh:
+    with Path(report_path).open("w") as fh:
         json.dump(report, fh, indent=2)
     print(f"  Diagnostics report: {report_path}")
 
@@ -166,8 +174,6 @@ def _save_diagnostics(
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        step_mag_before = np.sqrt(shifts_before["x_shift_mm"] ** 2 + shifts_before["y_shift_mm"] ** 2)
-        step_mag_after = np.sqrt(shifts_after["x_shift_mm"] ** 2 + shifts_after["y_shift_mm"] ** 2)
         positions = np.arange(len(shifts_before))
 
         fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
@@ -267,6 +273,7 @@ def main():
     shifts_after = filter_outlier_shifts(
         shifts_intermediate,
         method="rehome",
+        max_shift_mm=args.max_shift_mm,
         return_fraction=args.return_fraction,
     )
 

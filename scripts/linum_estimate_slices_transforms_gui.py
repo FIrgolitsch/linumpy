@@ -13,7 +13,7 @@ resulting transformations are saved as soon as the window is closed.
 import linumpy._thread_config  # noqa: F401
 
 import argparse
-import os
+from pathlib import Path
 
 import numpy as np
 import zarr
@@ -41,16 +41,16 @@ def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
     in_zarr = zarr.open(args.in_zarr, mode="r")
-    _, ext = os.path.splitext(args.out_result)
+    ext = Path(args.out_result).suffix
     if not ext not in ["", "npz"]:
         parser.error("Invalid extension for output result. Extension should be .npz.")
 
-    if os.path.exists(args.out_result) and not args.overwrite:
+    if Path(args.out_result).exists() and not args.overwrite:
         parser.error("Output file exists, use option -f to overwrite.")
     else:
-        path, _ = os.path.split(args.out_result)
-        if not os.path.exists(path):
-            os.makedirs(path)
+        path = Path(args.out_result).parent
+        if not path.exists():
+            path.mkdir(parents=True)
 
     custom_ranges = None
     transforms = None

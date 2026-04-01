@@ -108,7 +108,8 @@ class MosaicGrid:
     def get_neighbors_list(self, neighborhood_type: str = "N4"):
         """Returns a list of neighboring tiles.
 
-        :param neighborhood_type: Type of neighborhood to consider. 'N4' for horizontal and vertical neighbors, 'N8' to also consider diagonal neighbors.
+        :param neighborhood_type: Type of neighborhood to consider. 'N4' for horizontal
+            and vertical neighbors, 'N8' to also consider diagonal neighbors.
         :return: A list of neighbor pairs given by their grid position.
 
         .. note::
@@ -211,10 +212,7 @@ class MosaicGrid:
 
         # Get the tile shape
         nx, ny = t1.shape[0:2]
-        if ndim == 2:
-            nz = 1
-        else:
-            nz = t1.shape[2]
+        nz = 1 if ndim == 2 else t1.shape[2]
 
         # Get the min and max coordinates for this mosaic
         x0 = int(min([p1[0], p2[0]]))
@@ -233,7 +231,7 @@ class MosaicGrid:
         mask = mosaic1 * mosaic2 >= 1
 
         # Convert this into t1 and t2 coordinates
-        x, y, z = np.where(mask)
+        x, y, _z = np.where(mask)
         o_xmin = x.min()
         o_ymin = y.min()
         o_xmax = x.max()
@@ -270,16 +268,16 @@ class MosaicGrid:
         .. note::
             - This also resets the affine transform using the overlap_fraction.
         """
-        xlim = list(xlim)
-        ylim = list(ylim)
-        if xlim[1] < 0:
-            xlim[1] = self.tile_shape[0] + xlim[1] + 1
-        if ylim[1] < 0:
-            ylim[1] = self.tile_shape[1] + ylim[1] + 1
+        xlim_l = list(xlim)
+        ylim_l = list(ylim)
+        if xlim_l[1] < 0:
+            xlim_l[1] = self.tile_shape[0] + xlim_l[1] + 1
+        if ylim_l[1] < 0:
+            ylim_l[1] = self.tile_shape[1] + ylim_l[1] + 1
 
-        nx = xlim[1] - xlim[0]
-        ny = ylim[1] - ylim[0]
-        new_shape = (self.n_tiles_x * (xlim[1] - xlim[0]), self.n_tiles_y * (ylim[1] - ylim[0]))
+        nx = xlim_l[1] - xlim_l[0]
+        ny = ylim_l[1] - ylim_l[0]
+        new_shape = (self.n_tiles_x * (xlim_l[1] - xlim_l[0]), self.n_tiles_y * (ylim_l[1] - ylim_l[0]))
         image = np.zeros(new_shape, dtype=np.float32)
         for x in range(self.n_tiles_x):
             for y in range(self.n_tiles_y):
@@ -290,7 +288,7 @@ class MosaicGrid:
                 xf = x0 + nx
                 y0 = y * ny
                 yf = y0 + ny
-                image[x0:xf, y0:yf] = tile[xlim[0] : xlim[1], ylim[0] : ylim[1]]
+                image[x0:xf, y0:yf] = tile[xlim_l[0] : xlim_l[1], ylim_l[0] : ylim_l[1]]
 
         self.image = image
         self.tile_shape = (nx, ny)
@@ -354,7 +352,7 @@ class MosaicGrid:
 
         return image.squeeze()
 
-    def global_overlap_similarity(self, random_fraction: float = 1.0, threshold: float = None):
+    def global_overlap_similarity(self, random_fraction: float = 1.0, threshold: float | None = None):
         neighbors = self.get_neighbors_list(neighborhood_type="N4")
         n_neighbors = len(neighbors)
         neighbors_ids = list(range(n_neighbors))
@@ -365,7 +363,7 @@ class MosaicGrid:
 
         i = 0
         while (i < n_neighbors) and (n_samples / float(n_neighbors) < random_fraction):
-            o1, o2, p1, p2 = self.get_neighbor_overlap(neighbors_ids[i])
+            o1, o2, _p1, _p2 = self.get_neighbor_overlap(neighbors_ids[i])
 
             if threshold is None:
                 if np.all(o1 == 0) or np.all(o2 == 0):  # Ignore empty overlaps
@@ -373,7 +371,7 @@ class MosaicGrid:
             else:
                 m1 = o1 < threshold
                 m2 = o2 < threshold
-                if np.all(m1 == False) or np.all(m2 == False):
+                if np.all(~m1) or np.all(~m2):
                     continue
 
             # TODO: Test other error metrics, this one doesn't work well when there is illumination inhomogeneity
@@ -500,7 +498,7 @@ class MosaicGrid:
             self.set_affine(initial_overlap)
 
 
-def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3, width=1.0):
+def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3, width=1.0, match_intensity=False):
     """Add a single volume into a mosaic.
     Parameters
     ----------
@@ -516,6 +514,9 @@ def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3,
         Subsampling factor used by the diffusion blending method.
     width : float, optional
         Blending transition width (between 0 and 1) used by the diffusion blending method, defaults to 1.0.
+    match_intensity : bool, optional
+        If True, adjust incoming tile intensity to match existing mosaic in overlap region.
+        This prevents intensity gradients across the mosaic. Defaults to False.
 
     Returns
     -------
@@ -529,20 +530,57 @@ def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3,
         nx, ny = volume.shape
         nz = 1
         volume = np.reshape(volume, [nz, nx, ny])
+    else:
+        raise ValueError(f"volume must be 2D or 3D, got {volume.ndim}D")
 
     # Position of tile in mosaic reference frame
     wx = int(pos[0])
     wy = int(pos[1])
 
-    if len(pos) == 3:
-        wz = pos[2]
-    else:
-        wz = 0
+    wz = pos[2] if len(pos) == 3 else 0
 
+    # Use a small positive threshold to detect existing mosaic data
+    # This avoids including near-zero values from numerical precision issues
     if mosaic.ndim == 3 and mosaic.shape[0] != 0:
-        mask = mosaic[wz : wz + nz, wx : wx + nx, wy : wy + ny].mean(axis=0) > 0
+        existing_region = mosaic[wz : wz + nz, wx : wx + nx, wy : wy + ny]
+        existing_mean = existing_region.mean(axis=0)
+        # Simple threshold: any non-zero values indicate overlap
+        mask = existing_mean > 0
     else:
         mask = np.squeeze(mosaic[wx : wx + nx, wy : wy + ny]) > 0
+
+    # Intensity matching: adjust tile intensity to match existing mosaic in overlap
+    # This prevents intensity gradients across the mosaic with diffusion blending
+    if match_intensity and np.any(mask) and blendingMethod == "diffusion":
+        # Get overlap regions for both mosaic and volume
+        mosaic_overlap = (
+            mosaic[wz : wz + nz, wx : wx + nx, wy : wy + ny] if mosaic.ndim == 3 else mosaic[wx : wx + nx, wy : wy + ny]
+        )
+
+        # Use 2D mask expanded to 3D
+        mask_3d = np.tile(mask[np.newaxis, :, :], [nz, 1, 1]) if volume.ndim == 3 else mask
+
+        # Get valid overlap pixels (where both mosaic and tile have data)
+        mosaic_valid = (mosaic_overlap > 0) & mask_3d
+        volume_valid = (volume > 0) & mask_3d
+        both_valid = mosaic_valid & volume_valid
+
+        if np.sum(both_valid) > 100:  # Need enough pixels for reliable statistics
+            # Compute intensity ratio in overlap region using robust statistics
+            mosaic_vals = mosaic_overlap[both_valid]
+            volume_vals = volume[both_valid]
+
+            # Use percentile-based matching (more robust than mean)
+            mosaic_p50 = np.percentile(mosaic_vals, 50)
+            volume_p50 = np.percentile(volume_vals, 50)
+
+            if volume_p50 > 1e-6 and mosaic_p50 > 1e-6:  # Avoid division by zero
+                # Scale volume to match mosaic intensity in overlap
+                scale = mosaic_p50 / volume_p50
+                # Clamp scale to reasonable range to avoid extreme corrections
+                scale = np.clip(scale, 0.5, 2.0)
+                if abs(scale - 1.0) > 0.01:  # Only apply if significant difference
+                    volume = volume * scale
 
     # Computing the blending weights
     if np.any(mask):
@@ -595,9 +633,9 @@ def getAverageBlendingWeights(mask):
 
 def getDiffusionBlendingWeights(
     fixedMask: np.ndarray,
-    movingMask: np.ndarray = None,
+    movingMask: np.ndarray | None = None,
     factor: int = 8,
-    nSteps: int = 5e2,
+    nSteps: int = 500,
     convergence_threshold: float = 1e-4,
     k: int = 1,
 ) -> np.ndarray:
@@ -637,7 +675,7 @@ def getDiffusionBlendingWeights(
     # Resampling
     old_shape = fixedMask.shape
     if factor > 1:
-        new_shape = list(np.round(np.array(old_shape) / float(factor)).astype(int))
+        new_shape = tuple(np.round(np.array(old_shape) / float(factor)).astype(int).tolist())
         small_fixedMask = resampleITK(fixedMask, new_shape, interpolator="NN")
         small_movingMask = resampleITK(movingMask, new_shape, interpolator="NN")
     else:
@@ -650,6 +688,8 @@ def getDiffusionBlendingWeights(
         strel = disk(k)
     elif fixedMask.ndim == 3:
         strel = ball(k)
+    else:
+        raise ValueError(f"fixedMask must be 2D or 3D, got {fixedMask.ndim}D")
 
     small_mask = np.logical_and(small_fixedMask, small_movingMask)
     erodedMask = morpho.binary_erosion(small_mask, structure=strel)
@@ -680,7 +720,7 @@ def getDiffusionBlendingWeights(
                 rms = np.inf
             else:
                 rms = np.sqrt(np.mean((dAlpha[erodedMask] / alpha[erodedMask]) ** 2.0))
-        except:
+        except Exception:
             rms = np.inf
         alpha += dAlpha
         iStep += 1
@@ -711,7 +751,7 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
     if isinstance(newshape, int):
         newshape = np.round(np.array(vol.shape) / float(newshape)).astype(int)
     else:
-        newshape = [int(x) for x in newshape]
+        newshape = tuple(int(x) for x in newshape)
 
     if vol.dtype == bool:
         isBool = True
@@ -719,10 +759,9 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
     else:
         isBool = False
 
-    if vol.ndim == 3:
-        if vol.shape[2] == 1:
-            vol = np.squeeze(vol, axis=(2,))
-            newshape = newshape[0:2]
+    if vol.ndim == 3 and vol.shape[2] == 1:
+        vol = np.squeeze(vol, axis=(2,))
+        newshape = newshape[0:2]
 
     if vol.ndim == 2:
         nx, ny = vol.shape
@@ -746,6 +785,12 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
         resample.SetInterpolator(sitk.sitkLinear)
     else:
         resample.SetInterpolator(sitk.sitkLinear)
+
+    # Use a small positive default value instead of zero to avoid black dots
+    # at boundaries during resampling
+    nonzero_vals = vol[vol > 0]
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
+    resample.SetDefaultPixelValue(default_val)
 
     vol_itk = sitk.GetImageFromArray(vol)
     output_itk = resample.Execute(vol_itk)

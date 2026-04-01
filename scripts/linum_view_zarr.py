@@ -21,7 +21,8 @@ def _build_arg_parser():
         type=float,
         default=[1.0] * 3,
         metavar=("z", "x", "y"),
-        help="Resolution in micrometer in the Z, X, Y order. For an isotropic resolution, provide a single value. (default=%(default)s)",
+        help="Resolution in micrometer in the Z, X, Y order. "
+        "For an isotropic resolution, provide a single value. (default=%(default)s)",
     )
 
     return p
@@ -40,10 +41,7 @@ def main():
     # Load the volume
     vol = zarr.open(zarr_location, mode="r")
     scales = []
-    if len(resolution) == 1:
-        scales = [resolution[0] * 1e-3] * 3
-    else:
-        scales = [r * 1e-3 for r in resolution]
+    scales = [resolution[0] * 0.001] * 3 if len(resolution) == 1 else [r * 0.001 for r in resolution]
 
     # Prepare the viewer
     viewer = napari.Viewer()

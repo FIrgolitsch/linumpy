@@ -53,7 +53,8 @@ def _build_arg_parser():
         type=int,
         default=400,
         help="Tile shape in pixel. You can provide both the row and col shape if different. Additional "
-        "shapes will be ignored. Note that this will be ignored if a zarr is provided. The zarr chunks will be used instead. (default=%(default)s)",
+        "shapes will be ignored. Note that this will be ignored if a zarr is provided. "
+        "The zarr chunks will be used instead. (default=%(default)s)",
     )
     p.add_argument(
         "--maximum_empty_fraction",

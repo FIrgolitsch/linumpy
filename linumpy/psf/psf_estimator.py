@@ -63,13 +63,13 @@ def extract_psfParametersFromMosaic(vol, f=0.01, nProfiles=10, zr_0=610.0, res=6
         profile_mask[ii, 0 : int(zmin + ii)] = 0
 
     z = np.linspace(0, nz * res, nz)
-    zf_list = list()
-    zr_list = list()
-    total_err = list()
+    zf_list = []
+    zr_list = []
+    total_err = []
     for z0 in range(nProfiles):
         # Find the coarse alignment of the focus based on
         # pre-established Rayleigh length from thorlab
-        errList = list()
+        errList = []
         for zf in range(nz):
             a = profilePerInterfaceDepth[z0, zf]
             synthetic_signal = confocalPSF(z, zf, zr_0, a)
@@ -83,6 +83,8 @@ def extract_psfParametersFromMosaic(vol, f=0.01, nProfiles=10, zr_0=610.0, res=6
 
         if not (np.isnan(a)):
             last_zr = zr_0
+            zr = last_zr
+            output: dict = {}
             for _ in range(nIterations):
                 # Optimize the model (without using attenuation)
                 iProfile = profilePerInterfaceDepth[z0, :]

@@ -5,7 +5,6 @@ import numpy as np
 
 
 def getOverlap(vol1, vol2, pos1, pos2):
-
     if len(pos1) == 2 or np.squeeze(vol1).ndim == 2:
         nx, ny = vol1.shape[0:2]
 
@@ -64,7 +63,7 @@ def getOverlap(vol1, vol2, pos1, pos2):
                 overlap2 = np.reshape(overlap2, overlap2.shape[:2])
 
             return overlap1, overlap2, o_pos1, o_pos2
-        except:
+        except Exception:
             return None, None, None, None
 
     elif len(pos1) == 3:
@@ -135,5 +134,5 @@ def getOverlap(vol1, vol2, pos1, pos2):
                 overlap2 = np.reshape(overlap2, overlap2.shape[:2])
 
             return overlap1, overlap2, o_pos1, o_pos2
-        except:
+        except Exception:
             return None, None, None, None

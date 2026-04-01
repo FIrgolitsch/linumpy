@@ -23,7 +23,7 @@ import linumpy._thread_config  # noqa: F401
 import argparse
 import logging
 import os
-from glob import glob
+from pathlib import Path
 
 import dask.array as da
 import numpy as np
@@ -79,22 +79,22 @@ def check_folders(parser, folder):
     """
     tiff_files = []
     # check if there are tiff files in the folder
-    if glob(os.path.join(folder, "*.tif")) == []:
+    if not list(Path(folder).glob("*.tif")):
         # list subfolders
         subfolders = [f.path for f in os.scandir(folder) if f.is_dir()]
         if subfolders == []:
             parser.error("No tiff files or subfolder found in the folder.")
         else:
             logging.info("Found subfolders in the folder.")
-            for index, subfolder in enumerate(subfolders):
-                if glob(os.path.join(subfolder, "*.tif")) == []:
+            for _index, subfolder in enumerate(subfolders):
+                if not list(Path(subfolder).glob("*.tif")):
                     parser.error("No tiff files found in the subfolder.")
                 else:
-                    tiff_files.append(sorted(glob(os.path.join(subfolder, "*.tif"))))
+                    tiff_files.append(sorted(str(p) for p in Path(subfolder).glob("*.tif")))
     elif len([f.path for f in os.scandir(folder) if f.is_dir()]) != 0:
         parser.error("Both tiff files and subfolders found in the folder.")
     else:
-        tiff_files = sorted(glob(os.path.join(folder, "*.tif")))
+        tiff_files = sorted(str(p) for p in Path(folder).glob("*.tif"))
         logging.info("Found tiff files in the folder.")
 
     # check if all subfolders contain the same number of files
@@ -166,7 +166,7 @@ def main():
     mosaic = zarr.open(zarr_store, mode="w", shape=mosaic_shape, dtype=np.float32, chunks=[1, 1, 128, 128])
 
     for index_z in range(len(tiff_files[0])):
-        process_volume(mosaic, [item[index_z] for item in tiff_files], index_z, [1, 1] + mosaic_shape[2:])
+        process_volume(mosaic, [item[index_z] for item in tiff_files], index_z, [1, 1, *mosaic_shape[2:]])
 
     mosaic_dask = da.from_zarr(mosaic)
     save_omezarr(mosaic_dask, args.out_zarr, voxel_size=resolution, chunks=args.chunks, n_levels=args.n_levels)

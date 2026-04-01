@@ -1,6 +1,9 @@
 #! /usr/bin/env python
 """Collection of functions to fix intensity-related artefacts in raw data"""
 
+from linumpy._thread_config import worker_initializer
+
+import contextlib
 import itertools
 import multiprocessing
 
@@ -22,6 +25,7 @@ from sklearn import linear_model
 
 from linumpy.preproc import xyzcorr
 from linumpy.stitching.stitch_utils import getOverlap
+from linumpy.utils.io import get_available_cpus
 
 
 def eqhist(image, nbins=32):
@@ -235,7 +239,8 @@ def volumeNormalization(vol, average_vol, epsilon=0.05):
     # meanv = (average_vol - average_vol.min())/(average_vol.max() - average_vol.min())
     meanv = average_vol
 
-    # Average intensity in first slices should be the same in both volumes (we assume that there are no structures in the first slices)
+    # Average intensity in first slices should be the same in both volumes
+    # (we assume that there are no structures in the first slices)
     # i0_v = vol[:,:,0:15].mean()
     # i0_mv = meanv[:,:,0:15].mean()
     # meanv = (meanv/i0_mv)*i0_v # Normalized average volume in same I scale as vol
@@ -423,7 +428,8 @@ def getSmoothIntensityTransition(vol, slicesStart):
         List of slice position, corresponding to the slice transition location
 
     compensateAttenuation : bool
-        If true, compensation Beer-Lambert attenuation before the regularization (using a division by a low-pass version of the slice).
+        If true, compensation Beer-Lambert attenuation before the
+        regularization (using a division by a low-pass version of the slice).
 
     Returns
     =======
@@ -433,7 +439,9 @@ def getSmoothIntensityTransition(vol, slicesStart):
 
     References
     ==========
-    * Wang, H., et al. (2014). Serial optical coherence scanner for large-scale brain imaging at microscopic resolution. NeuroImage, 84, 1007–1017. http://doi.org/10.1016/j.neuroimage.2013.09.063
+    * Wang, H., et al. (2014). Serial optical coherence scanner for large-scale brain
+      imaging at microscopic resolution. NeuroImage, 84, 1007–1017.
+      http://doi.org/10.1016/j.neuroimage.2013.09.063
 
     """
     volume = np.copy(vol)
@@ -462,10 +470,7 @@ def getSmoothIntensityTransition(vol, slicesStart):
             a_next = gaussian_filter(volume[:, :, z2], sigma=5)  # First z of next slice local intensity average
 
         b_current = gaussian_filter(volume[:, :, z2 - 1], sigma=5)  # Last z of current slice local intensity average
-        if i == 0:  # If first slice
-            b_previous = gaussian_filter(volume[:, :, z1], sigma=5)  # Last z of current slice local intensity average
-        else:
-            b_previous = gaussian_filter(volume[:, :, z1 - 1], sigma=5)  # Last z of previous slice local intensity average
+        b_previous = gaussian_filter(volume[:, :, z1], sigma=5) if i == 0 else gaussian_filter(volume[:, :, z1 - 1], sigma=5)
 
         # Depth position
         z = np.linspace(0, z2 - z1, z2 - z1)
@@ -530,7 +535,7 @@ def getAttenuation_Vermeer2013(vol, dz=6.5e-6, mask=None, C=None):
     # Prepare the bottom constant (to better consider the finite Bscan dimension)
     if C is None:
         C = np.zeros(vol.shape)
-    elif isinstance(C, int) or isinstance(C, float):
+    elif isinstance(C, (int, float)):
         C = np.ones(vol, dtype=float) * C
     elif C.ndim == 2:
         C = np.tile(np.reshape(C, (C.shape[0], C.shape[1], 1)), (1, 1, vol.shape[2]))
@@ -691,7 +696,8 @@ def getAttenuation_Faber2004(vol, mask=None, dz=6.5e-6, N=4):
     zr = np.pi * alpha * n * w0**2.0 / l0  # Apparent Rayleigh length (micron)
 
     # Defining the objective function for the minimization
-    f = lambda x, y, z: np.sum((y - octSignal_Faber2004Model(z, mu_t=x[2], zR=x[1], z0=x[0])) ** 2.0)
+    def f(x, y, z):
+        return np.sum((y - octSignal_Faber2004Model(z, mu_t=x[2], zR=x[1], z0=x[0])) ** 2.0)
 
     # Loop over all A-lines and computing attenuation
     attn = np.zeros((vol.shape[0], vol.shape[1]))
@@ -700,10 +706,7 @@ def getAttenuation_Faber2004(vol, mask=None, dz=6.5e-6, N=4):
     z = np.arange(0.0, dz * vol.shape[2], dz)
     for x in range(vol.shape[0]):
         for y in range(vol.shape[1]):
-            if mask is not None:
-                mask_Aline = mask[x, y, :]
-            else:
-                mask_Aline = np.ones((vol.shape[2],)).astype(np.bool)
+            mask_Aline = mask[x, y, :] if mask is not None else np.ones((vol.shape[2],)).astype(bool)
 
             if np.any(mask_Aline):
                 p0 = [0.0, 100.0, 0.001]
@@ -764,7 +767,8 @@ def _AlineFit(data):
 
     # Defining the attenuation model (biexponential) with :
     # x : [A, mu_t]; y : data; z : depths
-    f_attn = lambda x, y, z: np.sum((y - x[0] * np.exp(-2 * x[1] * z)) ** 2.0)
+    def f_attn(x, y, z):
+        return np.sum((y - x[0] * np.exp(-2 * x[1] * z)) ** 2.0)
 
     z = np.linspace(0, len(data), len(data))
     aline = np.array(data)
@@ -774,20 +778,20 @@ def _AlineFit(data):
 
 
 def splitAline(data, mask):
-    data_list = list()
-    z_list = list()
-    this_aline = list()
-    this_z = list()
-    for elem, m, z in zip(data, mask, list(range(len(data)))):
+    data_list = []
+    z_list = []
+    this_aline = []
+    this_z = []
+    for elem, m, z in zip(data, mask, list(range(len(data))), strict=False):
         if m:
             this_aline.append(elem)
             this_z.append(z)
         else:
             if len(this_aline) > 0:
                 data_list.append(this_aline)
-                this_aline = list()
+                this_aline = []
                 z_list.append(this_z)
-                this_z = list()
+                this_z = []
     if len(this_aline) > 0:
         data_list.append(this_aline)
         z_list.append(this_z)
@@ -826,22 +830,23 @@ def getAlineAttenuation(vol, k=1, mask=None):
     zList = np.array_split(z, k)
     attn_vol = np.zeros((nx, ny, k))
 
-    for z, ik in zip(zList, list(range(k))):
+    for z, ik in zip(zList, list(range(k)), strict=False):
         # Selecting a subsample
         this_vol = vol[:, :, z[0] : z[-1]]
-        if mask is not None:
-            this_mask = mask[:, :, z[0] : z[-1]]
+        this_mask = mask[:, :, z[0] : z[-1]] if mask is not None else None
 
         # Transforming this volume into a list
         Alines = np.split(this_vol.flatten(), nx * ny)
-        if mask is not None:
+        if this_mask is not None:
             mask_Alines = np.split(this_mask.flatten(), nx * ny)
-            for A, M, ii in zip(Alines, mask_Alines, list(range(nx * ny))):
+            for A, M, ii in zip(Alines, mask_Alines, list(range(nx * ny)), strict=False):
                 Alines[ii] = A[M]
 
         # Process each Alines in parallel
-        nproc = multiprocessing.cpu_count()
-        p = multiprocessing.Pool(nproc)
+        nproc = get_available_cpus()
+        from linumpy._thread_config import worker_initializer
+
+        p = multiprocessing.Pool(nproc, initializer=worker_initializer)
         result = p.map(_AlineFit, Alines)
         p.close()
         p.join()
@@ -971,19 +976,19 @@ def findInterfaceFromGradient(vol, f=0.005, removeSmooth=False):
 
 def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt multiproc to available proc given by mpi4py
     nx, ny, nz = vol.shape
-    nproc = multiprocessing.cpu_count()
+    nproc = get_available_cpus()
     if mask is None:  # Compute the mask
         mask = getInterfaceMask(vol)
 
     # Split the volume into Alines and Alines portions.
-    print("Splitting volume into Alines portions (using %d processors)" % (nproc))
+    print(f"Splitting volume into Alines portions (using {nproc} processors)")
     Alines = np.split(vol.flatten(), nx * ny)
     Alines_mask = np.split(mask.flatten(), nx * ny)
-    Alines_to_Split = list(zip(Alines, Alines_mask))
+    Alines_to_Split = list(zip(Alines, Alines_mask, strict=False))
     nAlines = len(Alines)
 
     # Process each Alines in parallel
-    p = multiprocessing.Pool(nproc)
+    p = multiprocessing.Pool(nproc, initializer=worker_initializer)
     result = p.map(_splitAlinesWorker, Alines_to_Split)
     p.close()
     p.join()
@@ -996,16 +1001,16 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
     print(("Number of Alines portions : ", pCount))
 
     # Compute the attenuation for each aline portions
-    print("Computing attenuation for each Aline portion (using %d processors)" % (nproc))
-    aline_portions = list()
-    z_portions = list()
-    portion_idx = list()
-    for foo, idx in zip(result, list(range(nAlines))):
+    print(f"Computing attenuation for each Aline portion (using {nproc} processors)")
+    aline_portions = []
+    z_portions = []
+    portion_idx = []
+    for foo, idx in zip(result, list(range(nAlines)), strict=False):
         aline_portions.extend(foo[0])
         z_portions.extend(foo[1])
         portion_idx.extend([idx] * len(foo[0]))
 
-    p = multiprocessing.Pool(nproc)
+    p = multiprocessing.Pool(nproc, initializer=worker_initializer)
     result = p.map(_AlineFit, aline_portions)
     p.close()
     p.join()
@@ -1013,7 +1018,7 @@ def getHeterogeneousAttenuation(vol, mask=None, fillHoles=False):  # TODO: adapt
     # Reshape attenuation as an Aline list # TODO : Paralléliser cette boucle.
     print("Reshape attenuation as an Aline list")
     aline_attn = [np.zeros((nz,)) for i in range(nAlines)]
-    for idx, z, mu in zip(portion_idx, z_portions, result):
+    for idx, z, mu in zip(portion_idx, z_portions, result, strict=False):
         aline_attn[idx][z] = mu
 
     # portion_idx = np.array(portion_idx)
@@ -1103,23 +1108,17 @@ def getSignalFromAttenuation(attn, i0=None, nz=120, mask=None, res=1.0):
     """
     nx, ny = attn.shape
     attn_vol = np.zeros((nx, ny, nz))
-    f_attn = lambda x, z: np.exp(-2 * x * z)
+
+    def f_attn(x, z):
+        return np.exp(-2 * x * z)
+
     for ix, iy in itertools.product(list(range(nx)), list(range(ny))):
-        if mask is not None:
-            this_mask = mask[ix, iy, :].astype(bool)
-        else:
-            this_mask = np.ones((nz,), dtype=bool)
+        this_mask = mask[ix, iy, :].astype(bool) if mask is not None else np.ones((nz,), dtype=bool)
 
         z0 = np.where(this_mask)
-        if len(z0[0]) > 0:
-            z0 = z0[0][0]
-        else:
-            z0 = 0
+        z0 = z0[0][0] if len(z0[0]) > 0 else 0
 
-        if i0 is not None:
-            A = i0[ix, iy]
-        else:
-            A = 1
+        A = i0[ix, iy] if i0 is not None else 1
 
         if np.any(this_mask):
             this_mu = attn[ix, iy]
@@ -1214,10 +1213,7 @@ def estimatePSF(
     -----
     * If no interface is given, the whole volume is used for the psf regression
     """
-    if agarose.ndim == 1:
-        iProfile = np.copy(agarose)
-    else:
-        iProfile = agarose.mean(axis=(0, 1))
+    iProfile = np.copy(agarose) if agarose.ndim == 1 else agarose.mean(axis=(0, 1))
     nz = len(iProfile)
     z = np.linspace(0, len(iProfile) * dz, len(iProfile))
 
@@ -1260,9 +1256,13 @@ def estimatePSF(
     # Fitting model
     if zf is None:
         if fitAttn:
-            fo_psf = lambda x, y, z: np.sum((y - confocalPSF(z, x[0], x[1], x[2]) * np.exp(-2 * x[3] * (z - z[0]))) ** 2.0)
+
+            def fo_psf(x, y, z):
+                return np.sum((y - confocalPSF(z, x[0], x[1], x[2]) * np.exp(-2 * x[3] * (z - z[0]))) ** 2.0)
         else:
-            fo_psf = lambda x, y, z: np.sum((y - confocalPSF(z, x[0], x[1], x[2])) ** 2.0)
+
+            def fo_psf(x, y, z):
+                return np.sum((y - confocalPSF(z, x[0], x[1], x[2])) ** 2.0)
 
         # 1st fit of the model
         zf = 0.5 * (nz * dz)
@@ -1304,7 +1304,9 @@ def estimatePSF(
         else:
             return popt_2.x[0], popt_2.x[1], popt_2.x[2]
     else:
-        fo_psf = lambda x, y, z, zf: np.sum((y - confocalPSF(z, zf, x[0], x[1])) ** 2.0)
+
+        def fo_psf(x, y, z, zf):
+            return np.sum((y - confocalPSF(z, zf, x[0], x[1])) ** 2.0)
 
         # 1st fit of the model
         zR = 250.0
@@ -1385,7 +1387,7 @@ def get3DPSF(vol, interface, res=6.5, useAverageRayleigh=False, removeInterface=
                     )
                 zf_map[ix, iy] = params[0]
                 zr_map[ix, iy] = params[1]
-            except:
+            except Exception:
                 pass
 
     # Smoothing the zf and zr maps
@@ -1395,7 +1397,9 @@ def get3DPSF(vol, interface, res=6.5, useAverageRayleigh=False, removeInterface=
     zr_map = gaussian_filter(zr_map, (nx * 0.1, ny * 0.1))
 
     # Fit parabola on zf_map
-    f = lambda x, a, b, c, d, e, f: a * x[0] * x[1] + b * x[0] ** 2 + c * x[1] ** 2 + d + e * x[0] + f * x[1]
+    def f(x, a, b, c, d, e, f):
+        return a * x[0] * x[1] + b * x[0] ** 2 + c * x[1] ** 2 + d + e * x[0] + f * x[1]
+
     xx, yy = np.meshgrid(list(range(nx)), list(range(ny)), indexing="ij")
     xdata = (np.ravel(yy), np.ravel(xx))
     ydata = np.ravel(zf_map)
@@ -1440,11 +1444,17 @@ def vignette_quad(pos, a, b, c, d, e, f):
 
 def get_vignette(vol, returnParams=False, mask_z=None, method="gauss"):
     if method == "gauss":
-        f_opt = lambda x, y, pos: np.mean((y - vignette_gauss(pos, x[0], x[2], x[1], x[3], x[4], x[5])) ** 2.0)
+
+        def f_opt(x, y, pos):
+            return np.mean((y - vignette_gauss(pos, x[0], x[2], x[1], x[3], x[4], x[5])) ** 2.0)
     elif method == "gauss_lin":
-        f_opt = lambda x, y, pos: np.mean((y - vignette_gauss_lin(pos, x[0], x[1], x[2], x[3], x[4], x[5])) ** 2.0)
+
+        def f_opt(x, y, pos):
+            return np.mean((y - vignette_gauss_lin(pos, x[0], x[1], x[2], x[3], x[4], x[5])) ** 2.0)
     else:
-        f_opt = lambda x, y, pos: np.mean((y - vignette_quad(pos, x[0], x[1], x[2], x[3], x[4], x[5])) ** 2.0)
+
+        def f_opt(x, y, pos):
+            return np.mean((y - vignette_quad(pos, x[0], x[1], x[2], x[3], x[4], x[5])) ** 2.0)
 
     # Computing position in this mosaic.
     xx, yy = np.meshgrid(
@@ -1467,8 +1477,8 @@ def get_vignette(vol, returnParams=False, mask_z=None, method="gauss"):
 
     print(popt_0)
 
-    w_list = list()
-    params_list = list()
+    w_list = []
+    params_list = []
     if mask_z is None:
         mask_z = np.ones((vol.shape[2],))
     for z in range(vol.shape[2]):
@@ -1595,7 +1605,9 @@ def fit_TissueConfocalModel(
         signal = a / (1 + np.exp(-c * (z - z0) / float(z[-1] - z[0]))).astype(float)
         return signal
 
-    fo_signal = lambda x, y, z: np.sqrt(np.sum((y - tissue_model(x, z)) ** 2.0) / float(y.size))
+    def fo_signal(x, y, z):
+        return np.sqrt(np.sum((y - tissue_model(x, z)) ** 2.0) / float(y.size))
+
     p0 = [50.0, z0 * res, 1.0]  # c, z0, a
     popt_tissue = minimize(fo_signal, x0=p0, args=(this_profile, z))
     c, z0, a = popt_tissue.x[:]
@@ -1607,7 +1619,9 @@ def fit_TissueConfocalModel(
         zf, zr, a = x[:]
         return confocalPSF(z, zf, zr, a)
 
-    fo_PSF = lambda x, y, z, tissue: np.sqrt(np.sum((y - tissue * confocal_model(x, z)) ** 2.0) / float(y.size))
+    def fo_PSF(x, y, z, tissue):
+        return np.sqrt(np.sum((y - tissue * confocal_model(x, z)) ** 2.0) / float(y.size))
+
     p0 = [z[-1] * 0.5, zr_0, 1.0]  # zf, zr, a
     param_bounds = [[z[0], z[-1]], [zr_0, zr_0], [0.0, None]]
     popt_firstpsf = minimize(fo_PSF, x0=p0, args=(this_profile, z, syn_tissue), bounds=param_bounds)
@@ -1621,10 +1635,8 @@ def fit_TissueConfocalModel(
             t_grad = -gaussian_filter1d(signal, w, order=2)
             t_grad[t_grad < 0] = 0
             if t_grad.max() > 0:
-                try:
+                with contextlib.suppress(Exception):
                     t_grad /= float(t_grad.max())
-                except:
-                    pass
             bump = b * t_grad
             return bump
 
@@ -1633,7 +1645,9 @@ def fit_TissueConfocalModel(
             signal = tissue_model([c, z0, a], z)
             return signal + bumpModel(signal, w, b)
 
-        fo_btm = lambda x, y, z, psf: np.sqrt(np.sum((y - psf * bumpTissueModel(x, z)) ** 2.0) / float(y.size))
+        def fo_btm(x, y, z, psf):
+            return np.sqrt(np.sum((y - psf * bumpTissueModel(x, z)) ** 2.0) / float(y.size))
+
         p0 = [new_z0, 60, 5, 1.0, 0.5]
         param_bounds = [[z[0], z[-1]], [0, 100], [1.0, 10], [0, None], [0, None]]
         popt_btm = minimize(fo_btm, x0=p0, args=(this_profile, z, psf1), bounds=param_bounds)
@@ -1652,9 +1666,9 @@ def fit_TissueConfocalModel(
             normalizedSignal = signal / psf
             return normalizedSignal
 
-        fo_PSFNormalized = lambda x, y, z, tissue: np.sqrt(
-            np.sum((tissue - normalizeProfile(y, confocal_model(x, z))) ** 2.0) / float(y.size)
-        )
+        def fo_PSFNormalized(x, y, z, tissue):
+            return np.sqrt(np.sum((tissue - normalizeProfile(y, confocal_model(x, z))) ** 2.0) / float(y.size))
+
         p0 = popt_firstpsf.x  # zf, zr, a
         if fix_zr:
             zr_0 = p0[1]
@@ -1697,7 +1711,7 @@ def fit_TissueConfocalModel(
                 label="Confocal PSF",
             )
             plt.legend(loc="best", shadow=True)
-            plt.grid("on")
+            plt.grid(True)
             plt.show()
 
         output = {"psf": psf_final}
@@ -1754,7 +1768,7 @@ def fit_TissueConfocalModel(
                 label="Compensated Data",
             )
             plt.legend(loc="best", shadow=True)
-            plt.grid("on")
+            plt.grid(True)
             plt.show()
 
         output = {"psf": psf1}

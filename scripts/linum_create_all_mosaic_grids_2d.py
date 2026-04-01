@@ -22,7 +22,8 @@ def _build_arg_parser():
         "--resolution",
         type=float,
         default=-1,
-        help="Output isotropic resolution in micron per pixel. (Use -1 to keep the original resolution). (default=%(default)s)",
+        help="Output isotropic resolution in micron per pixel. "
+        "(Use -1 to keep the original resolution). (default=%(default)s)",
     )
     p.add_argument(
         "-e", "--extension", default=".tiff", choices=[".tiff", ".zarr"], help="Output extension (default=%(default)s)"
@@ -50,12 +51,15 @@ def main():
     n_cpus = args.n_cpus
 
     # Get a list of slices to process
-    tiles, tiles_id = reconstruction.get_tiles_ids(input_directory)
-    slices = list(set([t[2] for t in tiles_id]))
+    _tiles, tiles_id = reconstruction.get_tiles_ids(input_directory)
+    slices = list({t[2] for t in tiles_id})
 
     for z in tqdm(slices, desc="Creating mosaic grids", unit="slice", leave=True):
         output_file = f"{output_directory}/mosaic_grid_z{z:02d}{extension}"
-        cmd = f"linum_create_mosaic_grid_2d.py {input_directory} {output_file} --slice {z} --resolution {resolution} --n_cpus {n_cpus}"
+        cmd = (
+            f"linum_create_mosaic_grid_2d.py {input_directory} {output_file}"
+            f" --slice {z} --resolution {resolution} --n_cpus {n_cpus}"
+        )
         subprocess.run(cmd, shell=True)
 
 

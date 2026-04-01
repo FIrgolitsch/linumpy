@@ -79,7 +79,7 @@ def main():
         max_workers=n_processes,
     )
 
-    xmin_mm, xmax_mm, ymin_mm, ymax_mm, tile_resolutions, grid_shapes = zip(*results)
+    xmin_mm, xmax_mm, ymin_mm, ymax_mm, tile_resolutions, grid_shapes = zip(*results, strict=False)
 
     # Compute the shift between slices in mm.
     # For each axis, compare both boundaries (min and max).  Mosaic expansion
@@ -114,7 +114,7 @@ def main():
 
     # Save the shifts to a csv file
     shifts = np.array([z_values[:-1], z_values[1:], x_shift_px, y_shift_px, x_shifts_mm, y_shifts_mm, reliable_flags]).T
-    with open(output_file, "w") as csv_file:
+    with Path(output_file).open("w") as csv_file:
         writer = csv.writer(csv_file, delimiter=",")
         writer.writerow(["fixed_id", "moving_id", "x_shift", "y_shift", "x_shift_mm", "y_shift_mm", "reliable"])
         writer.writerows(shifts)

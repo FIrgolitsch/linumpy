@@ -143,6 +143,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# ruff
+.ruff_cache/
+
 # Pyre type checker
 .pyre/
 
@@ -184,3 +187,8 @@ workflows/work/
 
 # Temp code file
 draft.py
+
+# Exculde subject data folders (symlinks)
+sub-*
+
+.python-version

@@ -11,7 +11,6 @@ from scipy.ndimage import (
     binary_fill_holes,
     gaussian_filter,
     gaussian_filter1d,
-    gaussian_gradient_magnitude,
     label,
     median_filter,
     uniform_filter,
@@ -22,7 +21,7 @@ from skimage.filters import threshold_li, threshold_otsu
 from skimage.morphology import dilation, disk
 
 
-def cropVolume(vol, xlim=[0, -1], ylim=[0, -1], zlim=[0, -1]):
+def cropVolume(vol, xlim=None, ylim=None, zlim=None):
     """Crops the given volume according to the range given as input
 
     Parameters
@@ -46,6 +45,12 @@ def cropVolume(vol, xlim=[0, -1], ylim=[0, -1], zlim=[0, -1]):
     * xlim=[0,-1] means that the whole volume in the x dimension will be returned.
 
     """
+    if zlim is None:
+        zlim = [0, -1]
+    if ylim is None:
+        ylim = [0, -1]
+    if xlim is None:
+        xlim = [0, -1]
     nx, ny = vol.shape[:2]
     xlim = list(xlim)
     ylim = list(ylim)
@@ -100,10 +105,9 @@ def resampleITK(vol, newshape, interpolator="linear"):
     else:
         isBool = False
 
-    if vol.ndim == 3:
-        if vol.shape[2] == 1:
-            vol = np.squeeze(vol, axis=(2,))
-            newshape = newshape[0:2]
+    if vol.ndim == 3 and vol.shape[2] == 1:
+        vol = np.squeeze(vol, axis=(2,))
+        newshape = newshape[0:2]
 
     if vol.ndim == 2:
         nx, ny = vol.shape
@@ -127,6 +131,11 @@ def resampleITK(vol, newshape, interpolator="linear"):
         resample.SetInterpolator(sitk.sitkLinear)
     else:
         resample.SetInterpolator(sitk.sitkLinear)
+
+    # Use a small positive default value instead of zero to avoid black dots
+    nonzero_vals = vol[vol > 0]
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
+    resample.SetDefaultPixelValue(default_val)
 
     vol_itk = sitk.GetImageFromArray(vol)
     output_itk = resample.Execute(vol_itk)
@@ -182,6 +191,11 @@ def shrink(vol, spacing=(1.0, 1.0, 1.0), res=(10.0, 10.0, 10.0)):
     resample.SetOutputSpacing([rz, ry, rx])
     resample.SetSize(outputSize)
 
+    # Use a small positive default value instead of zero to avoid black dots
+    nonzero_vals = vol[vol > 0]
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
+    resample.SetDefaultPixelValue(default_val)
+
     # Resampling
     return sitk.GetArrayFromImage(resample.Execute(img))
 
@@ -211,7 +225,6 @@ def cropZ0WholeSlice(
     ndarray
         Cropped array
     """
-    volshape = vol.shape
 
     if z0 is None:
         # Computing tissue mask
@@ -252,8 +265,8 @@ def cropZ0WholeSlice(
     zmax = np.floor((zmin * voxdim[2] + nz) / (1.0 * voxdim[2])).astype(int)
 
     if verbose:
-        print("Crop limits are : [%.2f, %.2f] microns" % (zmin * voxdim[2], zmax * voxdim[2]))
-        print("Crop limits are : [%d, %d] pixels" % (zmin, zmax))
+        print(f"Crop limits are : [{zmin * voxdim[2]:.2f}, {zmax * voxdim[2]:.2f}] microns")
+        print(f"Crop limits are : [{zmin}, {zmax}] pixels")
 
     # Cropping
     if returnZ0:
@@ -311,7 +324,7 @@ def findTissueDepth(vol, zmin=15, zmax=100, agaroseIntensity=5000):
 
         # Labeling features and keeping the largest
         im_label, num_features = label(im)
-        hist = list()
+        hist = []
         for i in range(num_features):
             hist.append(np.sum(im_label == i))
         mainFeature = np.argmax(hist[1:]) + 1
@@ -325,7 +338,7 @@ def findTissueDepth(vol, zmin=15, zmax=100, agaroseIntensity=5000):
         peaks = argrelmax(z_profile, order=20)
         if len(peaks[0]) > 0:
             z0 = peaks[0][0]
-    except:
+    except Exception:
         pass
     return z0
 
@@ -500,7 +513,7 @@ def removeZ0Outliers(z0map):
         return z0map
 
 
-def applyInterfaceCorrection(vol, interface):  # TODO: Test this algorithm to make sure it works well.
+def applyInterfaceCorrection(vol, interface):
     """Apply interface depth correction using linear interpolation.
 
     :param vol: (ndarray) containing the volume to fix.
@@ -554,17 +567,25 @@ def fitInterface(interface, method="linear", returnCenter=False):
         center = (g, h)
 
     elif method == "gauss":
-        f = lambda x, a, b, c, d, e, f: np.exp(-((x[0] - a) ** 2) / (2.0 * b**2.0) - (x[1] - c) ** 2 / (2.0 * d**2.0)) * e + f
+
+        def f(x, a, b, c, d, e, f):
+            return np.exp(-((x[0] - a) ** 2) / (2.0 * b**2.0) - (x[1] - c) ** 2 / (2.0 * d**2.0)) * e + f
+
         popt, _ = curve_fit(f, xdata, ydata)
         a, b, c, d, e, f = popt
         fittedInterface = np.exp(-((xx - a) ** 2) / (2.0 * b**2.0) - (yy - c) ** 2 / (2.0 * d**2.0)) * e + f
         center = (a, c)
 
     elif method == "sph":
-        f = lambda x, a, b, c: c * (((x[0] - a) ** 2 + (x[1] - b) ** 2) ** 2.0) / 8.0
+
+        def f(x, a, b, c):
+            return c * (((x[0] - a) ** 2 + (x[1] - b) ** 2) ** 2.0) / 8.0
+
         popt, _ = curve_fit(f, xdata, ydata)
         fittedInterface = popt[2] * (((xx - popt[0]) ** 2 + (yy - popt[1]) ** 2) ** 2.0) / 8.0
         center = (popt[0], popt[1])
+    else:
+        raise ValueError(f"Unknown interface fitting method: {method!r}. Use 'linear', 'quad', 'gauss', or 'sph'.")
 
     if returnCenter:
         return fittedInterface, center
@@ -581,7 +602,7 @@ def quadraticInterface(pos, a, b, c, d, e, f, g, h):
 
 def getQuadraticInterface(popt, volshape=(512, 512, 120)):
     xx, yy = np.meshgrid(list(range(volshape[0])), list(range(volshape[1])), indexing="ij")
-    tmp = quadraticInterface([xx[:], yy[:]], popt[0], popt[1], popt[2], popt[3], popt[4], popt[5])
+    tmp = quadraticInterface([xx[:], yy[:]], popt[0], popt[1], popt[2], popt[3], popt[4], popt[5], 0, 0)
     interface = np.zeros([volshape[0], volshape[1]])
     interface[xx[:], yy[:]] = tmp
     return interface
@@ -653,23 +674,7 @@ def estimateLHProfileParameters(vol, s=25):
     nx, ny, _ = vol.shape
     vol_p = np.log(vol + 1.1)  # 1.1 factor is to prevent log of 0
     vol_p = uniform_filter(vol_p, (s, s, 0))  # Averaging intensities over a small XY neigborhood
-    vol_f = gaussian_filter1d(vol_p, sigma=1, axis=2)  # Smoothing the intensity profiles in Z
-    vol_g = gaussian_gradient_magnitude(vol_p, [0, 0, 1])  # TODO: Computing gradient in z direction only ?
-
-    # Finding max gradient position
-    z0 = vol_g.argmax(axis=2)
-
-    xx, yy = np.meshgrid(list(range(nx)), list(range(ny)), indexing="ij")
-    I_gmax = vol_p[xx, yy, z0]
-
-    test = np.zeros(vol_p.shape)
-    test[xx, yy, z0] = 1
-    import nibabel as nib
-
-    nib.save(
-        nib.Nifti1Image(test, np.eye(4)),
-        "/home/local/LIOM/jlefebvre/tmp/interface_test.nii",
-    )
+    vol_f = gaussian_filter1d(vol_p, sigma=1, axis=2)
 
     # Preparing variables
     z0 = np.zeros((nx, ny), dtype=np.uint)
@@ -678,7 +683,7 @@ def estimateLHProfileParameters(vol, s=25):
     Ib = np.zeros((nx, ny))
     sigma = np.zeros((nx, ny))
 
-    for x in range(nx):  # TODO: Accelerate this loop (multithreading ?)
+    for x in range(nx):
         for y in range(ny):
             I = vol_p[x, y, :]
             If = vol_f[x, y, :]
@@ -690,10 +695,7 @@ def estimateLHProfileParameters(vol, s=25):
             zlist_min = indices[0][indices[0] < this_z0]
             zlist_max = indices[0][indices[0] > this_z0]
 
-            if len(zlist_min) > 0 and len(zlist_max) > 0:
-                this_dz = zlist_max[0] - zlist_min[-1]
-            else:
-                this_dz = 1
+            this_dz = zlist_max[0] - zlist_min[-1] if len(zlist_min) > 0 and len(zlist_max) > 0 else 1
             if len(zlist_max) > 0:
                 this_z0 = zlist_max[0]
 
@@ -704,10 +706,7 @@ def estimateLHProfileParameters(vol, s=25):
             this_I0 = I[this_z0]
             this_sigma = -np.median(I_g[this_z0::])
 
-            if (this_z0 == 0) or (this_z0 - this_dz <= 0):
-                this_Ib = 1
-            else:
-                this_Ib = np.median(I[0 : this_z0 - this_dz])
+            this_Ib = 1 if this_z0 == 0 or this_z0 - this_dz <= 0 else np.median(I[0 : this_z0 - this_dz])
 
             z0[x, y] = this_z0
             dz[x, y] = this_dz
@@ -718,46 +717,393 @@ def estimateLHProfileParameters(vol, s=25):
     return z0, dz, I0, Ib, sigma
 
 
-def detect_galvo_shift(aip: np.ndarray, n_pixel_return: int = 40) -> int:
-    """Detects the galvo shift in the AIP.
+def detect_galvo_band_in_tile(tile_aip: np.ndarray, min_drop_ratio: float = 0.40) -> tuple:
+    """Detect a galvo return dark band in the AIP of a single assembled mosaic tile.
+
+    Companion to :func:`detect_galvo_shift` for use when only the assembled
+    OME-Zarr mosaic is available and the raw ``.bin`` tiles no longer exist.
+    Each zarr chunk corresponds to one OCT tile (the zarr chunk shape equals the
+    tile size), so this function can be run per chunk to detect and characterise
+    any unfixed galvo artifact.
+
     Parameters
     ----------
-    aip : ndarray
-        AIP of the OCT volume containing both the image and the galvo return. This assumes that the first axis is the
-        A-line axis, and the second axis is the B-scan axis, and the average was taken over the depth axis.
-    n_pixel_return : int
-        Number of pixels used for the galvo returns.
+    tile_aip : np.ndarray
+        2-D average intensity projection of a single tile,
+        shape ``(n_alines, n_bscans)``.
+    min_drop_ratio : float
+        Minimum relative intensity drop compared to the surrounding tissue
+        baseline to be classified as a dark band.  Default 0.40 (40 % drop).
+
     Returns
     -------
-    int
-        Shift in pixels
+    tuple
+        ``(band_start, band_width, confidence)`` — pixel coordinates of the
+        detected band within the tile (along the A-line axis) and a confidence
+        score in [0, 1].  Returns ``(0, 0, 0.0)`` when no band is detected.
     """
-    # Compute the average a-line
-    profile = aip.mean(axis=1)
-    profile = median_filter(profile, 9)
+    n_alines = tile_aip.shape[0]
+    profile = median_filter(tile_aip.mean(axis=1), size=5)
 
-    # Compute the intensity difference between the start and end of the a-line for various shifts.
-    # A wrong shift would result in values close to zero as they would be close by in the actual scan
-    differences = []
-    for s in range(len(profile)):
-        d = np.abs(profile[s] - profile[-1 + s])
-        differences.append(d)
+    # Robust baseline: 75th percentile is above the dark band but below
+    # saturated highlights.
+    baseline = float(np.percentile(profile, 75))
+    if baseline <= 1.0:
+        return 0, 0, 0.0
 
-    # If we find the right shift, both the beginning and the end of galvo return will result in high differences
-    similarities = []
-    for s in range(len(profile) - n_pixel_return):
-        foo = differences[s] * differences[s + n_pixel_return]
-        similarities.append(foo)
+    threshold = baseline * (1.0 - min_drop_ratio)
+    dark_mask = profile < threshold
 
-    shift = np.argmax(similarities)
-    shift = len(profile) - shift - n_pixel_return
+    if not dark_mask.any():
+        return 0, 0, 0.0
 
-    return shift
+    # Merge runs separated by at most 2 pixels into one candidate band.
+    dark_idx = np.where(dark_mask)[0]
+    gaps = np.where(np.diff(dark_idx) > 2)[0]
+    groups = np.split(dark_idx, gaps + 1) if len(gaps) else [dark_idx]
+
+    # Keep the candidate with the largest total intensity deficit.
+    best_group = max(groups, key=lambda g: float(np.sum(threshold - profile[g].clip(max=threshold))))
+
+    band_start = int(best_group[0])
+    band_end = int(best_group[-1]) + 1
+    band_width = band_end - band_start
+
+    # Sanity check: a real galvo artifact is narrow (< 20 % of tile width).
+    if band_width > n_alines * 0.20:
+        return 0, 0, 0.0
+
+    confidence = _compute_dark_band_confidence(tile_aip, band_start, band_end)
+    return band_start, band_width, float(confidence)
+
+
+def detect_galvo_shift(aip: np.ndarray, n_pixel_return: int = 40) -> tuple:
+    """Detect galvo shift artifact in an average intensity projection.
+
+    The galvo return region creates a dark horizontal band in OCT data.
+    This function locates the band by finding gradient pairs separated by
+    n_pixel_return pixels, then validates using dark band consistency.
+
+    Parameters
+    ----------
+    aip : np.ndarray
+        Average intensity projection of shape (n_alines, n_bscans).
+    n_pixel_return : int
+        Width of galvo return region in pixels (from acquisition metadata).
+
+    Returns
+    -------
+    tuple
+        (shift, confidence) where shift is the circular shift needed to move
+        the galvo region to the edge, and confidence (0-1) indicates detection
+        reliability. Apply fix when confidence >= 0.5.
+    """
+    n_alines = aip.shape[0]
+
+    # Find galvo position using gradient pair detection
+    profile = median_filter(aip.mean(axis=1), 5)
+    gradient = np.abs(np.diff(profile))
+
+    # Find gradient pairs separated by n_pixel_return (galvo region width)
+    n = len(gradient) - n_pixel_return
+    if n <= 0:
+        return 0, 0.0
+
+    similarities = gradient[:n] * gradient[n_pixel_return : n_pixel_return + n]
+    shift_idx = np.argmax(similarities)
+    shift = n_alines - shift_idx - n_pixel_return
+
+    # Compute galvo region boundaries
+    boundary_pos = shift_idx
+    boundary_end = boundary_pos + n_pixel_return
+
+    # Validate: check for consistent dark band across B-scans
+    confidence = _compute_dark_band_confidence(aip, int(boundary_pos), int(boundary_end))
+
+    return int(shift), float(confidence)
+
+
+def detect_galvo_for_slice(
+    tiles: list,
+    n_extra: int,
+    threshold: float = 0.6,
+    n_samples: int = 5,
+    axial_resolution: float | None = None,
+    min_intensity: float = 20.0,
+) -> tuple:
+    """Detect galvo shift for a slice by sampling multiple tiles.
+
+    Parameters
+    ----------
+    tiles : list
+        List of tile paths for the slice.
+    n_extra : int
+        Number of extra A-lines (galvo return pixels) from acquisition metadata.
+    threshold : float
+        Confidence threshold for applying fix (default: 0.6).
+    n_samples : int
+        Maximum number of tiles to sample (default: 5).
+    axial_resolution : float, optional
+        Axial resolution for OCT loading.
+    min_intensity : float
+        Minimum mean intensity for a tile to be considered valid.
+
+    Returns
+    -------
+    tuple
+        (shift, confidence) where shift is 0 if confidence < threshold.
+    """
+    from linumpy.microscope.oct import OCT
+
+    if not tiles or n_extra <= 0:
+        return 0, 0.0
+
+    n_tiles = len(tiles)
+
+    # Sample tiles from center region (more likely to contain tissue)
+    center_start = int(n_tiles * 0.2)
+    center_end = int(n_tiles * 0.8)
+    sample_indices = np.linspace(center_start, max(center_end - 1, center_start), min(n_samples, n_tiles), dtype=int)
+    sample_indices = list(dict.fromkeys(sample_indices))  # Remove duplicates
+
+    # Collect detections
+    detections = []
+    for idx in sample_indices:
+        if len(detections) >= n_samples:
+            break
+
+        oct_obj = OCT(tiles[idx], axial_resolution) if axial_resolution else OCT(tiles[idx])
+        vol = oct_obj.load_image(crop=False, fix_galvo_shift=False, fix_camera_shift=False)
+        aip = vol.mean(axis=0)
+
+        if np.mean(aip) < min_intensity:
+            continue
+
+        shift, conf = detect_galvo_shift(aip, n_pixel_return=n_extra)
+        detections.append((shift, conf))
+
+    if not detections:
+        return 0, 0.0
+
+    # Use best detection, penalized by cross-tile consistency
+    shifts = np.array([d[0] for d in detections])
+    confidences = np.array([d[1] for d in detections])
+
+    best_idx = np.argmax(confidences)
+    best_shift = shifts[best_idx]
+    best_confidence = confidences[best_idx]
+
+    # Check shift consistency across tiles
+    if len(shifts) > 1:
+        shift_tolerance = max(n_extra // 4, 5)
+        n_consistent = np.sum(np.abs(shifts - best_shift) <= shift_tolerance)
+        consistency_factor = (n_consistent / len(shifts)) ** 0.5
+        best_confidence *= consistency_factor
+
+    if best_confidence >= threshold:
+        return int(best_shift), float(best_confidence)
+    return 0, float(best_confidence)
+
+
+def _compute_dark_band_confidence(aip: np.ndarray, boundary_pos: int, boundary_end: int) -> float:
+    """Compute confidence that a dark band exists at the detected position.
+
+    Real galvo artifacts create a consistent dark horizontal band visible
+    across all B-scans. This is the key discriminator vs tissue boundaries.
+
+    Parameters
+    ----------
+    aip : np.ndarray
+        Average intensity projection of shape (n_alines, n_bscans).
+    boundary_pos : int
+        Start position of detected galvo region.
+    boundary_end : int
+        End position of detected galvo region.
+
+    Returns
+    -------
+    float
+        Confidence score (0-1).
+    """
+    n_alines, n_bscans = aip.shape
+    n_pixel_return = boundary_end - boundary_pos
+
+    # Validate boundaries
+    if boundary_pos < 0 or boundary_end > n_alines or n_pixel_return < 5:
+        return 0.0
+
+    # Define comparison regions
+    margin = max(10, n_pixel_return // 2)
+    before_start = max(0, boundary_pos - margin * 2)
+    before_end = boundary_pos
+    after_start = boundary_end
+    after_end = min(n_alines, boundary_end + margin * 2)
+
+    # Need valid comparison regions
+    if before_end <= before_start or after_end <= after_start:
+        return 0.0
+
+    # Check intensity drop consistency across B-scan columns (vectorized)
+    n_check = min(n_bscans, 20)
+    column_indices = np.linspace(0, n_bscans - 1, n_check, dtype=int)
+
+    cols = aip[:, column_indices]  # (n_alines, n_check)
+    before_vals = cols[before_start:before_end, :].mean(axis=0)
+    galvo_vals = cols[boundary_pos:boundary_end, :].mean(axis=0)
+    after_vals = cols[after_start:after_end, :].mean(axis=0)
+    surrounding = (before_vals + after_vals) / 2
+
+    valid_mask = surrounding >= 10
+    valid_cols = int(np.sum(valid_mask))
+
+    if valid_cols == 0:
+        return 0.0
+
+    surrounding_v = surrounding[valid_mask]
+    galvo_v = galvo_vals[valid_mask]
+
+    drop_mask = galvo_v < surrounding_v
+    drop_count = int(np.sum(drop_mask))
+    rel_drops = np.where(drop_mask, (surrounding_v - galvo_v) / surrounding_v, 0.0)
+    total_drop = float(np.sum(rel_drops))
+    significant_drops = int(np.sum(rel_drops > 0.10))
+
+    # Score: consistency of dark band across columns
+    consistency = drop_count / valid_cols
+    significant_ratio = significant_drops / valid_cols
+    avg_drop = total_drop / max(drop_count, 1)
+
+    # Low consistency = likely not a real artifact
+    if consistency < 0.5:
+        return consistency * 0.3
+
+    # Combine scores
+    score = consistency * 0.40 + significant_ratio * 0.35 + min(avg_drop / 0.3, 1.0) * 0.25
+
+    return float(np.clip(score, 0.0, 1.0))
 
 
 def fix_galvo_shift(vol: np.ndarray, shift: int = 0, axis: int = 1) -> np.ndarray:
-    """Fix the galvo shift in an OCT volume."""
+    """Apply circular shift to move galvo return region to edge of volume.
+
+    Parameters
+    ----------
+    vol : np.ndarray
+        OCT volume data.
+    shift : int
+        Number of pixels to shift.
+    axis : int
+        Axis along which to shift (default: 1 for A-line axis).
+
+    Returns
+    -------
+    np.ndarray
+        Shifted volume. Crop with vol[:, :n_alines, :] to remove galvo region.
+    """
     if shift == 0:
         return vol
+    return np.roll(vol, shift, axis=axis)
+
+
+def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 2.0, use_log: bool = False) -> int:
+    """Detect water/tissue interface along Z using gradient-based method.
+
+    Applies Gaussian smoothing then finds the peak of the first-order
+    Z-derivative to locate the tissue surface.
+
+    Parameters
+    ----------
+    vol : np.ndarray
+        Volume with shape (X, Y, Z) — already transposed from OME-Zarr (Z, X, Y).
+    sigma_xy : float
+        Gaussian smoothing sigma in XY before Z-gradient.
+    sigma_z : float
+        Gaussian smoothing sigma for Z-gradient computation.
+    use_log : bool
+        Apply log transform before gradient detection.
+
+    Returns
+    -------
+    int
+        Estimated interface depth in Z voxels.
+    """
+    from scipy.ndimage import gaussian_filter, gaussian_filter1d
+
+    vol_f = np.log(vol + 1e-6) if use_log else vol.astype(np.float32)
+
+    pad_width = int(np.round(sigma_z * 4))
+    vol_padded = np.pad(vol_f, ((0, 0), (0, 0), (pad_width, 0)), mode="edge")
+    vol_padded = gaussian_filter(vol_padded, (sigma_xy, sigma_xy, 0))
+    dz = gaussian_filter1d(vol_padded, sigma=sigma_z, axis=-1, order=1)
+
+    # Mask to tissue-containing (X,Y) positions so background doesn't
+    # dilute the gradient signal when tissue covers a small fraction of XY.
+    mean_xy = np.mean(vol_f, axis=2)  # (X, Y)
+    nonzero_vals = mean_xy[mean_xy > 0]
+    if nonzero_vals.size > 0:
+        threshold = np.percentile(nonzero_vals, 5)
+        tissue_mask = mean_xy > threshold  # (X, Y)
+        avg_dz = np.sum(dz[tissue_mask, :], axis=0)
     else:
-        return np.roll(vol, shift, axis=axis)
+        avg_dz = np.sum(dz, axis=(0, 1))
+
+    avg_iface = max(int(np.argmax(avg_dz)) - pad_width, 0)
+    return avg_iface
+
+
+def crop_below_interface(
+    vol_zxy: np.ndarray,
+    depth_um: float,
+    resolution_um: float,
+    sigma_xy: float = 3.0,
+    sigma_z: float = 2.0,
+    crop_before_interface: bool = False,
+    percentile_clip: float | None = None,
+) -> tuple[np.ndarray, int]:
+    """Crop an OME-Zarr volume to a specified depth below the tissue interface.
+
+    Detects the water/tissue interface using gradient analysis, then crops
+    the volume to retain only  microns below the interface.
+
+    Parameters
+    ----------
+    vol_zxy : np.ndarray
+        Volume with shape (Z, X, Y) as returned by read_omezarr.
+    depth_um : float
+        Target depth below interface in microns.
+    resolution_um : float
+        Z resolution in microns per voxel.
+    sigma_xy : float
+        XY smoothing sigma for interface detection.
+    sigma_z : float
+        Z smoothing sigma for interface detection.
+    crop_before_interface : bool
+        If True, also crop the volume above the detected interface.
+    percentile_clip : float or None
+        If provided, clip values above this percentile before interface detection.
+
+    Returns
+    -------
+    np.ndarray
+        Cropped volume (Z', X, Y).
+    int
+        Detected interface depth in Z voxels.
+    """
+    vol_f = np.abs(vol_zxy) if np.iscomplexobj(vol_zxy) else np.asarray(vol_zxy, dtype=np.float32)
+
+    # Reorder to (X, Y, Z) for gradient computation
+    vol_xyz = np.transpose(vol_f, (1, 2, 0))
+
+    if percentile_clip is not None:
+        vol_xyz = np.clip(vol_xyz, None, np.percentile(vol_xyz, percentile_clip))
+
+    avg_iface = detect_interface_z(vol_xyz, sigma_xy=sigma_xy, sigma_z=sigma_z)
+
+    depth_px = round(depth_um / resolution_um)
+    surface_idx = max(0, min(avg_iface, vol_zxy.shape[0] - 1))
+    end_idx = surface_idx + depth_px
+
+    start_idx = surface_idx if crop_before_interface else 0
+    vol_crop = vol_zxy[start_idx:end_idx, :, :]
+
+    return vol_crop, avg_iface

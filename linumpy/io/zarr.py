@@ -1,7 +1,6 @@
 # Configure dask thread pool based on environment variables
 from linumpy._thread_config import configure_dask
 
-import os
 import shutil
 import tempfile
 from importlib.metadata import version
@@ -10,6 +9,7 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import zarr
+import zarr.storage
 from ome_zarr.dask_utils import resize as da_resize
 from ome_zarr.format import CurrentFormat
 from ome_zarr.io import parse_url
@@ -249,15 +249,17 @@ def save_omezarr(data, store_path, voxel_size=(1e-3, 1e-3, 1e-3), chunks=(128, 1
 
     # create directory for zarr storage
     create_directory(store_path, overwrite)
-    store = parse_url(store_path, mode="w").store
+    _loc = parse_url(store_path, mode="w")
+    assert _loc is not None
+    store = _loc.store
     zarr_group = zarr.group(store=store)
 
     write_image(
         data,
         zarr_group,
         axes=axes,
-        scaler=CustomScaler(**pyramid_kw),
-        storage_options=dict(chunks=chunks),
+        scaler=CustomScaler(max_layer=int(n_levels), method="linear", downscale=2),
+        storage_options={"chunks": chunks},
         coordinate_transformations=coordinate_transformations,
         compute=True,
         metadata=metadata,
@@ -283,7 +285,9 @@ def read_omezarr(zarr_path, level=0):
     :return res: Voxel size of zarr array.
     """
     # read the image data
-    reader = Reader(parse_url(zarr_path))
+    _zarr_loc = parse_url(zarr_path)
+    assert _zarr_loc is not None
+    reader = Reader(_zarr_loc)
     # nodes may include images, labels etc
     nodes = list(reader())
 
@@ -298,6 +302,7 @@ def read_omezarr(zarr_path, level=0):
     for spec in image_node.specs:
         if isinstance(spec, Multiscales):
             multiscale = spec
+    assert multiscale is not None, "No Multiscales spec found in zarr file"
     vol = zarr.open_array(Path(zarr_path) / multiscale.datasets[level], mode="r")
 
     coordTransforms = image_node.metadata["coordinateTransformations"][level]
@@ -323,8 +328,8 @@ class OmeZarrWriter:
         store_path: str | Path,
         shape: tuple,
         chunk_shape: tuple,
-        shards: tuple = None,
-        dtype: np.dtype = np.float32,
+        shards: tuple | None = None,
+        dtype: type | np.dtype = np.float32,
         overwrite: bool = True,
         downscale_factor: int = 2,
         unit: str = "millimeter",
@@ -357,20 +362,23 @@ class OmeZarrWriter:
         self.shape = shape
         self.downscale_factor = downscale_factor
 
-        if os.path.exists(store_path) or os.path.islink(store_path):
+        store_path = Path(store_path)
+        if store_path.exists() or store_path.is_symlink():
             if overwrite:
-                if os.path.islink(store_path):
-                    os.unlink(store_path)
+                if store_path.is_symlink():
+                    store_path.unlink()
                 else:
                     shutil.rmtree(store_path)
             else:
                 raise ValueError(f"Overwrite set to False and {store_path} non-empty.")
 
-        store = parse_url(store_path, mode="w", fmt=self.fmt).store
+        _store_loc = parse_url(store_path, mode="w", fmt=self.fmt)
+        assert _store_loc is not None
+        store = _store_loc.store
         self.root = zarr.group(store=store)
 
-        shape = [int(v) for v in shape]
-        chunk_shape = [int(v) for v in chunk_shape]
+        shape = tuple(int(v) for v in shape)
+        chunk_shape = tuple(int(v) for v in chunk_shape)
 
         # create empty array at root of pyramid
         # This is the array we will fill on-the-fly
@@ -393,15 +401,15 @@ class OmeZarrWriter:
         """
         group_path = str(parent.store_path)
         img_path = parent.store_path / parent.path
-        image_path = os.path.join(group_path, parent.path)
+        image_path = Path(group_path) / parent.path
         print("downsample_pyramid_on_disk", image_path)
         for count, path in enumerate(paths[1:]):
-            target_path = os.path.join(image_path, path)
-            if os.path.exists(target_path):
-                print("path exists: %s" % target_path)
+            target_path = image_path / path
+            if target_path.exists():
+                print(f"path exists: {target_path}")
                 continue
             # open previous resolution from disk via dask...
-            path_to_array = os.path.join(image_path, paths[count])
+            path_to_array = image_path / paths[count]
             dask_image = da.from_zarr(path_to_array)
 
             # resize in X and Y
@@ -435,7 +443,7 @@ class OmeZarrWriter:
     def dtype(self):
         return self.zarray.dtype
 
-    def finalize(self, res, n_levels=5):
+    def finalize(self, res, n_levels=5, **kwargs):
         """
         Finalize the OME-Zarr with traditional power-of-2 pyramid levels.
 
@@ -451,7 +459,7 @@ class OmeZarrWriter:
         self._downsample_pyramid_on_disk(self.root, paths)
         transformations = create_transformation_dict(n_levels + 1, res, len(self.shape))
         datasets = []
-        for p, t in zip(paths, transformations):
+        for p, t in zip(paths, transformations, strict=False):
             datasets.append({"path": p, "coordinateTransformations": t})
 
         pyramid_kw = {"max_layer": n_levels, "method": "linear", "downscale": self.downscale_factor}
@@ -475,7 +483,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
     -------
     >>> writer = AnalysisOmeZarrWriter("output.ome.zarr", shape, chunks, dtype=np.float32)
     >>> writer[:] = data  # Write data at full resolution
-    >>> writer.finalize(base_res, [10, 25, 50, 100])
+    >>> writer.finalize(base_res, target_resolutions_um=[10, 25, 50, 100])
 
     Notes
     -----
@@ -492,15 +500,15 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
         if group_path.startswith("file://"):
             group_path = group_path[7:]
         img_path = parent.store_path / parent.path
-        image_path = os.path.join(group_path, parent.path)
+        image_path = Path(group_path) / parent.path
 
-        full_target_path = os.path.join(image_path, target_path)
-        if os.path.exists(full_target_path):
+        full_target_path = image_path / target_path
+        if full_target_path.exists():
             print(f"Path exists: {full_target_path}")
             return
 
         # Open source from disk via dask
-        path_to_array = os.path.join(image_path, source_path)
+        path_to_array = image_path / source_path
         dask_image = da.from_zarr(path_to_array)
 
         output = da_resize(dask_image, tuple(target_shape), preserve_range=True, anti_aliasing=True)
@@ -514,7 +522,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         da.to_zarr(arr=output, url=img_path, component=target_path, zarr_format=self.fmt.zarr_format, **options)
 
-    def finalize(self, res, target_resolutions_um=(10, 25, 50, 100), n_levels=None, make_isotropic=True):
+    def finalize(self, res, n_levels=None, *, target_resolutions_um=(10, 25, 50, 100), make_isotropic=True, **kwargs):
         """
         Finalize the OME-Zarr with pyramid levels.
 
@@ -612,10 +620,10 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
                 scale_factors = [uniform_scale] * len(base_res_um)
 
             # Calculate target shape using scale factors
-            target_shape = [max(1, int(s / sf)) for s, sf in zip(self.shape, scale_factors)]
+            target_shape = [max(1, int(s / sf)) for s, sf in zip(self.shape, scale_factors, strict=False)]
 
             # Calculate target resolution per-dimension
-            target_res_mm = [r * sf for r, sf in zip(res, scale_factors)]
+            target_res_mm = [r * sf for r, sf in zip(res, scale_factors, strict=False)]
             resolutions.append(target_res_mm)
 
             # Display resolution info
@@ -632,10 +640,10 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
                 self._downsample_to_resolution(self.root, "0", temp_path, target_shape)
 
                 # Remove original level 0 and rename temp
-                original_path = os.path.join(group_path, self.root.path, "0")
-                temp_full_path = os.path.join(group_path, self.root.path, temp_path)
+                original_path = Path(group_path) / self.root.path / "0"
+                temp_full_path = Path(group_path) / self.root.path / temp_path
 
-                if os.path.exists(original_path):
+                if original_path.exists():
                     shutil.rmtree(original_path)
                 shutil.move(temp_full_path, original_path)
             else:
@@ -644,7 +652,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         # Create transformation metadata
         datasets = []
-        for path, res_mm in zip(paths, resolutions):
+        for path, res_mm in zip(paths, resolutions, strict=False):
             transforms = [{"type": "scale", "scale": res_mm}]
             datasets.append({"path": path, "coordinateTransformations": transforms})
 

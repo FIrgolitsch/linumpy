@@ -42,7 +42,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
     vol_shape = vol1.shape
     new_shape = np.array(vol_shape) * 1.25
     pad_size = np.ceil(0.5 * (new_shape - vol_shape)).astype(int)
-    pad_width = list()
+    pad_width = []
     for pad in pad_size:
         pad_width.append((pad, pad))
     vol1_p = np.pad(vol1, pad_width, mode="reflect")
@@ -71,10 +71,10 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
         np.abs(Q), min_distance=1, num_peaks=nPeaks, exclude_border=False
     )  # max value in the whole image
 
-    deltasList = list()
+    deltasList = []
     for indices in coordinates:
-        deltas = list()
-        for idx, s in zip(indices, vol1_p.shape):
+        deltas = []
+        for idx, s in zip(indices, vol1_p.shape, strict=False):
             deltas.append(int(-idx + s / 2))
 
         # Check if it is outside the original image
@@ -85,7 +85,7 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
         deltasList.append(deltas)
 
     # Try all translation permutations and find which one has the highest correlation.
-    translations = list()
+    translations = []
     for deltas in deltasList:
         if vol1.ndim == 2:
             dx, dy = deltas[:]
@@ -117,13 +117,13 @@ def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Tes
                     [dx - nxp, dy - nyp, dz - nzp],
                 ]
             )
-    corrScore = list()
+    corrScore = []
     for this_delta in translations:
         pos1 = [0] * vol1.ndim
         ov1, ov2, _, _ = getOverlap(vol1, vol2, pos1, this_delta)
         try:
             corr = crossCorrelation(ov1, ov2)
-        except:
+        except Exception:
             corr = 0
         corrScore.append(corr)
 
@@ -176,7 +176,7 @@ def crossCorrelation(vol1, vol2, mask=None):
         sB = np.sqrt(np.sum((vol2 - np.sum(vol2 * mask)) ** 2.0 * mask))
 
         return covAB / float(sA * sB)
-    except:
+    except Exception:
         return 0.0
 
 
@@ -312,18 +312,18 @@ def ITKRegistration(
         dy = finalTransform.GetParameters()[1]
         dz = finalTransform.GetParameters()[2]
         deltas = [dx, dy, dz]
-
     elif vol1.ndim == 2:
         dx = -finalTransform.GetParameters()[1]
         dy = -finalTransform.GetParameters()[0]
         deltas = [dx, dy]
+    else:
+        raise ValueError(f"Unsupported volume ndim: {vol1.ndim}")
 
     MI = reg.GetMetricValue()
     return deltas, MI
 
 
 def align_images_sitk(im1, im2):
-
     # Parameters
     learning_rate = 4.0
     min_step = 0.01
@@ -444,10 +444,7 @@ def register_2d_images_sitk(
         raise ValueError(f"Unknown metric: {metric}")
 
     # Use smaller step size when we have an initial translation estimate (to avoid drifting away)
-    if initial_step is None:
-        step_size = 1.0 if initial_translation is not None else 4.0
-    else:
-        step_size = initial_step
+    step_size = (1.0 if initial_translation is not None else 4.0) if initial_step is None else initial_step
 
     R.SetOptimizerAsRegularStepGradientDescent(step_size, min_step, max_iterations, 0.5, grad_mag_tol)
     R.SetShrinkFactorsPerLevel([4, 2, 1])
@@ -471,9 +468,11 @@ def register_2d_images_sitk(
         # Set center to image center
         center = [fixed_sitk_image.GetWidth() / 2.0, fixed_sitk_image.GetHeight() / 2.0]
         if method == "euler" or method == "affine":
+            assert isinstance(sitk_transform, (sitk.Euler2DTransform, sitk.AffineTransform))
             sitk_transform.SetCenter(center)
             sitk_transform.SetTranslation(initial_translation)
         elif method == "translation":
+            assert isinstance(sitk_transform, sitk.TranslationTransform)
             sitk_transform.SetOffset(initial_translation)
     else:
         sitk_transform = sitk.CenteredTransformInitializer(fixed_sitk_image, moving_sitk_image, sitk_transform)
@@ -504,7 +503,7 @@ def register_2d_images_sitk(
         elif method == "affine":
             transform_3d = sitk.AffineTransform(3)
             translation = out_transform.GetTranslation()
-            transform_3d.SetCenter(out_transform.GetCenter() + (0.0,))
+            transform_3d.SetCenter((*out_transform.GetCenter(), 0.0))
             transform_3d.SetTranslation([translation[0], translation[1], 0.0])
             matrix_2d = out_transform.GetMatrix()
             matrix_3d = np.zeros((3, 3))
@@ -537,6 +536,9 @@ def apply_transform(moving_image, transform):
     transform: sitk.sitkTransform
         Transform to apply to `moving_image`.
     """
+    if not isinstance(moving_image, np.ndarray):
+        moving_image = np.asarray(moving_image)
+
     moving_image_sitk = sitk.GetImageFromArray(moving_image)
 
     resampler = sitk.ResampleImageFilter()
@@ -545,10 +547,7 @@ def apply_transform(moving_image, transform):
 
     # Use edge value instead of zero to avoid black dots at boundaries
     nonzero_vals = moving_image[moving_image > 0]
-    if len(nonzero_vals) > 0:
-        default_val = float(np.percentile(nonzero_vals, 1))
-    else:
-        default_val = 0.0
+    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
     resampler.SetDefaultPixelValue(default_val)
 
     resampler.SetTransform(transform)
@@ -559,7 +558,7 @@ def apply_transform(moving_image, transform):
     return out
 
 
-def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_range: int, mask=None):
+def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_range: int):
     """Find the Z-index in fixed_vol that best matches moving_slice.
 
     Uses normalized cross-correlation in the center region.
@@ -574,8 +573,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_ran
         Expected Z-index in fixed_vol for the match.
     search_range : int
         Search +/-search_range around expected_z.
-    mask : np.ndarray or None
-        Optional 2D tissue mask applied to correlation.
 
     Returns
     -------
@@ -603,9 +600,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_ran
         pmax = float(np.percentile(moving_roi[valid_mov], 95))
         moving_roi = np.clip((moving_roi - pmin) / max(pmax - pmin, 1e-8), 0, 1)
 
-    if mask is not None:
-        moving_roi = moving_roi * mask[roi].astype(np.float32)
-
     moving_norm = (moving_roi - moving_roi.mean()) / (moving_roi.std() + 1e-8)
 
     best_z = expected_z
@@ -619,9 +613,6 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_ran
             pmin = float(np.percentile(fixed_roi[valid_fix], 5))
             pmax = float(np.percentile(fixed_roi[valid_fix], 95))
             fixed_roi = np.clip((fixed_roi - pmin) / max(pmax - pmin, 1e-8), 0, 1)
-
-        if mask is not None:
-            fixed_roi = fixed_roi * mask[roi].astype(np.float32)
 
         fixed_norm = (fixed_roi - fixed_roi.mean()) / (fixed_roi.std() + 1e-8)
         corr = float(np.mean(fixed_norm * moving_norm))
@@ -639,8 +630,6 @@ def register_refinement(
     enable_rotation: bool = True,
     max_rotation_deg: float = 5.0,
     max_translation_px: float = 20.0,
-    fixed_mask=None,
-    moving_mask=None,
 ):
     """Compute small rotation and translation refinement using SimpleITK.
 
@@ -654,8 +643,6 @@ def register_refinement(
         Maximum allowed rotation in degrees.
     max_translation_px : float
         Maximum allowed translation in pixels.
-    fixed_mask, moving_mask : np.ndarray or None
-        Optional tissue masks multiplied into images before registration.
 
     Returns
     -------
@@ -672,11 +659,8 @@ def register_refinement(
     if fixed_std < 0.01 or moving_std < 0.01:
         return 0.0, 0.0, 0.0, 0.0
 
-    fixed_masked = fixed * fixed_mask.astype(np.float32) if fixed_mask is not None else fixed
-    moving_masked = moving * moving_mask.astype(np.float32) if moving_mask is not None else moving
-
-    fixed_sitk = sitk.GetImageFromArray(fixed_masked.astype(np.float32))
-    moving_sitk = sitk.GetImageFromArray(moving_masked.astype(np.float32))
+    fixed_sitk = sitk.GetImageFromArray(fixed.astype(np.float32))
+    moving_sitk = sitk.GetImageFromArray(moving.astype(np.float32))
 
     if enable_rotation:
         transform = sitk.Euler2DTransform()
@@ -686,7 +670,9 @@ def register_refinement(
         transform = sitk.TranslationTransform(2)
 
     reg = sitk.ImageRegistrationMethod()
-    reg.SetMetricAsCorrelation()
+    reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    reg.SetMetricSamplingStrategy(reg.RANDOM)
+    reg.SetMetricSamplingPercentage(0.20)
     reg.SetOptimizerAsGradientDescent(
         learningRate=1.0, numberOfIterations=200, convergenceMinimumValue=1e-6, convergenceWindowSize=10
     )
@@ -822,11 +808,11 @@ def estimate_mosaic_transform(mosaics, max_empty_fraction=0.9, n_samples=512, se
                     break
 
                 neighbors, tiles = mosaic.get_neighbors_around_tile(i, j)
-                for n, t in zip(neighbors, tiles):
+                for _n, t in zip(neighbors, tiles, strict=False):
                     r = t[0] - i
                     c = t[1] - j
 
-                    o1, o2, p1, p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
+                    o1, o2, p1, _p2 = mosaic.get_neighbor_overlap_from_pos((i, j), t)
 
                     o1_empty = np.sum(o1 <= thresh) > max_empty_fraction * o1.size
                     o2_empty = np.sum(o2 <= thresh) > max_empty_fraction * o2.size

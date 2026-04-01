@@ -42,10 +42,7 @@ def load_shifts_csv(shifts_path) -> tuple[dict, list]:
         fixed_id = all_ids[i]
         moving_id = all_ids[i + 1]
 
-        if (fixed_id, moving_id) in shift_lookup:
-            dx_mm, dy_mm = shift_lookup[(fixed_id, moving_id)]
-        else:
-            dx_mm, dy_mm = 0.0, 0.0
+        dx_mm, dy_mm = shift_lookup.get((fixed_id, moving_id), (0.0, 0.0))
 
         prev_dx, prev_dy = cumsum[fixed_id]
         cumsum[moving_id] = (prev_dx + dx_mm, prev_dy + dy_mm)
@@ -296,7 +293,7 @@ def filter_outlier_shifts(
 def correct_tile_offset_shifts(
     shifts_df: pd.DataFrame,
     tile_fov_x_mm: float,
-    tile_fov_y_mm: float = None,
+    tile_fov_y_mm: float | None = None,
     tolerance: float = 0.05,
     min_step_mm: float = 0.0,
 ) -> tuple[pd.DataFrame, list[int]]:
@@ -372,7 +369,7 @@ def correct_tile_offset_shifts(
 
         # Check X component
         if tile_fov_x_mm > 0:
-            nx = int(round(dx / tile_fov_x_mm))
+            nx = round(dx / tile_fov_x_mm)
             if nx != 0 and abs(dx - nx * tile_fov_x_mm) / tile_fov_x_mm < tolerance:
                 offset_x_mm = nx * tile_fov_x_mm
                 if "x_shift" in df.columns and abs(dx) > 1e-9:
@@ -383,7 +380,7 @@ def correct_tile_offset_shifts(
         # Check Y component
         if tile_fov_y_mm > 0:
             dy_cur = df.loc[idx, "y_shift_mm"]  # may differ from dy if X was corrected
-            ny = int(round(dy_cur / tile_fov_y_mm))
+            ny = round(dy_cur / tile_fov_y_mm)
             if ny != 0 and abs(dy_cur - ny * tile_fov_y_mm) / tile_fov_y_mm < tolerance:
                 offset_y_mm = ny * tile_fov_y_mm
                 if "y_shift" in df.columns and abs(dy) > 1e-9:
@@ -403,7 +400,7 @@ def filter_step_outliers(
     window: int = 2,
     method: str = "local_median",
     mad_threshold: float = 3.0,
-    return_fraction: float = 0.4,
+    return_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """Fix per-step spikes in shifts, independent of global outlier detection.
 
@@ -458,7 +455,6 @@ def filter_step_outliers(
             return df
 
     for idx in df[outlier_mask].index:
-        row = df.loc[idx]
         pos = df.index.get_loc(idx)
         step_x = df.loc[idx, "x_shift_mm"]
         step_y = df.loc[idx, "y_shift_mm"]
