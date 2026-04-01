@@ -69,10 +69,10 @@ def match_shape(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndar
         pad_c_1 = max((n_cols - img.shape[1] - pad_c_0), 0)
         padded_images.append(np.pad(img, ((pad_r_0, pad_r_1), (pad_c_0, pad_c_1))))
 
-    return padded_images
+    return (padded_images[0], padded_images[1])
 
 
-def display_overlap(img1, img2, title=None, do_normalization=False):
+def display_overlap(img1: np.ndarray, img2: np.ndarray, title: str | None = None, do_normalization: bool = False) -> None:
     if do_normalization:
         img1 = normalize(img1)
         img2 = normalize(img2)

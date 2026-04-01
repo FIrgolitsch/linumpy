@@ -6,6 +6,7 @@ Consolidated from linum_stitch_3d_refined.py and linum_stitch_motor_only.py.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -51,6 +52,7 @@ def compute_motor_positions(
     step_y = int(step_y * scale_factor)
     step_x = int(step_x * scale_factor)
 
+    rotation_matrix: np.ndarray | None = None
     if rotation_deg != 0.0:
         theta = np.radians(rotation_deg)
         cos_t, sin_t = np.cos(theta), np.sin(theta)
@@ -60,7 +62,7 @@ def compute_motor_positions(
     for i in range(nx):
         for j in range(ny):
             pos = np.array([i * step_y, j * step_x])
-            if rotation_deg != 0.0:
+            if rotation_deg != 0.0 and rotation_matrix is not None:
                 pos = np.dot(rotation_matrix, pos)
             positions.append(pos.astype(int) if rotation_deg != 0.0 else (int(pos[0]), int(pos[1])))
 
@@ -476,7 +478,7 @@ def compare_motor_vs_registration(motor_positions: list, reg_positions: list, ou
     reg_arr = np.array(reg_positions)
     diff = reg_arr - motor_arr
 
-    comparison = {
+    comparison: dict[str, Any] = {
         "n_tiles": len(motor_positions),
         "mean_diff_y": float(np.mean(diff[:, 0])),
         "mean_diff_x": float(np.mean(diff[:, 1])),

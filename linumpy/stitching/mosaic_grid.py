@@ -268,16 +268,16 @@ class MosaicGrid:
         .. note::
             - This also resets the affine transform using the overlap_fraction.
         """
-        xlim = list(xlim)
-        ylim = list(ylim)
-        if xlim[1] < 0:
-            xlim[1] = self.tile_shape[0] + xlim[1] + 1
-        if ylim[1] < 0:
-            ylim[1] = self.tile_shape[1] + ylim[1] + 1
+        xlim_l = list(xlim)
+        ylim_l = list(ylim)
+        if xlim_l[1] < 0:
+            xlim_l[1] = self.tile_shape[0] + xlim_l[1] + 1
+        if ylim_l[1] < 0:
+            ylim_l[1] = self.tile_shape[1] + ylim_l[1] + 1
 
-        nx = xlim[1] - xlim[0]
-        ny = ylim[1] - ylim[0]
-        new_shape = (self.n_tiles_x * (xlim[1] - xlim[0]), self.n_tiles_y * (ylim[1] - ylim[0]))
+        nx = xlim_l[1] - xlim_l[0]
+        ny = ylim_l[1] - ylim_l[0]
+        new_shape = (self.n_tiles_x * (xlim_l[1] - xlim_l[0]), self.n_tiles_y * (ylim_l[1] - ylim_l[0]))
         image = np.zeros(new_shape, dtype=np.float32)
         for x in range(self.n_tiles_x):
             for y in range(self.n_tiles_y):
@@ -288,7 +288,7 @@ class MosaicGrid:
                 xf = x0 + nx
                 y0 = y * ny
                 yf = y0 + ny
-                image[x0:xf, y0:yf] = tile[xlim[0] : xlim[1], ylim[0] : ylim[1]]
+                image[x0:xf, y0:yf] = tile[xlim_l[0] : xlim_l[1], ylim_l[0] : ylim_l[1]]
 
         self.image = image
         self.tile_shape = (nx, ny)
@@ -530,6 +530,8 @@ def addVolumeToMosaic(volume, pos, mosaic, blendingMethod="diffusion", factor=3,
         nx, ny = volume.shape
         nz = 1
         volume = np.reshape(volume, [nz, nx, ny])
+    else:
+        raise ValueError(f"volume must be 2D or 3D, got {volume.ndim}D")
 
     # Position of tile in mosaic reference frame
     wx = int(pos[0])
@@ -631,9 +633,9 @@ def getAverageBlendingWeights(mask):
 
 def getDiffusionBlendingWeights(
     fixedMask: np.ndarray,
-    movingMask: np.ndarray = None,
+    movingMask: np.ndarray | None = None,
     factor: int = 8,
-    nSteps: int = 5e2,
+    nSteps: int = 500,
     convergence_threshold: float = 1e-4,
     k: int = 1,
 ) -> np.ndarray:
@@ -673,7 +675,7 @@ def getDiffusionBlendingWeights(
     # Resampling
     old_shape = fixedMask.shape
     if factor > 1:
-        new_shape = list(np.round(np.array(old_shape) / float(factor)).astype(int))
+        new_shape = tuple(np.round(np.array(old_shape) / float(factor)).astype(int).tolist())
         small_fixedMask = resampleITK(fixedMask, new_shape, interpolator="NN")
         small_movingMask = resampleITK(movingMask, new_shape, interpolator="NN")
     else:
@@ -686,6 +688,8 @@ def getDiffusionBlendingWeights(
         strel = disk(k)
     elif fixedMask.ndim == 3:
         strel = ball(k)
+    else:
+        raise ValueError(f"fixedMask must be 2D or 3D, got {fixedMask.ndim}D")
 
     small_mask = np.logical_and(small_fixedMask, small_movingMask)
     erodedMask = morpho.binary_erosion(small_mask, structure=strel)
@@ -747,7 +751,7 @@ def resampleITK(vol: np.ndarray, newshape: tuple, interpolator: str = "linear") 
     if isinstance(newshape, int):
         newshape = np.round(np.array(vol.shape) / float(newshape)).astype(int)
     else:
-        newshape = [int(x) for x in newshape]
+        newshape = tuple(int(x) for x in newshape)
 
     if vol.dtype == bool:
         isBool = True

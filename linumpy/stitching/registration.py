@@ -312,11 +312,12 @@ def ITKRegistration(
         dy = finalTransform.GetParameters()[1]
         dz = finalTransform.GetParameters()[2]
         deltas = [dx, dy, dz]
-
     elif vol1.ndim == 2:
         dx = -finalTransform.GetParameters()[1]
         dy = -finalTransform.GetParameters()[0]
         deltas = [dx, dy]
+    else:
+        raise ValueError(f"Unsupported volume ndim: {vol1.ndim}")
 
     MI = reg.GetMetricValue()
     return deltas, MI
@@ -467,9 +468,11 @@ def register_2d_images_sitk(
         # Set center to image center
         center = [fixed_sitk_image.GetWidth() / 2.0, fixed_sitk_image.GetHeight() / 2.0]
         if method == "euler" or method == "affine":
+            assert isinstance(sitk_transform, (sitk.Euler2DTransform, sitk.AffineTransform))
             sitk_transform.SetCenter(center)
             sitk_transform.SetTranslation(initial_translation)
         elif method == "translation":
+            assert isinstance(sitk_transform, sitk.TranslationTransform)
             sitk_transform.SetOffset(initial_translation)
     else:
         sitk_transform = sitk.CenteredTransformInitializer(fixed_sitk_image, moving_sitk_image, sitk_transform)

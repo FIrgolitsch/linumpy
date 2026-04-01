@@ -9,6 +9,8 @@ files, as well as utility functions for preprocessing and tile extraction.
 import gc
 import zipfile
 from pathlib import Path
+from typing import cast
+from xml.dom.minidom import Text as DOMText
 from xml.dom.minidom import parse
 
 import numpy as np
@@ -37,9 +39,9 @@ class PreprocessingConfig:
     return_complex: bool
     crop_first_index: int = 320
     crop_second_index: int = 750
-    erase_raw_data: bool = (True,)
-    erase_polarization_1: bool = (False,)
-    erase_polarization_2: bool = (True,)
+    erase_raw_data: bool = True
+    erase_polarization_1: bool = False
+    erase_polarization_2: bool = True
 
 
 class ThorOCT:
@@ -67,7 +69,7 @@ class ThorOCT:
         self,
         path: str | None = None,
         compressed_data: zipfile.ZipFile | None = None,
-        config: PreprocessingConfig = None,
+        config: PreprocessingConfig | None = None,
     ):
         """
         Initialize the ThorOCT object.
@@ -94,6 +96,7 @@ class ThorOCT:
         """
         if not self.compressed_data:
             raise ValueError("No valid data source provided.")
+        assert self.config is not None
         self._extract_oct_header()
         self._extract_complex_dimensions()
         self._load_polarized_data(
@@ -115,6 +118,7 @@ class ThorOCT:
         """
         try:
             metadata_file = "Header.xml"
+            assert self.compressed_data is not None
             with self.compressed_data.open(metadata_file) as f:
                 document = parse(f)
             self.header = document
@@ -135,13 +139,17 @@ class ThorOCT:
         # Get the <AScans> element
         ascan_element = self.header.getElementsByTagName("AScans")[0]
         # Extract its text content and convert to an integer
-        self.ascan_averaging_value = int(ascan_element.firstChild.data.strip())
+        ascan_first_child = ascan_element.firstChild
+        assert ascan_first_child is not None
+        self.ascan_averaging_value = int(cast(DOMText, ascan_first_child).data.strip())
         # Initialize variables to store found data
         complex_data_file = None
         # Loop through each DataFile element and check for the specific values
         for data_file in data_files:
             # Extract text content of the DataFile element
-            file_content = data_file.firstChild.data
+            data_first_child = data_file.firstChild
+            assert data_first_child is not None
+            file_content = cast(DOMText, data_first_child).data
             # Check for specific file paths
             if file_content == "data\\Complex.data":
                 complex_data_file = data_file
@@ -199,6 +207,8 @@ class ThorOCT:
         Returns:
             np.ndarray: The 3D array with tiles stacked along the y-axis.
         """
+        assert self.ascan_averaging_value is not None
+        assert self.size_x is not None and self.size_y is not None
         # Ensure the number of tiles is divisible by ascan_averaging_value
         if data.shape[0] % self.ascan_averaging_value != 0:
             raise ValueError(
@@ -261,6 +271,8 @@ class ThorOCT:
         Returns:
             np.ndarray: Raw complex data array.
         """
+        assert self.compressed_data is not None
+        assert self.size_x is not None and self.size_y is not None and self.size_z is not None
         with self.compressed_data.open(file) as f:
             raw_data = np.frombuffer(f.read(), dtype=np.complex64).reshape((self.size_x, self.size_y, self.size_z), order="C")
         return raw_data
@@ -278,6 +290,7 @@ class ThorOCT:
         Returns:
             np.ndarray: Preprocessed data array.
         """
+        assert self.config is not None
         # Perform cropping
         data = self._crop_z(
             data,
@@ -286,6 +299,7 @@ class ThorOCT:
         )
         # Perform stacking
         data = self._stack_tiles_vertically(data)
+        assert self.ascan_averaging_value is not None
         # Adjust the size_y to be divisible by ascan_averaging_value. Necessary for stacking.
         data = data[:, : data.shape[1] - (data.shape[1] % self.ascan_averaging_value), :]
         self.size_y = data.shape[1]
@@ -320,7 +334,7 @@ class ThorOCT:
         raw_positions = []
 
         if scan_file_path:
-            with Path(file=scan_file_path).open(encoding="utf-8") as file:
+            with Path(scan_file_path).open(encoding="utf-8") as file:
                 lines = file.readlines()
 
                 # Find the start of the positions section
@@ -381,6 +395,7 @@ class ThorOCT:
         oct_files = []
         grouped_files = [[] for _ in range(number_of_angles)]
         positions = []
+        angle_index = 0
         # Iterate through files in the directory
         for file in tiles_path.iterdir():
             # Check for .scan file
@@ -389,7 +404,7 @@ class ThorOCT:
             # Collect .oct files
             elif file.suffix == ".oct":
                 oct_files.append(file)
-        positions, _ = ThorOCT.extract_positions_from_scan(scan_file)
+        positions, _ = ThorOCT.extract_positions_from_scan(str(scan_file) if scan_file is not None else None)
 
         # If no .oct files are found, raise a warning
         if not oct_files:

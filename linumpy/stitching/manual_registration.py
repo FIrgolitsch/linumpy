@@ -47,17 +47,19 @@ class ManualImageCorrection:
 
         # Transforms array contains translation and rotation
         # for each slice in the order (ty, tx, theta)
-        self.transforms = transforms
         if transforms is None:
-            self.transforms = np.zeros((len(z), 3))
+            self.transforms: np.ndarray = np.zeros((len(z), 3))
+        else:
+            self.transforms = transforms
         if self.transforms.shape != (len(z), 3):
             raise ValueError(f"Invalid shape for transforms file: expected ({len(z)}, 3), got {self.transforms.shape}.")
 
         # Base intensity normalization will rescale each slice
         # between its min and max values to the range [0, 1]
-        self.custom_ranges = custom_ranges
         if custom_ranges is None:
-            self.custom_ranges = np.array([np.min(data, axis=(1, 2)), np.max(data, axis=(1, 2))]).T
+            self.custom_ranges: np.ndarray = np.array([np.min(data, axis=(1, 2)), np.max(data, axis=(1, 2))]).T
+        else:
+            self.custom_ranges = custom_ranges
         if self.custom_ranges.shape != (len(z), 2):
             raise ValueError(f"Invalid shape for custom ranges file: expected ({len(z)}, 3), got {self.custom_ranges.shape}.")
 
@@ -86,14 +88,14 @@ class ManualImageCorrection:
         axs[1].set_axis_off()
         axs[2].set_axis_off()
 
-        ax_current_z = self.fig.add_axes([0.15, 0.30, 0.45, 0.03])
-        ax_ref_z = self.fig.add_axes([0.65, 0.30, 0.25, 0.05])
-        ax_offset_a = self.fig.add_axes([0.15, 0.25, 0.75, 0.03])
-        ax_offset_b = self.fig.add_axes([0.15, 0.20, 0.75, 0.03])
-        ax_theta = self.fig.add_axes([0.15, 0.15, 0.75, 0.03])
-        ax_current_y = self.fig.add_axes([0.15, 0.10, 0.75, 0.03])
-        ax_current_x = self.fig.add_axes([0.15, 0.05, 0.75, 0.03])
-        ax_scalebar = self.fig.add_axes([0.91, 0.40, 0.01, 0.55])
+        ax_current_z = self.fig.add_axes((0.15, 0.30, 0.45, 0.03))
+        ax_ref_z = self.fig.add_axes((0.65, 0.30, 0.25, 0.05))
+        ax_offset_a = self.fig.add_axes((0.15, 0.25, 0.75, 0.03))
+        ax_offset_b = self.fig.add_axes((0.15, 0.20, 0.75, 0.03))
+        ax_theta = self.fig.add_axes((0.15, 0.15, 0.75, 0.03))
+        ax_current_y = self.fig.add_axes((0.15, 0.10, 0.75, 0.03))
+        ax_current_x = self.fig.add_axes((0.15, 0.05, 0.75, 0.03))
+        ax_scalebar = self.fig.add_axes((0.91, 0.40, 0.01, 0.55))
 
         self.scalebar = RangeSlider(
             ax_scalebar,

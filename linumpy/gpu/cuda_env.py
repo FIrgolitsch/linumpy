@@ -119,7 +119,7 @@ def get_cuda12_ld_path(include_existing: bool = True) -> tuple[str, list[str]]:
     return new_ld_path, cuda_paths
 
 
-def check_patchelf_needed() -> tuple[bool, str | None]:
+def check_patchelf_needed() -> tuple[bool, Path | None]:
     """
     Check if patchelf fix is needed for JAX CUDA plugin.
 

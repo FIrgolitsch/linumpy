@@ -6,6 +6,7 @@ Consolidated from linum_screenshot_omezarr.py and linum_screenshot_omezarr_annot
 
 import re
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -93,7 +94,7 @@ def estimate_n_slices_from_zarr(zarr_path: str) -> int | None:
         store = zarr.open(str(zarr_path), mode="r")
 
         if hasattr(store, "attrs"):
-            attrs = dict(store.attrs)
+            attrs: dict[str, Any] = dict(store.attrs)
             if "n_input_slices" in attrs:
                 return attrs["n_input_slices"]
             if "slice_boundaries" in attrs:
@@ -102,7 +103,7 @@ def estimate_n_slices_from_zarr(zarr_path: str) -> int | None:
         if "multiscales" in store.attrs:
             multiscales = store.attrs["multiscales"]
             if isinstance(multiscales, list) and len(multiscales) > 0:
-                ms = multiscales[0]
+                ms: dict[str, Any] = cast(dict[str, Any], multiscales[0])
                 if "metadata" in ms and "n_input_slices" in ms["metadata"]:
                     return ms["metadata"]["n_input_slices"]
     except Exception:

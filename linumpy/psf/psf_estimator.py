@@ -83,6 +83,8 @@ def extract_psfParametersFromMosaic(vol, f=0.01, nProfiles=10, zr_0=610.0, res=6
 
         if not (np.isnan(a)):
             last_zr = zr_0
+            zr = last_zr
+            output: dict = {}
             for _ in range(nIterations):
                 # Optimize the model (without using attenuation)
                 iProfile = profilePerInterfaceDepth[z0, :]

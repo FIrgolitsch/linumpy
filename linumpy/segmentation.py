@@ -102,7 +102,7 @@ def removeBottom(mask: np.ndarray, k: int = 10, axis: int = 2, inverse: bool = F
         kernel = np.zeros((2 * k, 1, 1), dtype=bool)
     elif axis == 1:
         kernel = np.zeros((1, 2 * k, 1), dtype=bool)
-    elif axis == 2:
+    else:  # axis == 2
         kernel = np.zeros((1, 1, 2 * k), dtype=bool)
     if inverse:
         kernel[0:k] = True

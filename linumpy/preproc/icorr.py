@@ -706,7 +706,7 @@ def getAttenuation_Faber2004(vol, mask=None, dz=6.5e-6, N=4):
     z = np.arange(0.0, dz * vol.shape[2], dz)
     for x in range(vol.shape[0]):
         for y in range(vol.shape[1]):
-            mask_Aline = mask[x, y, :] if mask is not None else np.ones((vol.shape[2],)).astype(np.bool)
+            mask_Aline = mask[x, y, :] if mask is not None else np.ones((vol.shape[2],)).astype(bool)
 
             if np.any(mask_Aline):
                 p0 = [0.0, 100.0, 0.001]
@@ -833,12 +833,11 @@ def getAlineAttenuation(vol, k=1, mask=None):
     for z, ik in zip(zList, list(range(k)), strict=False):
         # Selecting a subsample
         this_vol = vol[:, :, z[0] : z[-1]]
-        if mask is not None:
-            this_mask = mask[:, :, z[0] : z[-1]]
+        this_mask = mask[:, :, z[0] : z[-1]] if mask is not None else None
 
         # Transforming this volume into a list
         Alines = np.split(this_vol.flatten(), nx * ny)
-        if mask is not None:
+        if this_mask is not None:
             mask_Alines = np.split(this_mask.flatten(), nx * ny)
             for A, M, ii in zip(Alines, mask_Alines, list(range(nx * ny)), strict=False):
                 Alines[ii] = A[M]
@@ -1712,7 +1711,7 @@ def fit_TissueConfocalModel(
                 label="Confocal PSF",
             )
             plt.legend(loc="best", shadow=True)
-            plt.grid("on")
+            plt.grid(True)
             plt.show()
 
         output = {"psf": psf_final}
@@ -1769,7 +1768,7 @@ def fit_TissueConfocalModel(
                 label="Compensated Data",
             )
             plt.legend(loc="best", shadow=True)
-            plt.grid("on")
+            plt.grid(True)
             plt.show()
 
         output = {"psf": psf1}

@@ -584,6 +584,8 @@ def fitInterface(interface, method="linear", returnCenter=False):
         popt, _ = curve_fit(f, xdata, ydata)
         fittedInterface = popt[2] * (((xx - popt[0]) ** 2 + (yy - popt[1]) ** 2) ** 2.0) / 8.0
         center = (popt[0], popt[1])
+    else:
+        raise ValueError(f"Unknown interface fitting method: {method!r}. Use 'linear', 'quad', 'gauss', or 'sph'.")
 
     if returnCenter:
         return fittedInterface, center
@@ -600,7 +602,7 @@ def quadraticInterface(pos, a, b, c, d, e, f, g, h):
 
 def getQuadraticInterface(popt, volshape=(512, 512, 120)):
     xx, yy = np.meshgrid(list(range(volshape[0])), list(range(volshape[1])), indexing="ij")
-    tmp = quadraticInterface([xx[:], yy[:]], popt[0], popt[1], popt[2], popt[3], popt[4], popt[5])
+    tmp = quadraticInterface([xx[:], yy[:]], popt[0], popt[1], popt[2], popt[3], popt[4], popt[5], 0, 0)
     interface = np.zeros([volshape[0], volshape[1]])
     interface[xx[:], yy[:]] = tmp
     return interface
@@ -816,7 +818,7 @@ def detect_galvo_shift(aip: np.ndarray, n_pixel_return: int = 40) -> tuple:
     boundary_end = boundary_pos + n_pixel_return
 
     # Validate: check for consistent dark band across B-scans
-    confidence = _compute_dark_band_confidence(aip, boundary_pos, boundary_end)
+    confidence = _compute_dark_band_confidence(aip, int(boundary_pos), int(boundary_end))
 
     return int(shift), float(confidence)
 
@@ -1057,7 +1059,7 @@ def crop_below_interface(
     sigma_z: float = 2.0,
     crop_before_interface: bool = False,
     percentile_clip: float | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, int]:
     """Crop an OME-Zarr volume to a specified depth below the tissue interface.
 
     Detects the water/tissue interface using gradient analysis, then crops

@@ -15,7 +15,7 @@ The RAS target orientation maps:
 import numpy as np
 
 
-def parse_orientation_code(orientation: str) -> tuple:
+def parse_orientation_code(orientation: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """
     Parse an orientation code and return axis permutation and flips for RAS alignment.
 
@@ -96,7 +96,7 @@ def parse_orientation_code(orientation: str) -> tuple:
     return axis_permutation, axis_flips
 
 
-def apply_orientation_transform(volume: np.ndarray, permutation: tuple, flips: tuple) -> np.ndarray:
+def apply_orientation_transform(volume: np.ndarray, permutation: tuple[int, ...], flips: tuple[int, ...]) -> np.ndarray:
     """
     Reorient a 3D volume by applying an axis permutation followed by axis flips.
 
@@ -125,7 +125,7 @@ def apply_orientation_transform(volume: np.ndarray, permutation: tuple, flips: t
     return result
 
 
-def reorder_resolution(resolution: tuple, permutation: tuple) -> tuple:
+def reorder_resolution(resolution: tuple[float, ...], permutation: tuple[int, ...]) -> tuple[float, ...]:
     """
     Reorder a per-axis resolution tuple to match the axis permutation.
 

@@ -21,7 +21,7 @@ class OCT:
         Axial resolution of the data in microns.
     """
 
-    def __init__(self, directory: str, axial_res=3.5):
+    def __init__(self, directory: str | Path, axial_res=3.5):
         self.directory = Path(directory)
         self.info_filename = self.directory / "info.txt"
         self.info = {}
@@ -30,7 +30,7 @@ class OCT:
         # Read the scan info
         self.read_scan_info(self.info_filename)
 
-    def read_scan_info(self, filename: str):
+    def read_scan_info(self, filename: str | Path):
         """Read the scan information file
         Parameters
         ----------
@@ -51,7 +51,9 @@ class OCT:
                 val = int(val)
             self.info[key] = val
 
-    def load_image(self, crop: bool = True, fix_galvo_shift: bool | int = True, fix_camera_shift: bool = False) -> np.ndarray:
+    def load_image(
+        self, crop: bool = True, fix_galvo_shift: bool | int | None = True, fix_camera_shift: bool = False
+    ) -> np.ndarray:
         """Load an image dataset
         Parameters
         ----------
@@ -172,5 +174,5 @@ class OCT:
         if "bottom_z" in self.info and "top_z" in self.info:
             nz = self.info["bottom_z"] - self.info["top_z"] + 1
         else:
-            nz = self.n_samples // 2
+            nz = self.info.get("n_samples", 0) // 2
         return nx, ny, nz

@@ -1,10 +1,11 @@
+import argparse
 import multiprocessing
 import os
 import shutil
 from pathlib import Path
 
 
-def get_available_cpus():
+def get_available_cpus() -> int:
     """
     Get the number of available CPUs, respecting environment variables.
 
@@ -42,7 +43,7 @@ def get_available_cpus():
 DEFAULT_N_CPUS = get_available_cpus()
 
 
-def parse_processes_arg(n_processes):
+def parse_processes_arg(n_processes: int | None) -> int:
     """
     Parse the n_processes argument, respecting system limits.
 
@@ -59,18 +60,18 @@ def parse_processes_arg(n_processes):
     return n_processes
 
 
-def add_processes_arg(parser):
+def add_processes_arg(parser: argparse.ArgumentParser) -> argparse.Action:
     a = parser.add_argument(
         "--n_processes", type=int, default=1, help="Number of processes to use. -1 to use all cores [%(default)s]."
     )
     return a
 
 
-def add_overwrite_arg(parser):
+def add_overwrite_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-f", dest="overwrite", action="store_true", help="Force overwriting of the output files.")
 
 
-def assert_output_exists(output, parser, args):
+def assert_output_exists(output: str | Path, parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     output_path = Path(output)
     if output_path.exists():
         if not args.overwrite:
@@ -79,7 +80,7 @@ def assert_output_exists(output, parser, args):
             shutil.rmtree(output)
 
 
-def add_verbose_arg(parser):
+def add_verbose_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-v",
         default="WARNING",
@@ -93,7 +94,7 @@ def add_verbose_arg(parser):
     )
 
 
-def detect_shift_units(resolution):
+def detect_shift_units(resolution: tuple) -> tuple[float, float]:
     """Detect whether OME-Zarr resolution is in mm or µm, return (res_x_um, res_y_um).
 
     OME-Zarr resolution can be in mm (OME-NGFF standard) or µm depending on the writer.

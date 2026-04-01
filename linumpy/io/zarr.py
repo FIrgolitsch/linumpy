@@ -9,6 +9,7 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import zarr
+import zarr.storage
 from ome_zarr.dask_utils import resize as da_resize
 from ome_zarr.format import CurrentFormat
 from ome_zarr.io import parse_url
@@ -248,14 +249,16 @@ def save_omezarr(data, store_path, voxel_size=(1e-3, 1e-3, 1e-3), chunks=(128, 1
 
     # create directory for zarr storage
     create_directory(store_path, overwrite)
-    store = parse_url(store_path, mode="w").store
+    _loc = parse_url(store_path, mode="w")
+    assert _loc is not None
+    store = _loc.store
     zarr_group = zarr.group(store=store)
 
     write_image(
         data,
         zarr_group,
         axes=axes,
-        scaler=CustomScaler(**pyramid_kw),
+        scaler=CustomScaler(max_layer=int(n_levels), method="linear", downscale=2),
         storage_options={"chunks": chunks},
         coordinate_transformations=coordinate_transformations,
         compute=True,
@@ -282,7 +285,9 @@ def read_omezarr(zarr_path, level=0):
     :return res: Voxel size of zarr array.
     """
     # read the image data
-    reader = Reader(parse_url(zarr_path))
+    _zarr_loc = parse_url(zarr_path)
+    assert _zarr_loc is not None
+    reader = Reader(_zarr_loc)
     # nodes may include images, labels etc
     nodes = list(reader())
 
@@ -297,6 +302,7 @@ def read_omezarr(zarr_path, level=0):
     for spec in image_node.specs:
         if isinstance(spec, Multiscales):
             multiscale = spec
+    assert multiscale is not None, "No Multiscales spec found in zarr file"
     vol = zarr.open_array(Path(zarr_path) / multiscale.datasets[level], mode="r")
 
     coordTransforms = image_node.metadata["coordinateTransformations"][level]
@@ -323,7 +329,7 @@ class OmeZarrWriter:
         shape: tuple,
         chunk_shape: tuple,
         shards: tuple | None = None,
-        dtype: np.dtype = np.float32,
+        dtype: type | np.dtype = np.float32,
         overwrite: bool = True,
         downscale_factor: int = 2,
         unit: str = "millimeter",
@@ -366,11 +372,13 @@ class OmeZarrWriter:
             else:
                 raise ValueError(f"Overwrite set to False and {store_path} non-empty.")
 
-        store = parse_url(store_path, mode="w", fmt=self.fmt).store
+        _store_loc = parse_url(store_path, mode="w", fmt=self.fmt)
+        assert _store_loc is not None
+        store = _store_loc.store
         self.root = zarr.group(store=store)
 
-        shape = [int(v) for v in shape]
-        chunk_shape = [int(v) for v in chunk_shape]
+        shape = tuple(int(v) for v in shape)
+        chunk_shape = tuple(int(v) for v in chunk_shape)
 
         # create empty array at root of pyramid
         # This is the array we will fill on-the-fly
@@ -435,7 +443,7 @@ class OmeZarrWriter:
     def dtype(self):
         return self.zarray.dtype
 
-    def finalize(self, res, n_levels=5):
+    def finalize(self, res, n_levels=5, **kwargs):
         """
         Finalize the OME-Zarr with traditional power-of-2 pyramid levels.
 
@@ -475,7 +483,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
     -------
     >>> writer = AnalysisOmeZarrWriter("output.ome.zarr", shape, chunks, dtype=np.float32)
     >>> writer[:] = data  # Write data at full resolution
-    >>> writer.finalize(base_res, [10, 25, 50, 100])
+    >>> writer.finalize(base_res, target_resolutions_um=[10, 25, 50, 100])
 
     Notes
     -----
@@ -514,7 +522,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         da.to_zarr(arr=output, url=img_path, component=target_path, zarr_format=self.fmt.zarr_format, **options)
 
-    def finalize(self, res, target_resolutions_um=(10, 25, 50, 100), n_levels=None, make_isotropic=True):
+    def finalize(self, res, n_levels=None, *, target_resolutions_um=(10, 25, 50, 100), make_isotropic=True, **kwargs):
         """
         Finalize the OME-Zarr with pyramid levels.
 

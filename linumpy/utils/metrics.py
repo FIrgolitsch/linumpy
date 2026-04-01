@@ -24,18 +24,18 @@ logger = logging.getLogger(__name__)
 class MetricsEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle numpy types."""
 
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, np.bool_):
-            return bool(obj)
-        elif isinstance(obj, Path):
-            return str(obj)
-        return super().default(obj)
+    def default(self, o: Any) -> Any:
+        if isinstance(o, np.integer):
+            return int(o)
+        elif isinstance(o, np.floating):
+            return float(o)
+        elif isinstance(o, np.ndarray):
+            return o.tolist()
+        elif isinstance(o, np.bool_):
+            return bool(o)
+        elif isinstance(o, Path):
+            return str(o)
+        return super().default(o)
 
 
 class PipelineMetrics:
@@ -86,7 +86,7 @@ class PipelineMetrics:
         "interface_max_depth_fraction": {"error": 0.5},
     }
 
-    def __init__(self, step_name: str, output_dir: str | None = None):
+    def __init__(self, step_name: str, output_dir: str | None = None) -> None:
         """
         Initialize metrics collector.
 
@@ -112,7 +112,7 @@ class PipelineMetrics:
         threshold_name: str | None = None,
         custom_thresholds: dict | None = None,
         description: str | None = None,
-    ):
+    ) -> None:
         """
         Add a metric with optional quality assessment.
 
@@ -157,7 +157,7 @@ class PipelineMetrics:
 
         self.metrics[name] = metric_entry
 
-    def add_info(self, name: str, value: Any, description: str | None = None):
+    def add_info(self, name: str, value: Any, description: str | None = None) -> None:
         """
         Add informational data (not quality-assessed).
 
@@ -236,7 +236,7 @@ class PipelineMetrics:
 
         return filepath
 
-    def log_issues(self):
+    def log_issues(self) -> None:
         """Log any warnings or errors to the logger."""
         for w in self.warnings:
             logger.warning(f"Metric warning: {w}")

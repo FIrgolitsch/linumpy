@@ -9,6 +9,7 @@ import contextlib
 import csv
 import re
 from pathlib import Path
+from typing import cast
 
 import nibabel as nib
 import numpy as np
@@ -150,7 +151,7 @@ def load_volumeByFilename(
     assert extension in available_formats, f"Supported formats are: {available_formats}"
 
     if extension in [".nii", ".nii.gz"]:
-        img = nib.load(filename)
+        img = cast(nib.Nifti1Image, nib.load(filename))
         volume = img.get_fdata()
         if len(np.unique(volume)) == 2 and convert2Bool:
             volume = volume.astype(bool)
@@ -166,6 +167,8 @@ def load_volumeByFilename(
 
     elif extension in [".npy"]:
         volume = np.load(filename)
+    else:
+        raise NotImplementedError(f"Loading not implemented for extension: {extension}")
 
     return volume
 
@@ -254,7 +257,6 @@ def save_rgbNifti(vol, filename):
         vol_reshaped[:, :, :, 0, 0] = np.reshape(vol[:, :, 0], [nx, ny, 1])
         vol_reshaped[:, :, :, 0, 1] = np.reshape(vol[:, :, 1], [nx, ny, 1])
         vol_reshaped[:, :, :, 0, 2] = np.reshape(vol[:, :, 2], [nx, ny, 1])
-
     elif vol.ndim == 4:  # This is a volume
         nx, ny, nz, nc = vol.shape
         nt = 1
@@ -262,6 +264,8 @@ def save_rgbNifti(vol, filename):
         vol_reshaped[:, :, :, 0, 0] = vol[:, :, :, 0]
         vol_reshaped[:, :, :, 0, 1] = vol[:, :, :, 1]
         vol_reshaped[:, :, :, 0, 2] = vol[:, :, :, 2]
+    else:
+        raise ValueError(f"Expected 3D or 4D volume, got {vol.ndim}D")
 
     # Affine transformation matrix
     afft = np.eye(4, 4)
@@ -294,9 +298,10 @@ def save_png(vol, filename):
 
 def load_acqinfo_from_csv(filename):
     """Import the acquisition information from a csv file"""
-    with Path(filename).open("rb") as f:
+    with Path(filename).open("r") as f:
         reader = csv.reader(f)
         info = {}
+        header: list[str] = []
 
         for rownum, row in enumerate(reader):
             # Save header row.
