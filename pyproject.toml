@@ -93,6 +93,7 @@ docs = [
 "linum_aip_png.py" = "scripts.linum_aip_png:main"
 "linum_aip.py" = "scripts.linum_aip:main"
 "linum_align_mosaics_3d_from_shifts.py" = "scripts.linum_align_mosaics_3d_from_shifts:main"
+"linum_align_to_ras.py" = "scripts.linum_align_to_ras:main"
 "linum_apply_slices_transforms.py" = "scripts.linum_apply_slices_transforms:main"
 "linum_axis_XYZ_to_ZYX.py" = "scripts.linum_axis_XYZ_to_ZYX:main"
 "linum_clean_raw_data.py" = "scripts.linum_clean_raw_data:main"
