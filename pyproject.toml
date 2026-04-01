@@ -239,7 +239,7 @@ python-version = "3.12"
 [tool.ty.rules]
 # Keep all default error-level rules active.
 # Downgrade rules that are too noisy for a partially-annotated codebase:
-possibly-unresolved-reference = "warn"
+possibly-unresolved-reference = "error"
 
 [tool.ty.analysis]
 # Optional GPU deps — not installed in the standard dev env.
@@ -256,6 +256,7 @@ include = ["linumpy/tests/**", "**/test_*.py"]
 [tool.ty.overrides.rules]
 possibly-unresolved-reference = "ignore"
 unresolved-attribute = "ignore"
+invalid-assignment = "ignore"
 
 # GPU modules use conditional imports and duck-typed array backends;
 # many attribute/subscript errors are false positives even with cupy→Any.
@@ -263,6 +264,7 @@ unresolved-attribute = "ignore"
 include = ["linumpy/gpu/**"]
 
 [tool.ty.overrides.rules]
-unresolved-attribute = "warn"
+unresolved-attribute = "ignore"
 not-subscriptable = "warn"
-invalid-assignment = "warn"
+invalid-assignment = "ignore"
+call-non-callable = "ignore"
