@@ -14,7 +14,6 @@ import linumpy._thread_config  # noqa: F401
 import argparse
 import csv
 import re
-from os.path import join as pjoin
 from os.path import split as psplit
 from pathlib import Path
 
@@ -69,6 +68,16 @@ def _build_arg_parser():
         "replace the metadata-derived shift with a 2-D phase cross-correlation\n"
         "estimate computed from the stitched mosaics.  Requires scikit-image.",
     )
+    p.add_argument(
+        "--refine_max_discrepancy_px",
+        type=float,
+        default=0,
+        help="When --refine_unreliable is active, reject the image-based estimate and\n"
+        "keep the original motor estimate if the two differ by more than this\n"
+        "many pixels (L2 norm). 0 = accept all image-based estimates (default).\n"
+        "Recommended: 50. Guards against phase-correlation failures on large-\n"
+        "offset or low-overlap transitions where the image estimate is wrong.",
+    )
 
     add_overwrite_arg(p)
     return p
@@ -77,7 +86,7 @@ def _build_arg_parser():
 def load_slice_config(config_path):
     """Load slice configuration and return set of slice IDs to use."""
     slices_to_use = set()
-    with open(config_path) as f:
+    with Path(config_path).open() as f:
         reader = csv.DictReader(f)
         for row in reader:
             slice_id = int(row["slice_id"])
@@ -123,7 +132,7 @@ def handle_excluded_slice_shifts(shifts_df, excluded_slice_ids, mode="keep", win
         return shifts_df
 
     df = shifts_df.copy()
-    excluded_set = set(int(s) for s in excluded_slice_ids)
+    excluded_set = {int(s) for s in excluded_slice_ids}
     mask = df["fixed_id"].astype(int).isin(excluded_set) | df["moving_id"].astype(int).isin(excluded_set)
     n_pairs = int(mask.sum())
     if n_pairs == 0:
@@ -301,7 +310,7 @@ def main():
 
     # Get all .ome.zarr files in in_mosaics_dir and build mapping
     in_mosaics_dir = Path(args.in_mosaics_dir)
-    mosaics_list = sorted([p for p in in_mosaics_dir.glob("*.ome.zarr")])
+    mosaics_list = sorted(in_mosaics_dir.glob("*.ome.zarr"))
 
     # Extract slice IDs from filenames and build slice_id -> file mapping
     pattern = r".*z(\d+).*"
@@ -363,9 +372,24 @@ def main():
                     dx_mm, dy_mm, dx_px, dy_px = _estimate_shift_by_registration(
                         mosaic_files[fixed_id], mosaic_files[moving_id]
                     )
+                    # Check discrepancy between image estimate and original motor estimate
+                    orig_dx_mm = shifts_df.loc[idx, "x_shift_mm"]
+                    orig_dy_mm = shifts_df.loc[idx, "y_shift_mm"]
+                    if args.refine_max_discrepancy_px > 0 and "x_shift" in shifts_df.columns:
+                        orig_dx_px = float(shifts_df.loc[idx, "x_shift"])
+                        orig_dy_px = float(shifts_df.loc[idx, "y_shift"])
+                        discrepancy_px = np.sqrt((dx_px - orig_dx_px) ** 2 + (dy_px - orig_dy_px) ** 2)
+                        if discrepancy_px > args.refine_max_discrepancy_px:
+                            print(
+                                f"  z{fixed_id:02d}→z{moving_id:02d}: image estimate discarded "
+                                f"(discrepancy={discrepancy_px:.1f} px > "
+                                f"{args.refine_max_discrepancy_px:.0f} px threshold); "
+                                f"keeping motor estimate ({orig_dx_mm:.3f}, {orig_dy_mm:.3f}) mm"
+                            )
+                            continue
                     print(
-                        f"  z{fixed_id:02d}→z{moving_id:02d}: metadata=({shifts_df.loc[idx, 'x_shift_mm']:.3f}, "
-                        f"{shifts_df.loc[idx, 'y_shift_mm']:.3f}) mm → "
+                        f"  z{fixed_id:02d}→z{moving_id:02d}: metadata=({orig_dx_mm:.3f}, "
+                        f"{orig_dy_mm:.3f}) mm → "
                         f"registered=({dx_mm:.3f}, {dy_mm:.3f}) mm"
                     )
                     shifts_df.loc[idx, "x_shift_mm"] = dx_mm
@@ -442,7 +466,7 @@ def main():
         aligned = apply_xy_shift(img_data, reference, -dx_shifted, -dy_shifted)
 
         _, filename = psplit(mosaic_file)
-        outfile = pjoin(args.out_directory, filename)
+        outfile = Path(args.out_directory) / filename
         save_omezarr(da.from_array(aligned), outfile, res, chunks=img.chunks)
 
         print(
