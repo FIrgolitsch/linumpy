@@ -400,7 +400,7 @@ def filter_step_outliers(
     window: int = 2,
     method: str = "local_median",
     mad_threshold: float = 3.0,
-    return_fraction: float = 0.4,
+    return_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """Fix per-step spikes in shifts, independent of global outlier detection.
 
