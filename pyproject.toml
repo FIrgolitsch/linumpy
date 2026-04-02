@@ -74,6 +74,7 @@ gpu-cuda13 = [
     "cupy-cuda13x>=13.0.0",
     "jax==0.4.23",
     "jaxlib==0.4.23; sys_platform != 'linux'",
+    "jax-cuda12-plugin==0.4.23; sys_platform == 'linux'",
     "nvidia-cublas-cu12>=12.2.5.6; sys_platform == 'linux'",
     "nvidia-cuda-cupti-cu12>=12.2.142; sys_platform == 'linux'",
     "nvidia-cuda-runtime-cu12>=12.2.140; sys_platform == 'linux'",
