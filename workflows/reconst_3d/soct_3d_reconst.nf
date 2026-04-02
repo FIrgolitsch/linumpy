@@ -611,6 +611,7 @@ process register_pairwise {
         --moving_z_index ${params.moving_slice_first_index} \
         --max_rotation_deg ${params.registration_max_rotation} \
         --max_translation_px ${params.registration_max_translation} \
+        --initial_alignment ${params.registration_initial_alignment} \
         ${rotation_flag}
     """
 }
