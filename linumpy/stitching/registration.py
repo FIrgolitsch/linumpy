@@ -1,14 +1,18 @@
 #! /usr/bin/env python
 
+import logging
 import random
 
 import numpy as np
 import SimpleITK as sitk
+from scipy.ndimage import sobel
 from skimage.exposure import match_histograms
 from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu
 
 from linumpy.stitching.stitch_utils import getOverlap
+
+logger = logging.getLogger(__name__)
 
 
 def pairWisePhaseCorrelation(vol1, vol2, nPeaks=8, returnCC=False):  # TODO: Test for 3D images
@@ -558,6 +562,131 @@ def apply_transform(moving_image, transform):
     return out
 
 
+def _nonzero_bbox(image):
+    """Compute the bounding box of non-zero pixels in a 2D image.
+
+    Returns (row_min, row_max, col_min, col_max) or None if all zeros.
+    """
+    nonzero = np.nonzero(image)
+    if len(nonzero[0]) == 0:
+        return None
+    return (nonzero[0].min(), nonzero[0].max() + 1, nonzero[1].min(), nonzero[1].max() + 1)
+
+
+def _union_bbox(bbox1, bbox2):
+    """Compute the union of two bounding boxes, with a small margin."""
+    r0 = min(bbox1[0], bbox2[0])
+    r1 = max(bbox1[1], bbox2[1])
+    c0 = min(bbox1[2], bbox2[2])
+    c1 = max(bbox1[3], bbox2[3])
+    return (r0, r1, c0, c1)
+
+
+def _crop_to_nonzero(fixed, moving, margin_fraction=0.05):
+    """Crop fixed and moving images to the union of their non-zero bounding boxes.
+
+    Parameters
+    ----------
+    fixed, moving : np.ndarray
+        2D images.
+    margin_fraction : float
+        Fraction of the crop size to add as margin on each side.
+
+    Returns
+    -------
+    fixed_crop, moving_crop : np.ndarray
+        Cropped images.
+    offset : tuple
+        (row_offset, col_offset) of the crop origin in the original image.
+    """
+    bbox_f = _nonzero_bbox(fixed)
+    bbox_m = _nonzero_bbox(moving)
+
+    if bbox_f is None and bbox_m is None:
+        return fixed, moving, (0, 0)
+    if bbox_f is None:
+        bbox = bbox_m
+    elif bbox_m is None:
+        bbox = bbox_f
+    else:
+        bbox = _union_bbox(bbox_f, bbox_m)
+
+    r0, r1, c0, c1 = bbox
+    h, w = r1 - r0, c1 - c0
+    margin_r = int(h * margin_fraction)
+    margin_c = int(w * margin_fraction)
+    r0 = max(0, r0 - margin_r)
+    r1 = min(fixed.shape[0], r1 + margin_r)
+    c0 = max(0, c0 - margin_c)
+    c1 = min(fixed.shape[1], c1 + margin_c)
+
+    return fixed[r0:r1, c0:c1], moving[r0:r1, c0:c1], (r0, c0)
+
+
+def centre_of_mass_offset(fixed, moving):
+    """Compute the translation that aligns centres of mass of non-zero regions.
+
+    Parameters
+    ----------
+    fixed, moving : np.ndarray
+        2D images.
+
+    Returns
+    -------
+    dy, dx : float
+        Translation (row, col) to apply to moving to align centres of mass.
+    """
+
+    def _com(img):
+        nz = np.nonzero(img)
+        if len(nz[0]) == 0:
+            return np.array([img.shape[0] / 2.0, img.shape[1] / 2.0])
+        return np.array([nz[0].mean(), nz[1].mean()])
+
+    com_f = _com(fixed)
+    com_m = _com(moving)
+    return float(com_f[0] - com_m[0]), float(com_f[1] - com_m[1])
+
+
+def gradient_magnitude_alignment(fixed, moving, n_peaks=5):
+    """Compute a coarse translation using gradient magnitude edge maps.
+
+    Computes Sobel gradient magnitude of both images, then uses phase
+    correlation on the edge maps to find a coarse initial translation.
+
+    Parameters
+    ----------
+    fixed, moving : np.ndarray
+        2D images (should be normalized to [0, 1]).
+    n_peaks : int
+        Number of phase correlation peaks to evaluate.
+
+    Returns
+    -------
+    dy, dx : float
+        Coarse translation (row, col) to apply to moving.
+    """
+
+    def _grad_mag(img):
+        gy = sobel(img, axis=0)
+        gx = sobel(img, axis=1)
+        return np.sqrt(gy**2 + gx**2)
+
+    gm_f = _grad_mag(fixed)
+    gm_m = _grad_mag(moving)
+
+    # Threshold to keep strong edges only
+    for gm in [gm_f, gm_m]:
+        if gm.max() > 0:
+            gm /= gm.max()
+
+    try:
+        shift = pairWisePhaseCorrelation(gm_f, gm_m, nPeaks=n_peaks)
+        return float(shift[0]), float(shift[1])
+    except Exception:
+        return 0.0, 0.0
+
+
 def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_range: int):
     """Find the Z-index in fixed_vol that best matches moving_slice.
 
@@ -590,8 +719,22 @@ def find_best_z(fixed_vol, moving_slice: np.ndarray, expected_z: int, search_ran
         return max(0, min(nz - 1, expected_z)), 0.0
 
     h, w = moving_slice.shape
-    margin = min(h, w) // 4
-    roi = (slice(margin, h - margin), slice(margin, w - margin))
+
+    # Use non-zero bounding box of moving slice for ROI, falling back to center crop
+    bbox = _nonzero_bbox(moving_slice)
+    if bbox is not None:
+        r0, r1, c0, c1 = bbox
+        # Add small margin
+        margin_r = max(1, int((r1 - r0) * 0.05))
+        margin_c = max(1, int((c1 - c0) * 0.05))
+        r0 = max(0, r0 - margin_r)
+        r1 = min(h, r1 + margin_r)
+        c0 = max(0, c0 - margin_c)
+        c1 = min(w, c1 + margin_c)
+        roi = (slice(r0, r1), slice(c0, c1))
+    else:
+        margin = min(h, w) // 4
+        roi = (slice(margin, h - margin), slice(margin, w - margin))
 
     moving_roi = moving_slice[roi].astype(np.float32)
     valid_mov = moving_roi > 0
@@ -630,8 +773,14 @@ def register_refinement(
     enable_rotation: bool = True,
     max_rotation_deg: float = 5.0,
     max_translation_px: float = 20.0,
+    initial_offset: tuple | None = None,
 ):
     """Compute small rotation and translation refinement using SimpleITK.
+
+    Before registration, images are cropped to the union of their non-zero
+    bounding boxes so that SimpleITK sampling focuses on tissue, not empty
+    space. A foreground mask is also set on the fixed image to further
+    restrict metric sampling to non-zero voxels.
 
     Parameters
     ----------
@@ -643,11 +792,16 @@ def register_refinement(
         Maximum allowed rotation in degrees.
     max_translation_px : float
         Maximum allowed translation in pixels.
+    initial_offset : tuple, optional
+        (dy, dx) initial translation estimate in pixels (in original image
+        coordinates). If provided, used as the starting point for the
+        optimizer. Typically from centre_of_mass_offset() or
+        gradient_magnitude_alignment().
 
     Returns
     -------
     tx, ty : float
-        Translation refinement in pixels.
+        Translation refinement in pixels (in original image coordinates).
     angle_deg : float
         Rotation angle in degrees.
     metric : float
@@ -659,20 +813,46 @@ def register_refinement(
     if fixed_std < 0.01 or moving_std < 0.01:
         return 0.0, 0.0, 0.0, 0.0
 
-    fixed_sitk = sitk.GetImageFromArray(fixed.astype(np.float32))
-    moving_sitk = sitk.GetImageFromArray(moving.astype(np.float32))
+    # Crop to non-zero bounding box to avoid registering mostly-zero volumes
+    fixed_crop, moving_crop, crop_offset = _crop_to_nonzero(fixed, moving)
+    row_off, col_off = crop_offset
+
+    logger.debug(
+        "Cropped from %s to %s (offset: row=%d, col=%d)",
+        fixed.shape,
+        fixed_crop.shape,
+        row_off,
+        col_off,
+    )
+
+    fixed_sitk = sitk.GetImageFromArray(fixed_crop.astype(np.float32))
+    moving_sitk = sitk.GetImageFromArray(moving_crop.astype(np.float32))
+
+    # Create foreground mask for the fixed image so metric sampling
+    # is restricted to tissue voxels
+    fixed_mask = (fixed_crop > 0).astype(np.uint8)
+    fixed_mask_sitk = sitk.GetImageFromArray(fixed_mask)
+
+    # Adjust initial offset to cropped coordinate system
+    init_dy, init_dx = 0.0, 0.0
+    if initial_offset is not None:
+        init_dy, init_dx = initial_offset
 
     if enable_rotation:
         transform = sitk.Euler2DTransform()
-        center = [fixed.shape[1] / 2.0, fixed.shape[0] / 2.0]
+        center = [fixed_crop.shape[1] / 2.0, fixed_crop.shape[0] / 2.0]
         transform.SetCenter(center)
+        # SimpleITK uses (x, y) order for translations
+        transform.SetTranslation([init_dx, init_dy])
     else:
         transform = sitk.TranslationTransform(2)
+        transform.SetOffset([init_dx, init_dy])
 
     reg = sitk.ImageRegistrationMethod()
     reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
     reg.SetMetricSamplingStrategy(reg.RANDOM)
     reg.SetMetricSamplingPercentage(0.20)
+    reg.SetMetricFixedMask(fixed_mask_sitk)
     reg.SetOptimizerAsGradientDescent(
         learningRate=1.0, numberOfIterations=200, convergenceMinimumValue=1e-6, convergenceWindowSize=10
     )
@@ -695,6 +875,23 @@ def register_refinement(
         else:
             tx, ty = inner.GetOffset()
             angle_deg = 0.0
+
+        # Map translation back to original (uncropped) coordinates.
+        # The crop shifts both images equally, so the relative translation
+        # is the same — no offset adjustment needed for relative tx/ty.
+        # However, if rotation is enabled, the rotation center was in cropped
+        # coords, so we need to account for that.
+        if enable_rotation and (row_off != 0 or col_off != 0):
+            # Re-express the Euler transform with centre in original coords
+            orig_center = [fixed.shape[1] / 2.0, fixed.shape[0] / 2.0]
+            crop_center = [fixed_crop.shape[1] / 2.0, fixed_crop.shape[0] / 2.0]
+            angle_rad = np.radians(angle_deg)
+            cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+
+            # Offset due to centre shift: R*(c_orig - c_crop) - (c_orig - c_crop)
+            dc = [orig_center[0] - crop_center[0] - col_off, orig_center[1] - crop_center[1] - row_off]
+            tx += dc[0] * (cos_a - 1) + dc[1] * sin_a
+            ty += -dc[0] * sin_a + dc[1] * (cos_a - 1)
 
         mag = np.sqrt(tx**2 + ty**2)
         if mag > max_translation_px:

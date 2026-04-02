@@ -25,7 +25,13 @@ import numpy as np
 import SimpleITK as sitk
 
 from linumpy.io.zarr import read_omezarr
-from linumpy.stitching.registration import create_transform, find_best_z, register_refinement
+from linumpy.stitching.registration import (
+    centre_of_mass_offset,
+    create_transform,
+    find_best_z,
+    gradient_magnitude_alignment,
+    register_refinement,
+)
 from linumpy.utils.io import add_overwrite_arg
 from linumpy.utils.metrics import collect_pairwise_registration_metrics
 
@@ -60,6 +66,16 @@ def _build_arg_parser():
     )
     ref_group.add_argument(
         "--max_translation_px", type=float, default=20.0, help="Maximum translation refinement in pixels [%(default)s]"
+    )
+    ref_group.add_argument(
+        "--initial_alignment",
+        choices=["none", "com", "gradient", "both"],
+        default="both",
+        help="Initial alignment method before refinement:\n"
+        "  none     - no initial alignment\n"
+        "  com      - centre of mass alignment\n"
+        "  gradient - gradient magnitude phase correlation\n"
+        "  both     - try gradient first, fall back to com [%(default)s]",
     )
 
     # Output
@@ -151,6 +167,26 @@ def main():
     fixed_slice = np.array(fixed_vol[best_z])
     fixed_norm = normalize(fixed_slice)
 
+    # Compute initial alignment offset
+    initial_offset = None
+    if args.initial_alignment != "none":
+        if args.initial_alignment in ("gradient", "both"):
+            dy, dx = gradient_magnitude_alignment(fixed_norm, moving_norm)
+            mag = np.sqrt(dy**2 + dx**2)
+            if mag > 1.0:
+                initial_offset = (dy, dx)
+                logger.info(f"Gradient magnitude initial offset: dy={dy:.1f}, dx={dx:.1f}")
+
+        if initial_offset is None and args.initial_alignment in ("com", "both"):
+            dy, dx = centre_of_mass_offset(fixed_norm, moving_norm)
+            mag = np.sqrt(dy**2 + dx**2)
+            if mag > 1.0:
+                initial_offset = (dy, dx)
+                logger.info(f"Centre of mass initial offset: dy={dy:.1f}, dx={dx:.1f}")
+
+        if initial_offset is None:
+            logger.info("No significant initial offset detected, starting from identity")
+
     # Compute refinement
     logger.info(f"Computing refinement (rotation={args.enable_rotation})...")
     tx, ty, angle_deg, metric = register_refinement(
@@ -159,6 +195,7 @@ def main():
         enable_rotation=args.enable_rotation,
         max_rotation_deg=args.max_rotation_deg,
         max_translation_px=args.max_translation_px,
+        initial_offset=initial_offset,
     )
 
     logger.info(f"Refinement: tx={tx:.2f}px, ty={ty:.2f}px, rot={angle_deg:.3f}°")
