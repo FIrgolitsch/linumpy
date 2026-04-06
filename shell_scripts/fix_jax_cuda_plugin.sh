@@ -153,6 +153,8 @@ checks = [
     ("nvidia/cublas/lib", "libcublas.so.12", "nvidia-cublas-cu12==12.3.4.1"),
     ("nvidia/cuda_runtime/lib", "libcudart.so.12", "nvidia-cuda-runtime-cu12==12.3.101"),
     ("nvidia/cudnn/lib", "libcudnn.so.8", "nvidia-cudnn-cu12==8.9.7.29"),
+    ("nvidia/nccl/lib", "libnccl.so.2", "nvidia-nccl-cu12==2.19.3"),
+    ("nvidia/nvjitlink/lib", "libnvJitLink.so.12", "nvidia-nvjitlink-cu12==12.3.101"),
 ]
 
 all_ok = True
