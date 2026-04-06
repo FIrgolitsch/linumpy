@@ -67,7 +67,7 @@ gpu = [
     "nvidia-cufft-cu12>=11.0.8.103; sys_platform == 'linux'",
     "nvidia-cusolver-cu12>=11.5.2; sys_platform == 'linux'",
     "nvidia-cusparse-cu12>=12.1.2.141; sys_platform == 'linux'",
-    "nvidia-nccl-cu12>=2.18.3; sys_platform == 'linux'",
+    "nvidia-nccl-cu12>=2.21.5; sys_platform == 'linux'",
     "nvidia-nvjitlink-cu12>=12.2; sys_platform == 'linux'",
 ]
 gpu-cuda13 = [
@@ -82,7 +82,7 @@ gpu-cuda13 = [
     "nvidia-cufft-cu12>=11.0.8.103; sys_platform == 'linux'",
     "nvidia-cusolver-cu12>=11.5.2; sys_platform == 'linux'",
     "nvidia-cusparse-cu12>=12.1.2.141; sys_platform == 'linux'",
-    "nvidia-nccl-cu12>=2.18.3; sys_platform == 'linux'",
+    "nvidia-nccl-cu12>=2.21.5; sys_platform == 'linux'",
     "nvidia-nvjitlink-cu12>=12.2; sys_platform == 'linux'",
 ]
 docs = [

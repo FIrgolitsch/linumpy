@@ -502,9 +502,20 @@ except Exception as e:
 
     def _get_cuda12_ld_path(self, debug=False):
         """Build LD_LIBRARY_PATH for CUDA 12 compatible libraries."""
+        import contextlib
+        import importlib.util
         import site
+        import sysconfig
 
-        site_packages = site.getsitepackages()[0]
+        # Collect all site-packages dirs (uv venvs may order them differently)
+        site_packages_dirs = []
+        with contextlib.suppress(Exception):
+            site_packages_dirs.extend(site.getsitepackages())
+        for key in ("purelib", "platlib"):
+            with contextlib.suppress(Exception):
+                p = sysconfig.get_path(key)
+                if p and p not in site_packages_dirs:
+                    site_packages_dirs.append(p)
 
         cuda_paths = []
 
@@ -522,8 +533,8 @@ except Exception as e:
                     print(f"    Found system CUDA 12: {cuda_path}")
                 break
 
-        # Method 2: -cu12 pip packages (pinned versions with correct library files)
-        # JAX 0.4.23 needs specific library versions from pinned nvidia packages
+        # Method 2: -cu12 pip packages, searched across all site-packages dirs.
+        # nvidia-nccl-cu12 must be >=2.21.5 for torch compat (ncclCommWindowDeregister).
         cu12_lib_dirs = [
             "nvidia/cublas/lib",
             "nvidia/cuda_runtime/lib",
@@ -532,18 +543,27 @@ except Exception as e:
             "nvidia/cufft/lib",
             "nvidia/cudnn/lib",
             "nvidia/nvjitlink/lib",
-            # torch/lib bundles a newer NCCL (2.19+); must come before nvidia/nccl/lib
-            # so that libtorch_cuda.so (basicpy dependency) gets a compatible NCCL version.
-            # nvidia-nccl-cu12 is pinned at 2.18.x which lacks ncclCommWindowDeregister.
-            "torch/lib",
             "nvidia/nccl/lib",
         ]
-        for lib_dir in cu12_lib_dirs:
-            full_path = os.path.join(site_packages, lib_dir)
-            if os.path.isdir(full_path) and full_path not in cuda_paths:
-                cuda_paths.append(full_path)
-                if debug:
-                    print(f"    Found nvidia lib: {full_path}")
+        for sp in site_packages_dirs:
+            for lib_dir in cu12_lib_dirs:
+                full_path = os.path.join(sp, lib_dir)
+                if os.path.isdir(full_path) and full_path not in cuda_paths:
+                    cuda_paths.append(full_path)
+                    if debug:
+                        print(f"    Found nvidia lib: {full_path}")
+
+        # Method 3: torch/lib — located via importlib to be reliable across venv types
+        try:
+            torch_spec = importlib.util.find_spec("torch")
+            if torch_spec and torch_spec.origin:
+                torch_lib = os.path.join(os.path.dirname(torch_spec.origin), "lib")
+                if os.path.isdir(torch_lib) and torch_lib not in cuda_paths:
+                    cuda_paths.append(torch_lib)
+                    if debug:
+                        print(f"    Found torch lib: {torch_lib}")
+        except Exception:
+            pass
 
         # Build clean LD_LIBRARY_PATH
         new_ld_path = ":".join(cuda_paths)

@@ -57,10 +57,7 @@ _NVIDIA_LIB_DIRS = [
     "nvidia/cufft/lib",
     "nvidia/cudnn/lib",
     "nvidia/nvjitlink/lib",
-    # torch/lib bundles NCCL 2.19+ (ncclCommWindowDeregister); must come before
-    # nvidia/nccl/lib which is pinned at 2.18.x and lacks that symbol.
-    "torch/lib",
-    "nvidia/nccl/lib",
+    "nvidia/nccl/lib",  # must be >=2.21.5 for torch compat (ncclCommWindowDeregister)
 ]
 
 # Preload order: dependencies first; loaded with RTLD_GLOBAL.
