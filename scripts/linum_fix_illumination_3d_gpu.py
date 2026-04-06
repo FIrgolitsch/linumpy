@@ -6,15 +6,18 @@ GPU-accelerated version using JAX/CUDA for BaSiCPy.
 For CPU-only processing, use linum_fix_illumination_3d.py
 """
 
+# linumpy.gpu.cuda_env must be imported before any GPU-aware library
+# (basicpy / torch / jax). ensure_cuda_env() will re-exec the process with
+# the correct LD_LIBRARY_PATH if the pip nvidia paths are not yet set.
+import os
+from pathlib import Path
+
+from linumpy.gpu.cuda_env import ensure_cuda_env, preload_cuda_libraries
+
+ensure_cuda_env()
+
 # Configure thread limits before numpy/scipy imports
 import linumpy._thread_config  # noqa: F401
-
-import contextlib
-import ctypes
-import os
-import site
-import sysconfig
-from pathlib import Path
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
 # to prevent thread oversubscription. The number of threads per worker should be
@@ -32,92 +35,8 @@ if "XLA_FLAGS" not in os.environ:
 if "OMP_NUM_THREADS" not in os.environ:
     os.environ["OMP_NUM_THREADS"] = "1"
 
-
-def _preload_cuda_libraries():
-    """Preload CUDA libraries before JAX import for GPU acceleration.
-    JAX 0.4.23 requires specific library versions from nvidia-xxx-cu12 packages.
-    These must be loaded via ctypes BEFORE JAX is imported so the symbols are
-    available when XLA initializes.
-
-    Two mechanisms are used defensively:
-      1. LD_LIBRARY_PATH is updated immediately so that any subsequent dlopen()
-         (including torch's internal ones) finds the pip-installed libs first.
-         This works even when ctypes.CDLL fails (e.g. libcuda.so.1 not yet on
-         the linker search path on HPC nodes).
-      2. ctypes.CDLL with RTLD_GLOBAL is attempted for each library so the
-         symbols are already in the process namespace before XLA initialises.
-    """
-    # Collect site-packages paths.  sysconfig is the most reliable source in
-    # uv/virtualenv environments; fall back to site.getsitepackages().
-    sp_set = set()
-    with contextlib.suppress(Exception):
-        sp_set.add(sysconfig.get_path("purelib"))
-        sp_set.add(sysconfig.get_path("platlib"))
-    with contextlib.suppress(Exception):
-        sp_set.update(site.getsitepackages())
-    sp_paths = [p for p in sp_set if p]
-
-    ld_path = os.environ.get("LD_LIBRARY_PATH", "")
-    # Build list of CUDA library search paths (pip packages + LD_LIBRARY_PATH)
-    search_paths = []
-    for sp in sp_paths:
-        for lib_dir in [
-            "nvidia/cublas/lib",
-            "nvidia/cuda_runtime/lib",
-            "nvidia/cusolver/lib",
-            "nvidia/cusparse/lib",
-            "nvidia/cufft/lib",
-            "nvidia/cudnn/lib",
-            "nvidia/nvjitlink/lib",
-            "nvidia/nccl/lib",
-        ]:
-            path = Path(sp) / lib_dir
-            if path.is_dir():
-                search_paths.append(path)
-
-    # --- Mechanism 1: update LD_LIBRARY_PATH immediately ---
-    # Do this BEFORE ctypes attempts so that even if ctypes.CDLL fails (e.g.
-    # because libcuda.so.1 is not yet visible to the linker on this node),
-    # any subsequent dlopen() inside torch/JAX will still find our libs first.
-    if search_paths:
-        new_paths = ":".join(str(p) for p in search_paths)
-        if ld_path:
-            os.environ["LD_LIBRARY_PATH"] = f"{new_paths}:{ld_path}"
-        else:
-            os.environ["LD_LIBRARY_PATH"] = new_paths
-
-    # --- Mechanism 2: ctypes RTLD_GLOBAL preload ---
-    # Libraries to preload (order matters - dependencies first)
-    # These are the .so versions from pinned nvidia-xxx-cu12 packages.
-    # Each must be loaded from the pip package BEFORE JAX/torch import so that
-    # the correct version wins over any older system-installed library.
-    libs = [
-        "libcudart.so.12",
-        "libnvJitLink.so.12",  # jit linker; CUDA 13 systems ship .so.13 with different ABI
-        "libnccl.so.2",  # CUDA 13 systems missing ncclCommWindowDeregister in older .so
-        "libcudnn.so.8",  # JAX 0.4.23 / torch expect cudnn 8.x; CUDA 13 ships 9.x
-        "libcublas.so.12",
-        "libcublasLt.so.12",
-        "libcusolver.so.11",  # JAX 0.4.23 needs .so.11
-        "libcusparse.so.12",
-        "libcufft.so.11",  # JAX 0.4.23 needs .so.11
-    ]
-    loaded = []
-    for lib in libs:
-        for path in search_paths:
-            lib_path = Path(path) / lib
-            if lib_path.exists():
-                try:
-                    ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
-                    loaded.append(lib)
-                except Exception:
-                    pass
-                break
-    return bool(search_paths)
-
-
-# Preload CUDA libraries BEFORE importing JAX/basicpy
-_cuda_available = _preload_cuda_libraries()
+# Ctypes RTLD_GLOBAL preload as secondary defence (see linumpy.gpu.cuda_env)
+_cuda_available = preload_cuda_libraries()
 if not _cuda_available:
     print("Warning: CUDA libraries not found, JAX will use CPU fallback")
 import argparse
