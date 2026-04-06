@@ -232,7 +232,7 @@ import ctypes
 # Preload CUDA libraries before importing JAX
 ld_path = os.environ.get('LD_LIBRARY_PATH', '')
 paths = [p for p in ld_path.split(':') if p]
-for lib in ['libcudart.so.12', 'libcublas.so.12', 'libcusolver.so.12']:
+for lib in ['libcudart.so.12', 'libcublas.so.12', 'libcusolver.so.12', 'libnccl.so.2', 'libnvJitLink.so.12']:
     for path in paths:
         lib_path = os.path.join(path, lib)
         if os.path.exists(lib_path):
@@ -532,6 +532,7 @@ except Exception as e:
             "nvidia/cufft/lib",
             "nvidia/cudnn/lib",
             "nvidia/nvjitlink/lib",
+            "nvidia/nccl/lib",
         ]
         for lib_dir in cu12_lib_dirs:
             full_path = os.path.join(site_packages, lib_dir)
@@ -581,6 +582,7 @@ print("DEBUG_STAGE:preloading_cuda")
 for lib in [
     'libcudart.so.12', 'libcublas.so.12', 'libcublasLt.so.12',
     'libcusolver.so.12', 'libcufft.so.12', 'libcusparse.so.12',
+    'libnccl.so.2', 'libnvJitLink.so.12',
 ]:
     for path in paths:
         lib_path = os.path.join(path, lib)
