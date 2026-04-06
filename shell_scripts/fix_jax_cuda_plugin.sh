@@ -421,15 +421,18 @@ if echo "$TEST_RESULT" | grep -q "JAX CUDA is working"; then
         echo ""
     fi
 
+    echo "Verify JAX+BaSiCPy: linum_diagnose_pipeline.py --benchmark"
+    echo ""
+
     # --- Optional benchmark ---
     if [ $RUN_BENCHMARK -eq 1 ]; then
         echo "========================================================================"
-        echo " Running GPU benchmark..."
+        echo " Running JAX/BaSiCPy benchmark..."
         echo "========================================================================"
-        "$PYTHON_CMD" -m scripts.linum_benchmark_gpu 2>&1 || \
-            "$PYTHON_CMD" -c "import runpy, sys; sys.argv=['linum_benchmark_gpu.py']; runpy.run_module('scripts.linum_benchmark_gpu', run_name='__main__')" 2>&1 || true
+        "$PYTHON_CMD" -m scripts.linum_diagnose_pipeline --benchmark 2>&1 || \
+            "$PYTHON_CMD" -c "import runpy, sys; sys.argv=['linum_diagnose_pipeline.py','--benchmark']; runpy.run_module('scripts.linum_diagnose_pipeline', run_name='__main__')" 2>&1 || true
     else
-        echo "Tip: re-run with --benchmark to also run the GPU performance benchmark."
+        echo "Tip: re-run with --benchmark to also run the JAX/BaSiCPy verification benchmark."
     fi
 else
     echo ""
