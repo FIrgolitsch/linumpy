@@ -9,9 +9,11 @@ For CPU-only processing, use linum_fix_illumination_3d.py
 # Configure thread limits before numpy/scipy imports
 import linumpy._thread_config  # noqa: F401
 
+import contextlib
 import ctypes
 import os
 import site
+import sysconfig
 from pathlib import Path
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
@@ -36,9 +38,25 @@ def _preload_cuda_libraries():
     JAX 0.4.23 requires specific library versions from nvidia-xxx-cu12 packages.
     These must be loaded via ctypes BEFORE JAX is imported so the symbols are
     available when XLA initializes.
+
+    Two mechanisms are used defensively:
+      1. LD_LIBRARY_PATH is updated immediately so that any subsequent dlopen()
+         (including torch's internal ones) finds the pip-installed libs first.
+         This works even when ctypes.CDLL fails (e.g. libcuda.so.1 not yet on
+         the linker search path on HPC nodes).
+      2. ctypes.CDLL with RTLD_GLOBAL is attempted for each library so the
+         symbols are already in the process namespace before XLA initialises.
     """
-    # Get site-packages paths
-    sp_paths = site.getsitepackages()
+    # Collect site-packages paths.  sysconfig is the most reliable source in
+    # uv/virtualenv environments; fall back to site.getsitepackages().
+    sp_set = set()
+    with contextlib.suppress(Exception):
+        sp_set.add(sysconfig.get_path("purelib"))
+        sp_set.add(sysconfig.get_path("platlib"))
+    with contextlib.suppress(Exception):
+        sp_set.update(site.getsitepackages())
+    sp_paths = [p for p in sp_set if p]
+
     ld_path = os.environ.get("LD_LIBRARY_PATH", "")
     # Build list of CUDA library search paths (pip packages + LD_LIBRARY_PATH)
     search_paths = []
@@ -56,7 +74,19 @@ def _preload_cuda_libraries():
             path = Path(sp) / lib_dir
             if path.is_dir():
                 search_paths.append(path)
-    search_paths.extend(ld_path.split(":"))
+
+    # --- Mechanism 1: update LD_LIBRARY_PATH immediately ---
+    # Do this BEFORE ctypes attempts so that even if ctypes.CDLL fails (e.g.
+    # because libcuda.so.1 is not yet visible to the linker on this node),
+    # any subsequent dlopen() inside torch/JAX will still find our libs first.
+    if search_paths:
+        new_paths = ":".join(str(p) for p in search_paths)
+        if ld_path:
+            os.environ["LD_LIBRARY_PATH"] = f"{new_paths}:{ld_path}"
+        else:
+            os.environ["LD_LIBRARY_PATH"] = new_paths
+
+    # --- Mechanism 2: ctypes RTLD_GLOBAL preload ---
     # Libraries to preload (order matters - dependencies first)
     # These are the .so versions from pinned nvidia-xxx-cu12 packages.
     # Each must be loaded from the pip package BEFORE JAX/torch import so that
@@ -83,15 +113,7 @@ def _preload_cuda_libraries():
                 except Exception:
                     pass
                 break
-    if loaded:
-        # Update LD_LIBRARY_PATH so child processes can find libraries too
-        new_paths = ":".join(str(p) for p in search_paths)
-        if ld_path:
-            os.environ["LD_LIBRARY_PATH"] = f"{new_paths}:{ld_path}"
-        else:
-            os.environ["LD_LIBRARY_PATH"] = new_paths
-        return True
-    return False
+    return bool(search_paths)
 
 
 # Preload CUDA libraries BEFORE importing JAX/basicpy
