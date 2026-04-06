@@ -532,6 +532,10 @@ except Exception as e:
             "nvidia/cufft/lib",
             "nvidia/cudnn/lib",
             "nvidia/nvjitlink/lib",
+            # torch/lib bundles a newer NCCL (2.19+); must come before nvidia/nccl/lib
+            # so that libtorch_cuda.so (basicpy dependency) gets a compatible NCCL version.
+            # nvidia-nccl-cu12 is pinned at 2.18.x which lacks ncclCommWindowDeregister.
+            "torch/lib",
             "nvidia/nccl/lib",
         ]
         for lib_dir in cu12_lib_dirs:
