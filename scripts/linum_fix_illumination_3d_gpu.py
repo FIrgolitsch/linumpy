@@ -12,6 +12,7 @@ import linumpy._thread_config  # noqa: F401
 import ctypes
 import os
 import site
+from pathlib import Path
 
 # When using multiprocessing with pqdm, we need to limit threads per worker
 # to prevent thread oversubscription. The number of threads per worker should be
@@ -93,7 +94,6 @@ if not _cuda_available:
     print("Warning: CUDA libraries not found, JAX will use CPU fallback")
 import argparse
 import tempfile
-from pathlib import Path
 
 import dask.array as da
 import imageio as io
