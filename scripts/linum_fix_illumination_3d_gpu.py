@@ -51,15 +51,21 @@ def _preload_cuda_libraries():
             "nvidia/cufft/lib",
             "nvidia/cudnn/lib",
             "nvidia/nvjitlink/lib",
+            "nvidia/nccl/lib",
         ]:
             path = Path(sp) / lib_dir
             if path.is_dir():
                 search_paths.append(path)
     search_paths.extend(ld_path.split(":"))
     # Libraries to preload (order matters - dependencies first)
-    # These are the .so versions from pinned nvidia-xxx-cu12 packages
+    # These are the .so versions from pinned nvidia-xxx-cu12 packages.
+    # Each must be loaded from the pip package BEFORE JAX/torch import so that
+    # the correct version wins over any older system-installed library.
     libs = [
         "libcudart.so.12",
+        "libnvJitLink.so.12",  # jit linker; CUDA 13 systems ship .so.13 with different ABI
+        "libnccl.so.2",  # CUDA 13 systems missing ncclCommWindowDeregister in older .so
+        "libcudnn.so.8",  # JAX 0.4.23 / torch expect cudnn 8.x; CUDA 13 ships 9.x
         "libcublas.so.12",
         "libcublasLt.so.12",
         "libcusolver.so.11",  # JAX 0.4.23 needs .so.11
