@@ -1647,6 +1647,7 @@ gpu = [
 gpu-cuda13 = [
     { name = "cupy-cuda13x" },
     { name = "jax" },
+    { name = "jax-cuda12-plugin", marker = "sys_platform == 'linux'" },
     { name = "jaxlib", marker = "sys_platform != 'linux'" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cuda-cupti-cu12", marker = "sys_platform == 'linux'" },
@@ -1681,6 +1682,7 @@ requires-dist = [
     { name = "jax", marker = "extra == 'gpu'", specifier = "<=0.4.23" },
     { name = "jax", marker = "extra == 'gpu-cuda13'", specifier = "==0.4.23" },
     { name = "jax-cuda12-plugin", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = "==0.4.23" },
+    { name = "jax-cuda12-plugin", marker = "sys_platform == 'linux' and extra == 'gpu-cuda13'", specifier = "==0.4.23" },
     { name = "jaxlib", specifier = "<=0.4.23" },
     { name = "jaxlib", marker = "sys_platform != 'linux' and extra == 'gpu-cuda13'", specifier = "==0.4.23" },
     { name = "jaxlib", marker = "extra == 'gpu'", specifier = "==0.4.23" },
