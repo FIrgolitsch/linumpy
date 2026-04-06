@@ -38,6 +38,14 @@ else
     echo "Running in non-interactive mode (SSH/pipe detected)"
 fi
 
+# Parse arguments
+RUN_BENCHMARK=0
+for arg in "$@"; do
+    case "$arg" in
+        --benchmark) RUN_BENCHMARK=1 ;;
+    esac
+done
+
 # Find Python
 PYTHON_CMD=""
 if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
@@ -210,7 +218,7 @@ echo "=== Step 5: Setting up LD_LIBRARY_PATH ==="
 
 # Build LD_LIBRARY_PATH with -cu12 package paths
 NEW_LD_PATH=""
-for lib_dir in nvidia/cublas/lib nvidia/cuda_runtime/lib nvidia/cusolver/lib nvidia/cusparse/lib nvidia/cufft/lib nvidia/cudnn/lib nvidia/nvjitlink/lib; do
+for lib_dir in nvidia/cublas/lib nvidia/cuda_runtime/lib nvidia/cusolver/lib nvidia/cusparse/lib nvidia/cufft/lib nvidia/cudnn/lib nvidia/nvjitlink/lib nvidia/nccl/lib; do
     full_path="${SP}/${lib_dir}"
     if [ -d "$full_path" ]; then
         if [ -n "$NEW_LD_PATH" ]; then
@@ -311,12 +319,14 @@ print('Preloading CUDA libraries...')
 # These are the actual .so versions from the pinned nvidia packages
 libs_to_load = [
     ('libcudart.so.12', 'CUDA runtime'),
+    ('libnvJitLink.so.12', 'nvJitLink'),
+    ('libnccl.so.2', 'NCCL'),
+    ('libcudnn.so.8', 'cuDNN'),
     ('libcublas.so.12', 'cuBLAS'),
     ('libcublasLt.so.12', 'cuBLAS Lt'),
     ('libcusolver.so.11', 'cuSOLVER'),
     ('libcusparse.so.12', 'cuSPARSE'),
     ('libcufft.so.11', 'cuFFT'),
-    ('libcudnn.so.8', 'cuDNN'),
 ]
 
 loaded = set()
@@ -365,13 +375,62 @@ if echo "$TEST_RESULT" | grep -q "JAX CUDA is working"; then
     echo " SUCCESS!"
     echo "========================================================================"
     echo ""
-    echo "Before running JAX/BaSiCPy, set LD_LIBRARY_PATH:"
+    EXPORT_LINE="export LD_LIBRARY_PATH=\"${NEW_LD_PATH}:\${LD_LIBRARY_PATH}\""
+    echo "To use JAX/BaSiCPy in a new shell, set LD_LIBRARY_PATH:"
     echo ""
-    echo "  export LD_LIBRARY_PATH=\"${NEW_LD_PATH}:\${LD_LIBRARY_PATH}\""
+    echo "  ${EXPORT_LINE}"
     echo ""
-    echo "Or add to ~/.bashrc for permanent setup."
-    echo ""
-    echo "Verify with: linum_diagnose_pipeline.py --benchmark"
+
+    # --- Offer to persist LD_LIBRARY_PATH to shell config ---
+    if [ $INTERACTIVE -eq 1 ]; then
+        # Detect current shell for default suggestion
+        CURRENT_SHELL=$(basename "${SHELL:-bash}")
+        echo "Which shell config should the export line be added to?"
+        echo "  1) ~/.bashrc"
+        echo "  2) ~/.zshrc"
+        echo "  3) Both"
+        echo "  4) Skip"
+        printf "Choice [default: %s based on \$SHELL]: " \
+            "$([ "$CURRENT_SHELL" = 'zsh' ] && echo '2' || echo '1')"
+        read -r SHELL_CHOICE
+        # Default based on detected shell
+        if [ -z "$SHELL_CHOICE" ]; then
+            SHELL_CHOICE=$([ "$CURRENT_SHELL" = 'zsh' ] && echo '2' || echo '1')
+        fi
+        _add_to_config() {
+            local cfg="$1"
+            if grep -qF "${NEW_LD_PATH%%:*}" "$cfg" 2>/dev/null; then
+                echo "  ⚠️  $cfg already contains this path, skipping."
+            else
+                echo "" >> "$cfg"
+                echo "# Added by fix_jax_cuda_plugin.sh" >> "$cfg"
+                echo "${EXPORT_LINE}" >> "$cfg"
+                echo "  ✓ Added to $cfg"
+            fi
+        }
+        case "$SHELL_CHOICE" in
+            1) _add_to_config "$HOME/.bashrc" ;;
+            2) _add_to_config "$HOME/.zshrc" ;;
+            3) _add_to_config "$HOME/.bashrc"
+               _add_to_config "$HOME/.zshrc" ;;
+            4|*) echo "  Skipped. Run the export manually or add it yourself." ;;
+        esac
+        echo ""
+    else
+        echo "Run in interactive mode to be prompted to save this to your shell config."
+        echo ""
+    fi
+
+    # --- Optional benchmark ---
+    if [ $RUN_BENCHMARK -eq 1 ]; then
+        echo "========================================================================"
+        echo " Running GPU benchmark..."
+        echo "========================================================================"
+        "$PYTHON_CMD" -m scripts.linum_benchmark_gpu 2>&1 || \
+            "$PYTHON_CMD" -c "import runpy, sys; sys.argv=['linum_benchmark_gpu.py']; runpy.run_module('scripts.linum_benchmark_gpu', run_name='__main__')" 2>&1 || true
+    else
+        echo "Tip: re-run with --benchmark to also run the GPU performance benchmark."
+    fi
 else
     echo ""
     echo "========================================================================"
