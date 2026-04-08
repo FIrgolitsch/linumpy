@@ -1008,8 +1008,10 @@ def fix_galvo_shift(vol: np.ndarray, shift: int = 0, axis: int = 1) -> np.ndarra
 def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 2.0, use_log: bool = False) -> int:
     """Detect water/tissue interface along Z using gradient-based method.
 
-    Applies Gaussian smoothing then finds the peak of the first-order
-    Z-derivative to locate the tissue surface.
+    Uses per-pixel argmax on the Z-derivative, then takes the median
+    over tissue-containing pixels for robust aggregation.  This avoids
+    the failure mode where a spatially-coherent dead-zone gradient at
+    z ≈ 0 dominates a sum-then-argmax approach.
 
     Parameters
     ----------
@@ -1031,24 +1033,23 @@ def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 
 
     vol_f = np.log(vol + 1e-6) if use_log else vol.astype(np.float32)
 
-    pad_width = int(np.round(sigma_z * 4))
-    vol_padded = np.pad(vol_f, ((0, 0), (0, 0), (pad_width, 0)), mode="edge")
-    vol_padded = gaussian_filter(vol_padded, (sigma_xy, sigma_xy, 0))
-    dz = gaussian_filter1d(vol_padded, sigma=sigma_z, axis=-1, order=1)
+    # Smooth in XY, compute Z derivative (no padding needed)
+    vol_smooth = gaussian_filter(vol_f, (sigma_xy, sigma_xy, 0))
+    dz = gaussian_filter1d(vol_smooth, sigma=sigma_z, axis=-1, order=1)
 
-    # Mask to tissue-containing (X,Y) positions so background doesn't
-    # dilute the gradient signal when tissue covers a small fraction of XY.
-    mean_xy = np.mean(vol_f, axis=2)  # (X, Y)
-    nonzero_vals = mean_xy[mean_xy > 0]
-    if nonzero_vals.size > 0:
-        threshold = np.percentile(nonzero_vals, 5)
-        tissue_mask = mean_xy > threshold  # (X, Y)
-        avg_dz = np.sum(dz[tissue_mask, :], axis=0)
-    else:
-        avg_dz = np.sum(dz, axis=(0, 1))
+    # Per-pixel interface detection: argmax along Z for each (X, Y)
+    iface_map = np.argmax(dz, axis=2)  # (X, Y)
 
-    avg_iface = max(int(np.argmax(avg_dz)) - pad_width, 0)
-    return avg_iface
+    # Tissue mask: keep only pixels with a strong Z gradient (i.e. a
+    # water→tissue transition).  Using 10 % of the peak gradient as
+    # threshold cleanly separates tissue pixels from noise-only pixels.
+    max_dz = np.max(dz, axis=2)  # (X, Y)
+    grad_threshold = np.max(max_dz) * 0.1
+    tissue_mask = max_dz > grad_threshold
+
+    avg_iface = int(np.median(iface_map[tissue_mask])) if np.any(tissue_mask) else int(np.median(iface_map))
+
+    return max(avg_iface, 0)
 
 
 def crop_below_interface(
