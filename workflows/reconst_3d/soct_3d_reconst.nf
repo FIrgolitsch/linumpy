@@ -385,11 +385,14 @@ process stitch_3d {
 }
 
 process stitch_3d_with_refinement {
+    publishDir "${params.output}/${task.process}", mode: 'copy', pattern: "*_metrics.json"
+
     input:
     tuple val(slice_id), path(mosaic_grid)
 
     output:
-    tuple val(slice_id), path("slice_z${slice_id}_stitch_3d.ome.zarr")
+    tuple val(slice_id), path("slice_z${slice_id}_stitch_3d.ome.zarr"), emit: stitched
+    path("*_metrics.json"), optional: true, emit: metrics
 
     script:
     """
@@ -1047,7 +1050,7 @@ workflow {
 
     // Stage 2: XY Stitching (image-registration-based blend refinement)
     stitch_3d_with_refinement(illum_fixed)
-    stitched_slices = stitch_3d_with_refinement.out
+    stitched_slices = stitch_3d_with_refinement.out.stitched
 
     if (params.stitch_preview) {
         generate_stitch_preview(stitched_slices)
@@ -1175,7 +1178,7 @@ workflow {
                     shifts = item
                 } else if (name.endsWith('.ome.zarr')) {
                     slices << item
-                } else {
+                } else if (!name.endsWith('.json')) {
                     transforms << item
                 }
             }
@@ -1217,14 +1220,12 @@ workflow {
     def runRotationAnalysis = params.diagnostic_mode || params.analyze_rotation_drift
     def runMotorOnlyStitch = params.diagnostic_mode || params.motor_only_stitch
     def runMotorOnlyStack = params.diagnostic_mode || params.motor_only_stack
-    def runDilationDiagnostics = params.diagnostic_mode || params.analyze_tile_dilation
     def runAcquisitionRotation = params.diagnostic_mode || params.analyze_acquisition_rotation
 
     if (params.diagnostic_mode) {
         log.info "DIAGNOSTIC MODE enabled:"
         log.info "  - Acquisition rotation analysis"
         log.info "  - Registration rotation drift"
-        log.info "  - Tile dilation analysis"
         log.info "  - Motor-only stitching (per-slice)"
         log.info "  - Motor-only stacking (3D volume)"
     }
@@ -1235,12 +1236,6 @@ workflow {
 
     if (runRotationAnalysis) {
         analyze_rotation_drift(register_pairwise.out.collect())
-    }
-
-    if (runDilationDiagnostics) {
-        log.warn "Tile dilation analysis skipped: requires AIP-based XY transform estimation,"
-        log.warn "  which is not part of the current pipeline. To analyze tile dilation,"
-        log.warn "  run estimate_xy_transformation separately."
     }
 
     if (runMotorOnlyStitch) {
