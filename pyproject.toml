@@ -185,6 +185,18 @@ dev = [
     "pre-commit>=4.5.1",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # Third-party: SWIG/SimpleITK native type registration (SwigPyPacked, SwigPyObject, swigvarlink)
+    "ignore:builtin type [Ss]wig.*has no __module__ attribute:DeprecationWarning",
+    # Third-party: nrrd library uses deprecated datetime.utcnow()
+    "ignore:datetime.datetime.utcnow\\(\\) is deprecated:DeprecationWarning:nrrd",
+    # Expected with test data: OCT files have no extra a-lines for shift estimation
+    "ignore:Cannot estimate the shift correction:UserWarning",
+    # Intentional deprecation of linum_stack_slices_3d.py
+    "ignore:linum_stack_slices_3d.py is deprecated:DeprecationWarning",
+]
+
 [tool.setuptools.packages.find]
 include = ["linumpy*", "scripts*"]
 

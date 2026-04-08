@@ -197,8 +197,9 @@ def compute_edge_score(vol: np.ndarray, reference: np.ndarray, sample_z: int | N
     if edges_r.max() > 0:
         edges_r = edges_r / edges_r.max()
 
-    # Compute correlation
-    correlation = np.corrcoef(edges_v.flatten(), edges_r.flatten())[0, 1]
+    # Compute correlation — suppress divide warning when edges are constant (e.g. zero array)
+    with np.errstate(invalid="ignore"):
+        correlation = np.corrcoef(edges_v.flatten(), edges_r.flatten())[0, 1]
 
     if np.isnan(correlation):
         return 0.0
