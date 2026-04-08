@@ -506,8 +506,12 @@ def main():
                 load_min_zcorr=args.load_min_zcorr,
                 load_max_rotation=args.load_max_rotation,
             )
+            n_expected = len(available_ids) - 1  # First slice has no transform
             n_loaded = sum(1 for v in registration_transforms.values() if v is not None)
-            logger.info(f"Loaded {n_loaded} transforms for refinement")
+            n_missing = n_expected - n_loaded
+            logger.info(f"Loaded {n_loaded}/{n_expected} transforms for refinement")
+            if n_missing > 0:
+                logger.warning(f"Missing transforms for {n_missing} slices (will use motor-only positioning)")
 
             # Force-skip transforms for auto-excluded slices
             if args.force_skip_slices:
