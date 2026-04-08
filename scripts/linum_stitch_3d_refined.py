@@ -286,6 +286,39 @@ def main():
 
     save_omezarr(da.from_array(output), str(output_file), resolution, n_levels=3)
 
+    # Collect metrics
+    from linumpy.utils.metrics import PipelineMetrics
+
+    metrics = PipelineMetrics("stitch_3d_refined", str(output_file.parent))
+    metrics.add_info("input_volume", str(input_file), "Input mosaic grid path")
+    metrics.add_info("output_volume", str(output_file), "Output stitched volume path")
+    metrics.add_info("input_shape", list(volume.shape), "Input mosaic shape")
+    metrics.add_info("output_shape", list(output_shape), "Output stitched shape")
+    metrics.add_info("num_tiles", nx * ny, "Number of tiles stitched")
+    metrics.add_info("resolution", [float(r) for r in resolution], "Output resolution (mm)")
+    metrics.add_info("blending_method", args.blending_method, "Blending method used")
+    metrics.add_info("refinement_mode", args.refinement_mode, "Refinement strategy")
+
+    metrics.add_metric("total_pairs", stats["total_pairs"], description="Total tile pairs evaluated")
+    metrics.add_metric(
+        "valid_pairs", stats["valid_pairs"], description="Successfully registered tile pairs", threshold_name="correlation"
+    )
+    metrics.add_metric("clamped_pairs", stats["clamped_pairs"], description="Pairs with clamped large shifts")
+    metrics.add_metric("mean_refinement", stats["mean_refinement"], unit="px", description="Mean refinement shift in pixels")
+    metrics.add_metric("max_refinement", stats["max_refinement"], unit="px", description="Max refinement shift in pixels")
+
+    if not diagnostics.get("fallback", False):
+        metrics.add_metric("theta_deg", diagnostics["theta_deg"], unit="deg", description="Scan-to-stage rotation")
+        metrics.add_metric("phi_deg", diagnostics["phi_deg"], unit="deg", description="Non-perpendicularity angle")
+        metrics.add_metric("Ox_fraction", diagnostics["Ox_fraction"], description="Effective overlap fraction (X)")
+        metrics.add_metric("Oy_fraction", diagnostics["Oy_fraction"], description="Effective overlap fraction (Y)")
+
+    overlap_reduction = 1.0 - (np.prod(output_shape) / np.prod(volume.shape))
+    metrics.add_metric("overlap_reduction", float(overlap_reduction), description="Fraction of pixels removed by stitching")
+
+    metrics.save(f"{output_file.stem}_metrics.json")
+    metrics.log_issues()
+
     logger.info("Done!")
 
 
