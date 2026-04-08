@@ -38,7 +38,7 @@ def _build_arg_parser():
         choices=["none", "average", "diffusion"],
         help="Blending method. (default=%(default)s)",
     )
-    p.add_argument("--complex_input", default=False, help="If the input is complex data (default=%(default)s)")
+    p.add_argument("--complex_input", action="store_true", help="If the input is complex data (default=%(default)s)")
     return p
 
 
