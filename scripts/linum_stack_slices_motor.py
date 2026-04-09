@@ -262,6 +262,17 @@ def _build_arg_parser():
         help="Metric-based transform gating: maximum rotation (degrees) to load\n"
         "a transform. Paired with --load_min_zcorr. 0 = disabled. [%(default)s]",
     )
+    p.add_argument(
+        "--translation_min_zcorr",
+        type=float,
+        default=0.2,
+        help="Minimum z_correlation to use a slice's translation for accumulation.\n"
+        "This is separate from --load_min_zcorr: a transform may be gated out\n"
+        "(e.g. bad rotation) but its translation can still be valid for\n"
+        "cumulative positioning. Set lower than load_min_zcorr to recover\n"
+        "translations from partially-failed registrations. 0 = use all\n"
+        "translations regardless of quality. [%(default)s]",
+    )
 
     add_overwrite_arg(p)
     return p
@@ -299,13 +310,19 @@ def load_registration_transforms(
 
     Returns
     -------
-    dict
-        Mapping from slice_id to (transform, z_offset) tuple
+    tuple[dict, dict]
+        First dict: mapping from slice_id to (transform, fixed_z, moving_z, confidence)
+        or None for gated/missing slices.
+        Second dict: mapping from slice_id to (tx, ty, zcorr) for ALL slices
+        that have metrics, regardless of whether the transform was accepted.
+        This allows translation accumulation to use translations from slices
+        whose transforms were gated out (e.g. bad rotation but valid translation).
     """
     import json
 
     transforms_dir = Path(transforms_dir)
     transforms = {}
+    all_pairwise_translations = {}
     use_metric_gating = load_min_zcorr > 0 and load_max_rotation > 0
 
     for slice_id in slice_ids[1:]:  # First slice has no transform
@@ -330,7 +347,8 @@ def load_registration_transforms(
             continue
 
         try:
-            # Read registration quality metrics (always, to extract confidence score)
+            # Read registration quality metrics (always, to extract confidence score
+            # and pairwise translations for accumulation)
             confidence = 1.0
             metrics_files = list(transform_dir.glob("pairwise_registration_metrics.json"))
             if metrics_files:
@@ -341,6 +359,20 @@ def load_registration_transforms(
                     confidence = float(metrics_data["metrics"]["registration_confidence"]["value"])
                 except (KeyError, TypeError, ValueError):
                     confidence = 1.0  # fallback for older JSONs without confidence score
+
+                # Always extract translations and zcorr for accumulation,
+                # BEFORE gating — so translations are available even for
+                # slices whose transforms are skipped due to bad rotation.
+                try:
+                    metrics_tx = float(metrics_data["metrics"]["translation_x"]["value"])
+                    metrics_ty = float(metrics_data["metrics"]["translation_y"]["value"])
+                except (KeyError, TypeError, ValueError):
+                    metrics_tx, metrics_ty = 0.0, 0.0
+                try:
+                    metrics_zcorr = float(metrics_data["metrics"]["z_correlation"]["value"])
+                except (KeyError, TypeError, ValueError):
+                    metrics_zcorr = 0.0
+                all_pairwise_translations[slice_id] = (metrics_tx, metrics_ty, metrics_zcorr)
 
                 if use_metric_gating:
                     # Metric-based gating: accept based on z_correlation and rotation
@@ -396,7 +428,7 @@ def load_registration_transforms(
             logger.warning(f"Could not load transform for slice {slice_id}: {e}")
             transforms[slice_id] = None
 
-    return transforms
+    return transforms, all_pairwise_translations
 
 
 def compute_output_shape(slice_files, cumsum_px, first_vol_shape):
@@ -502,11 +534,12 @@ def main():
 
     # Load registration transforms if provided
     registration_transforms = {}
+    all_pairwise_translations = {}
     if args.transforms_dir:
         transforms_dir = Path(args.transforms_dir)
         if transforms_dir.exists():
             logger.info(f"Loading registration transforms from {transforms_dir}")
-            registration_transforms = load_registration_transforms(
+            registration_transforms, all_pairwise_translations = load_registration_transforms(
                 transforms_dir,
                 available_ids,
                 skip_error_status=args.skip_error_transforms,
@@ -535,6 +568,8 @@ def main():
                         if sid in registration_transforms and registration_transforms[sid] is not None:
                             registration_transforms[sid] = None
                             n_forced += 1
+                        # Also remove from pairwise translations so accumulation skips them
+                        all_pairwise_translations.pop(sid, None)
                     if force_skip_ids:
                         logger.info(
                             f"Force-skipped {n_forced} transforms from auto-exclude list ({len(force_skip_ids)} slices listed)"
@@ -546,19 +581,37 @@ def main():
     # Translations are moved from the transforms into cumsum_px so that:
     # 1. The output canvas is sized to accommodate the cumulative shifts
     # 2. Transforms only apply rotation (no content lost at slice edges)
-    if args.accumulate_translations and registration_transforms:
+    if args.accumulate_translations and (registration_transforms or all_pairwise_translations):
         # Save motor baseline for targeted smoothing later
         motor_baseline = {sid: cumsum_px[sid] for sid in cumsum_px}
 
-        # First pass: extract all pairwise translations
+        # First pass: extract all pairwise translations from metrics data.
+        # Uses all_pairwise_translations (collected for ALL slices, including
+        # those whose transforms were gated out due to bad rotation).
+        # This decouples translation accumulation from transform rotation gating.
         pairwise_translations = {}
+        n_from_metrics = 0
+        n_zcorr_skipped = 0
         for slice_id in available_ids[1:]:
-            if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
-                transform, fixed_z, moving_z, _ = registration_transforms[slice_id]
-                params = list(transform.GetParameters())
-                tx = params[3] if len(params) > 3 else 0
-                ty = params[4] if len(params) > 4 else 0
+            if slice_id in all_pairwise_translations:
+                tx, ty, zcorr = all_pairwise_translations[slice_id]
+                # Apply separate zcorr threshold for translations
+                if args.translation_min_zcorr > 0 and zcorr < args.translation_min_zcorr:
+                    logger.debug(f"Slice {slice_id}: skipping translation (zcorr={zcorr:.3f} < {args.translation_min_zcorr})")
+                    n_zcorr_skipped += 1
+                    continue
                 pairwise_translations[slice_id] = (tx, ty)
+                # Log whether this came from a loaded or gated-out transform
+                if slice_id not in registration_transforms or registration_transforms[slice_id] is None:
+                    n_from_metrics += 1
+                    logger.debug(
+                        f"Slice {slice_id}: using translation from metrics (transform gated out) "
+                        f"tx={tx:.1f}, ty={ty:.1f}, zcorr={zcorr:.3f}"
+                    )
+        if n_from_metrics > 0:
+            logger.info(f"Recovered {n_from_metrics} translations from gated-out transforms via metrics")
+        if n_zcorr_skipped > 0:
+            logger.info(f"Skipped {n_zcorr_skipped} translations due to low zcorr (< {args.translation_min_zcorr})")
 
         # Filter unreliable translations before accumulation
         # Translations at the registration boundary are optimizer failures, not real corrections
