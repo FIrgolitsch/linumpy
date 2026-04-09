@@ -467,11 +467,15 @@ def apply_transform_to_zarr(
     # Compute reference image and modified transform that centers the output
     reference, centered_transform = compute_centered_reference_and_transform(vol_sitk, transform)
 
-    # Resample
+    # Resample — use a tissue-representative background value instead of 0
+    # to avoid black borders that skew downstream normalization and visualization.
+    vol_arr = sitk.GetArrayViewFromImage(vol_sitk)
+    nonzero = vol_arr[vol_arr > 0]
+    bg_value = float(np.percentile(nonzero, 1)) if len(nonzero) > 0 else 0.0
     resampler = sitk.ResampleImageFilter()
     resampler.SetReferenceImage(reference)
     resampler.SetInterpolator(sitk.sitkLinear)
-    resampler.SetDefaultPixelValue(0)
+    resampler.SetDefaultPixelValue(bg_value)
     resampler.SetTransform(centered_transform)
 
     transformed_sitk = resampler.Execute(vol_sitk)
@@ -627,10 +631,13 @@ def create_alignment_preview(
         # Create reference and centered transform
         reference, centered_transform = compute_centered_reference_and_transform(vol_sitk, transform)
 
+        vol_arr = sitk.GetArrayViewFromImage(vol_sitk)
+        nonzero = vol_arr[vol_arr > 0]
+        bg_value = float(np.percentile(nonzero, 1)) if len(nonzero) > 0 else 0.0
         resampler = sitk.ResampleImageFilter()
         resampler.SetReferenceImage(reference)
         resampler.SetInterpolator(sitk.sitkLinear)
-        resampler.SetDefaultPixelValue(0)
+        resampler.SetDefaultPixelValue(bg_value)
         resampler.SetTransform(centered_transform)
         transformed_sitk = resampler.Execute(vol_sitk)
         vol_aligned = np.transpose(sitk.GetArrayFromImage(transformed_sitk), (0, 2, 1))
