@@ -713,6 +713,7 @@ process stack {
     }
 
     if (params.stack_smooth_window > 0) options += " --smooth_window ${params.stack_smooth_window}"
+    if (params.stack_translation_smooth_sigma > 0) options += " --translation_smooth_sigma ${params.stack_translation_smooth_sigma}"
 
     // Slices are already in common space; skip redundant XY shifting
     options += " --no_xy_shift"
