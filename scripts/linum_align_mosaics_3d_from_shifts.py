@@ -78,6 +78,15 @@ def _build_arg_parser():
         "Recommended: 50. Guards against phase-correlation failures on large-\n"
         "offset or low-overlap transitions where the image estimate is wrong.",
     )
+    p.add_argument(
+        "--refine_min_correlation",
+        type=float,
+        default=0.0,
+        help="Minimum normalized cross-correlation (0-1) from phase cross-correlation\n"
+        "to accept an image-based refinement. 0 = accept all (default).\n"
+        "Recommended: 0.15-0.3. Rejects refinements where the phase correlation\n"
+        "quality is too low, indicating an unreliable shift estimate.",
+    )
 
     add_overwrite_arg(p)
     return p
@@ -279,7 +288,10 @@ def _estimate_shift_by_registration(fixed_path, moving_path):
     fixed_padded = _pad(fixed_proj, h, w)
     moving_padded = _pad(moving_proj, h, w)
 
-    shift, _, _ = phase_cross_correlation(fixed_padded, moving_padded, upsample_factor=10)
+    shift, error, _ = phase_cross_correlation(fixed_padded, moving_padded, upsample_factor=10)
+    # error is the translation-invariant normalized RMS error: 0 = perfect, 1 = no correlation.
+    # ncc = 1 - error gives a correlation quality metric (higher = better match).
+    ncc = 1.0 - error
 
     # phase_cross_correlation returns (row_shift, col_shift) = (dy, dx) in pixels.
     # A positive dy means the moving image is shifted downward (larger row index = larger Y).
@@ -296,7 +308,7 @@ def _estimate_shift_by_registration(fixed_path, moving_path):
     dx_mm = dx_px * res_x_mm
     dy_mm = dy_px * res_y_mm
 
-    return dx_mm, dy_mm, dx_px, dy_px
+    return dx_mm, dy_mm, dx_px, dy_px, ncc
 
 
 def main():
@@ -369,12 +381,20 @@ def main():
                     print(f"  Skipping z{fixed_id:02d}→z{moving_id:02d}: mosaic file(s) not found")
                     continue
                 try:
-                    dx_mm, dy_mm, dx_px, dy_px = _estimate_shift_by_registration(
+                    dx_mm, dy_mm, dx_px, dy_px, ncc = _estimate_shift_by_registration(
                         mosaic_files[fixed_id], mosaic_files[moving_id]
                     )
-                    # Check discrepancy between image estimate and original motor estimate
+                    # Check correlation quality — reject low-quality phase correlations
                     orig_dx_mm = shifts_df.loc[idx, "x_shift_mm"]
                     orig_dy_mm = shifts_df.loc[idx, "y_shift_mm"]
+                    if args.refine_min_correlation > 0 and ncc < args.refine_min_correlation:
+                        print(
+                            f"  z{fixed_id:02d}→z{moving_id:02d}: image estimate discarded "
+                            f"(ncc={ncc:.3f} < {args.refine_min_correlation:.3f}); "
+                            f"keeping motor estimate ({orig_dx_mm:.3f}, {orig_dy_mm:.3f}) mm"
+                        )
+                        continue
+                    # Check discrepancy between image estimate and original motor estimate
                     if args.refine_max_discrepancy_px > 0 and "x_shift" in shifts_df.columns:
                         orig_dx_px = float(shifts_df.loc[idx, "x_shift"])
                         orig_dy_px = float(shifts_df.loc[idx, "y_shift"])
@@ -383,14 +403,14 @@ def main():
                             print(
                                 f"  z{fixed_id:02d}→z{moving_id:02d}: image estimate discarded "
                                 f"(discrepancy={discrepancy_px:.1f} px > "
-                                f"{args.refine_max_discrepancy_px:.0f} px threshold); "
+                                f"{args.refine_max_discrepancy_px:.0f} px threshold, ncc={ncc:.3f}); "
                                 f"keeping motor estimate ({orig_dx_mm:.3f}, {orig_dy_mm:.3f}) mm"
                             )
                             continue
                     print(
                         f"  z{fixed_id:02d}→z{moving_id:02d}: metadata=({orig_dx_mm:.3f}, "
                         f"{orig_dy_mm:.3f}) mm → "
-                        f"registered=({dx_mm:.3f}, {dy_mm:.3f}) mm"
+                        f"registered=({dx_mm:.3f}, {dy_mm:.3f}) mm [ncc={ncc:.3f}]"
                     )
                     shifts_df.loc[idx, "x_shift_mm"] = dx_mm
                     shifts_df.loc[idx, "y_shift_mm"] = dy_mm

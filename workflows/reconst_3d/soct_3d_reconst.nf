@@ -499,9 +499,10 @@ process detect_rehoming_events {
     def diag_arg = params.rehoming_diagnostics ? "--diagnostics diagnostics" : ""
     def frac_arg = params.rehoming_return_fraction ? "--return_fraction ${params.rehoming_return_fraction}" : ""
     def tile_fov_arg = params.tile_fov_mm ? "--tile_fov_mm ${params.tile_fov_mm}" : ""
+    def tile_tol_arg = (params.tile_fov_mm && params.tile_fov_tolerance != null) ? "--tile_fov_tolerance ${params.tile_fov_tolerance}" : ""
     def max_shift_arg = params.rehoming_max_shift_mm ? "--max_shift_mm ${params.rehoming_max_shift_mm}" : ""
     """
-    linum_detect_rehoming.py ${shifts_csv} shifts_xy_clean.csv ${frac_arg} ${max_shift_arg} ${tile_fov_arg} ${diag_arg}
+    linum_detect_rehoming.py ${shifts_csv} shifts_xy_clean.csv ${frac_arg} ${max_shift_arg} ${tile_fov_arg} ${tile_tol_arg} ${diag_arg}
     """
 }
 
@@ -543,10 +544,12 @@ process bring_to_common_space {
     def refine_arg = params.common_space_refine_unreliable ? "--refine_unreliable" : ""
     def discrepancy_arg = (params.common_space_refine_unreliable && params.common_space_refine_max_discrepancy_px > 0) ?
         "--refine_max_discrepancy_px ${params.common_space_refine_max_discrepancy_px}" : ""
+    def min_corr_arg = (params.common_space_refine_unreliable && params.common_space_refine_min_correlation > 0) ?
+        "--refine_min_correlation ${params.common_space_refine_min_correlation}" : ""
 
     """
     linum_align_mosaics_3d_from_shifts.py inputs shifts_xy.csv common_space \
-        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg}
+        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}
     mv common_space/* .
     """
 }
