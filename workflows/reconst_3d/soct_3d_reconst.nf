@@ -743,7 +743,7 @@ process stack {
     linum_screenshot_omezarr.py ${subject_name}.ome.zarr ${subject_name}.png
     linum_screenshot_omezarr_annotated.py ${subject_name}.ome.zarr ${subject_name}_annotated.png \
         --slice_ids "${slice_ids_str}" \
-        --label_every ${params.annotated_label_every} ${show_lines_flag} ${orientation_arg}
+        --label_every ${params.annotated_label_every} ${show_lines_flag} ${orientation_arg} --crop_to_tissue
     """
 }
 
@@ -794,7 +794,7 @@ process normalize_z_intensity {
 
     linum_screenshot_omezarr_annotated.py ${subject_name}.ome.zarr ${subject_name}_annotated.png \
         --slice_ids "${slice_ids_str}" \
-        --label_every ${params.annotated_label_every} ${show_lines_flag} ${orientation_arg}
+        --label_every ${params.annotated_label_every} ${show_lines_flag} ${orientation_arg} --crop_to_tissue
     """
 }
 
