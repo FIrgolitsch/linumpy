@@ -288,10 +288,17 @@ def _estimate_shift_by_registration(fixed_path, moving_path):
     fixed_padded = _pad(fixed_proj, h, w)
     moving_padded = _pad(moving_proj, h, w)
 
-    shift, error, _ = phase_cross_correlation(fixed_padded, moving_padded, upsample_factor=10)
-    # error is the translation-invariant normalized RMS error: 0 = perfect, 1 = no correlation.
-    # ncc = 1 - error gives a correlation quality metric (higher = better match).
-    ncc = 1.0 - error
+    shift, _error, _ = phase_cross_correlation(fixed_padded, moving_padded, upsample_factor=10)
+
+    # Compute NCC on the overlap region after applying the estimated shift.
+    dy_int, dx_int = round(float(shift[0])), round(float(shift[1]))
+    fy0, fy1 = max(0, dy_int), min(h, h + dy_int)
+    fx0, fx1 = max(0, dx_int), min(w, w + dx_int)
+    my0, my1 = max(0, -dy_int), min(h, h - dy_int)
+    mx0, mx1 = max(0, -dx_int), min(w, w - dx_int)
+    f_crop = fixed_padded[fy0:fy1, fx0:fx1]
+    m_crop = moving_padded[my0:my1, mx0:mx1]
+    ncc = float(np.corrcoef(f_crop.flat, m_crop.flat)[0, 1]) if f_crop.size > 0 else 0.0
 
     # phase_cross_correlation returns (row_shift, col_shift) = (dy, dx) in pixels.
     # A positive dy means the moving image is shifted downward (larger row index = larger Y).
