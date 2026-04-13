@@ -193,11 +193,12 @@ def register_3d_rigid_to_allen(
             print(f"Cropped tissue bounding box: {moving_image.shape} -> {cropped.shape}")
         moving_image = cropped
 
-    # Convert moving image to SimpleITK format
+    # Convert moving image to SimpleITK format.
+    # Origin stays at (0,0,0) so the compact brain sits at the start of physical
+    # space and overlaps with the Allen atlas domain during resampling.  The crop
+    # offset is added to the final transform's translation after registration so
+    # the transform remains valid for the original (uncropped) full volume.
     moving_sitk = numpy_to_sitk_image(moving_image, moving_spacing)
-    # Set origin to reflect original physical position of cropped region.
-    # numpy (Z,X,Y) -> SITK origin (X,Y,Z)
-    moving_sitk.SetOrigin([crop_origin_mm[1], crop_origin_mm[2], crop_origin_mm[0]])
 
     # Compute a preliminary brain centre BEFORE any resampling.
     # This is used as the fallback only when needs_resample=False (images already
@@ -418,5 +419,24 @@ def register_3d_rigid_to_allen(
         print(f"Final transform: rotation={final_params[:3]}, translation={final_params[3:]}")
         print(f"Fixed image size: {fixed_image.GetSize()}, spacing: {fixed_image.GetSpacing()}")
         print(f"Moving image size: {moving_image_sitk.GetSize()}, spacing: {moving_image_sitk.GetSpacing()}")
+
+    # Restore crop offset in the translation so the transform is valid for the
+    # full original (uncropped) brain volume.  Derivation:
+    #   T(p) = R(p-c)+c+t maps Allen coords to cropped-brain coords (origin=0).
+    #   Same tissue in full brain is at (cropped_coord + crop_origin_mm).
+    #   So t_full = t_crop + crop_origin_sitk  (center c cancels out).
+    if any(v != 0.0 for v in crop_origin_mm):
+        params = list(final_transform.GetParameters())
+        # SITK Euler3D params: (rx, ry, rz, tx, ty, tz) in SITK XYZ order
+        # numpy axis order (Z, X, Y)  ->  SITK (X, Y, Z):
+        params[3] += crop_origin_mm[1]  # SITK X = numpy axis 1
+        params[4] += crop_origin_mm[2]  # SITK Y = numpy axis 2
+        params[5] += crop_origin_mm[0]  # SITK Z = numpy axis 0
+        final_transform.SetParameters(params)
+        if verbose:
+            print(
+                f"Adjusted translation for crop: +"
+                f"[{crop_origin_mm[1]:.3f}, {crop_origin_mm[2]:.3f}, {crop_origin_mm[0]:.3f}] mm (SITK XYZ)"
+            )
 
     return final_transform, stop_condition, error
