@@ -167,8 +167,37 @@ def register_3d_rigid_to_allen(
     # Download and prepare Allen atlas in RAS orientation
     allen_atlas = download_template_ras_aligned(allen_resolution, cache=True)
 
+    # Crop moving image to tissue bounding box to reduce volume size.
+    # Large motor drift during acquisition inflates the canvas with empty space,
+    # causing the Allen-domain resampling to clip away brain tissue.  Cropping
+    # first keeps the volume compact so most of the brain survives resampling,
+    # giving the optimizer a much better cost-function landscape.
+    margin_voxels = 10
+    crop_origin_mm = (0.0, 0.0, 0.0)  # physical offset in (Z, X, Y) order
+    nonzero_coords = np.nonzero(moving_image)
+    if len(nonzero_coords[0]) > 0:
+        bbox_slices = tuple(
+            slice(
+                max(0, int(dim.min()) - margin_voxels),
+                min(moving_image.shape[ax], int(dim.max()) + margin_voxels + 1),
+            )
+            for ax, dim in enumerate(nonzero_coords)
+        )
+        crop_origin_mm = (
+            bbox_slices[0].start * moving_spacing[0],
+            bbox_slices[1].start * moving_spacing[1],
+            bbox_slices[2].start * moving_spacing[2],
+        )
+        cropped = moving_image[bbox_slices]
+        if verbose:
+            print(f"Cropped tissue bounding box: {moving_image.shape} -> {cropped.shape}")
+        moving_image = cropped
+
     # Convert moving image to SimpleITK format
     moving_sitk = numpy_to_sitk_image(moving_image, moving_spacing)
+    # Set origin to reflect original physical position of cropped region.
+    # numpy (Z,X,Y) -> SITK origin (X,Y,Z)
+    moving_sitk.SetOrigin([crop_origin_mm[1], crop_origin_mm[2], crop_origin_mm[0]])
 
     # Compute a preliminary brain centre BEFORE any resampling.
     # This is used as the fallback only when needs_resample=False (images already
