@@ -589,6 +589,7 @@ def main():
             logger.warning(f"Transforms directory not found: {transforms_dir}")
 
     # Merge manual transforms (override automated ones for matching slice IDs)
+    manual_override_ids: set[int] = set()
     if args.manual_transforms_dir:
         manual_dir = Path(args.manual_transforms_dir)
         if manual_dir.exists():
@@ -605,6 +606,7 @@ def main():
             for sid, tfm in manual_transforms.items():
                 if tfm is not None:
                     registration_transforms[sid] = tfm
+                    manual_override_ids.add(sid)
                     n_manual += 1
                     logger.info(f"  Manual override: slice z{sid:02d}")
             for sid, pairwise in manual_pairwise_translations.items():
@@ -1125,6 +1127,7 @@ def main():
                     "slice_id": sid,
                     "fixed_id": match["fixed_id"],
                     "transform_loaded": has_tfm,
+                    "transform_source": "manual" if sid in manual_override_ids else "automated",
                     "confidence": round(conf, 4) if conf is not None else "",
                     "overlap_source": overlap_src,
                     "overlap_voxels": match["overlap_voxels"],
