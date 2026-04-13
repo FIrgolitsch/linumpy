@@ -657,7 +657,7 @@ process make_manual_align_package {
     tuple path("slices/*"), path("transforms/*")
 
     output:
-    path("manual_align_package"), emit: package
+    path("manual_align_package"), emit: pkg
 
     script:
     """
