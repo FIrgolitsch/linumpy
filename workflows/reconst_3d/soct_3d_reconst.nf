@@ -1175,6 +1175,12 @@ workflow {
 
     register_pairwise(pairs)
 
+    // Stage 7: Stacking
+    log.info "Stacking slices with registration refinements"
+
+    slices_collected = all_slices.flatten().collect()
+    transforms_collected = register_pairwise.out.collect()
+
     // Stage 6.5: Export Manual Alignment Data (optional)
     if (params.export_manual_align) {
         export_input = slices_collected
@@ -1194,12 +1200,6 @@ workflow {
             }
         make_manual_align_package(export_input)
     }
-
-    // Stage 7: Stacking
-    log.info "Stacking slices with registration refinements"
-
-    slices_collected = all_slices.flatten().collect()
-    transforms_collected = register_pairwise.out.collect()
 
     // Auto-exclude: detect clusters of consecutive low-quality registrations
     if (params.auto_exclude_enabled) {
