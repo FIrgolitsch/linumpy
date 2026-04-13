@@ -647,6 +647,25 @@ process auto_exclude_slices {
 // Stacking Processes
 // -----------------------------------------------------------------------------
 
+// Export lightweight data package for the manual alignment tool.
+// Produces AIP images and copies pairwise transforms into a self-contained
+// directory that can be downloaded and opened by the manual alignment widget.
+process export_manual_align {
+    publishDir "$params.output/$task.process", mode: 'copy'
+
+    input:
+    tuple path("slices/*"), path("transforms/*")
+
+    output:
+    path("manual_align_package"), emit: package
+
+    script:
+    """
+    linum_export_manual_align.py slices transforms manual_align_package \
+        --level ${params.manual_align_level}
+    """
+}
+
 // Stacking: assembles common-space slices into a 3D volume using motor positions
 // for XY placement, pairwise registration for rotation/translation refinement,
 // and correlation or physics-based Z-matching.
@@ -700,6 +719,11 @@ process stack {
     // Auto-exclude: force motor-only stacking for low-quality clusters
     if (auto_exclude_csv.name != 'NO_AUTO_EXCLUDE') {
         options += " --force_skip_slices ${auto_exclude_csv}"
+    }
+
+    // Manual alignment overrides
+    if (params.manual_transforms_dir) {
+        options += " --manual_transforms_dir ${params.manual_transforms_dir}"
     }
 
     // Cumulative translation accumulation
@@ -1150,6 +1174,26 @@ workflow {
     pairs = fixed_slices.merge(moving_slices)
 
     register_pairwise(pairs)
+
+    // Stage 6.5: Export Manual Alignment Data (optional)
+    if (params.export_manual_align) {
+        export_input = slices_collected
+            .combine(transforms_collected)
+            .map { items ->
+                def slices = []
+                def transforms = []
+                items.each { item ->
+                    def name = item.getName()
+                    if (name.endsWith('.ome.zarr')) {
+                        slices << item
+                    } else if (!name.endsWith('.json')) {
+                        transforms << item
+                    }
+                }
+                tuple(slices, transforms)
+            }
+        export_manual_align(export_input)
+    }
 
     // Stage 7: Stacking
     log.info "Stacking slices with registration refinements"

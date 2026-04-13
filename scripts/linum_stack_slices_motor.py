@@ -274,6 +274,17 @@ def _build_arg_parser():
         "translations regardless of quality. [%(default)s]",
     )
 
+    p.add_argument(
+        "--manual_transforms_dir",
+        type=str,
+        default=None,
+        help="Directory containing manually corrected transforms (from the\n"
+        "manual alignment tool). These override automated transforms for\n"
+        "matching slice IDs. Each subdirectory should contain a transform.tfm\n"
+        "and pairwise_registration_metrics.json with source='manual'.\n"
+        "Default: none (use only automated transforms).",
+    )
+
     add_overwrite_arg(p)
     return p
 
@@ -576,6 +587,32 @@ def main():
                         )
         else:
             logger.warning(f"Transforms directory not found: {transforms_dir}")
+
+    # Merge manual transforms (override automated ones for matching slice IDs)
+    if args.manual_transforms_dir:
+        manual_dir = Path(args.manual_transforms_dir)
+        if manual_dir.exists():
+            logger.info(f"Loading manual transforms from {manual_dir}")
+            manual_transforms, manual_pairwise_translations = load_registration_transforms(
+                manual_dir,
+                available_ids,
+                skip_error_status=False,
+                skip_warning_status=False,
+                load_min_zcorr=0.0,
+                load_max_rotation=0.0,
+            )
+            n_manual = 0
+            for sid, tfm in manual_transforms.items():
+                if tfm is not None:
+                    registration_transforms[sid] = tfm
+                    n_manual += 1
+                    logger.info(f"  Manual override: slice z{sid:02d}")
+            for sid, pairwise in manual_pairwise_translations.items():
+                all_pairwise_translations[sid] = pairwise
+            if n_manual > 0:
+                logger.info(f"Applied {n_manual} manual transform overrides")
+        else:
+            logger.warning(f"Manual transforms directory not found: {manual_dir}")
 
     # Accumulate translations cumulatively if requested
     # Translations are moved from the transforms into cumsum_px so that:

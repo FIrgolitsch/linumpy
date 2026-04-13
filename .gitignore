@@ -168,6 +168,9 @@ cython_debug/
 # Nextflow files
 .nextflow/
 *.nextflow.log*
+
+# Standalone tools (separate git repos)
+tools/
 workflows/work/
 *work/
 

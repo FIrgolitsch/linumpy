@@ -139,6 +139,7 @@ docs = [
 "linum_estimate_transform_gpu.py" = "scripts.linum_estimate_transform_gpu:main"
 "linum_estimate_transform.py" = "scripts.linum_estimate_transform:main"
 "linum_estimate_xy_shift_from_metadata.py" = "scripts.linum_estimate_xy_shift_from_metadata:main"
+"linum_export_manual_align.py" = "scripts.linum_export_manual_align:main"
 "linum_extract_pyramid_levels.py" = "scripts.linum_extract_pyramid_levels:main"
 "linum_fix_galvo_shift_zarr.py" = "scripts.linum_fix_galvo_shift_zarr:main"
 "linum_fix_illumination_3d_gpu.py" = "scripts.linum_fix_illumination_3d_gpu:main"
