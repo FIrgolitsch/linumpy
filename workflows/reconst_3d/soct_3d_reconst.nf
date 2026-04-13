@@ -650,7 +650,7 @@ process auto_exclude_slices {
 // Export lightweight data package for the manual alignment tool.
 // Produces AIP images and copies pairwise transforms into a self-contained
 // directory that can be downloaded and opened by the manual alignment widget.
-process export_manual_align {
+process make_manual_align_package {
     publishDir "$params.output/$task.process", mode: 'copy'
 
     input:
@@ -1192,7 +1192,7 @@ workflow {
                 }
                 tuple(slices, transforms)
             }
-        export_manual_align(export_input)
+        make_manual_align_package(export_input)
     }
 
     // Stage 7: Stacking
