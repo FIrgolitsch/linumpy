@@ -35,6 +35,11 @@ def _save_aip_npz(aip: np.ndarray, scale: np.ndarray, out_path: Path) -> None:
     np.savez_compressed(str(out_path), aip=aip.astype(np.float32), scale=np.array(scale, dtype=float))
 
 
+def _brightest_index(volume: np.ndarray, axis: int) -> int:
+    """Return the index along *axis* whose summed intensity is highest."""
+    return int(np.argmax(volume.sum(axis=tuple(i for i in range(volume.ndim) if i != axis))))
+
+
 def _save_axis_views(
     volume: np.ndarray,
     scale: np.ndarray,
@@ -42,27 +47,30 @@ def _save_axis_views(
     aips_xz_dir: Path,
     aips_yz_dir: Path,
 ) -> None:
-    """Save XZ and YZ center cross-sections as NPZ files.
+    """Save XZ and YZ cross-sections as NPZ files.
 
-    Unlike mean projections, center slices preserve structural detail
-    (e.g. tissue boundaries) needed to judge Z-overlap alignment.
+    Unlike mean projections, single-slice cross-sections preserve structural
+    detail (e.g. tissue boundaries) needed to judge Z-overlap alignment.
+    The slice is chosen at the Y/X position with the highest integrated
+    intensity, so the image is guaranteed to contain tissue even when the
+    tissue does not occupy the geometric center of the field.
 
     Volume axis order is (Z, Y, X). The cross-sections are:
-      XZ: slice through the center Y row  → shape (Z, X), scale (Z, X)
-      YZ: slice through the center X col  → shape (Z, Y), scale (Z, Y)
+      XZ: brightest Y row  → shape (Z, X), scale (Z, X)
+      YZ: brightest X col  → shape (Z, Y), scale (Z, Y)
     Both are flipped along Z so depth increases downward in the viewer.
     """
     if volume.ndim != 3 or min(volume.shape) == 0:
         return
 
     scale_arr = np.array(scale, dtype=float)
-    cy = volume.shape[1] // 2
-    cx = volume.shape[2] // 2
+    cy = _brightest_index(volume, axis=1)  # best Y row for XZ view
+    cx = _brightest_index(volume, axis=2)  # best X col for YZ view
 
     views = [
-        # XZ: center row (fix Y = cy) → (Z, X), flip Z
+        # XZ: brightest row (fix Y = cy) → (Z, X), flip Z
         (aips_xz_dir, volume[:, cy, :][::-1, :], scale_arr[[0, 2]] if scale_arr.size >= 3 else scale_arr),
-        # YZ: center column (fix X = cx) → (Z, Y), flip Z
+        # YZ: brightest column (fix X = cx) → (Z, Y), flip Z
         (aips_yz_dir, volume[:, :, cx][::-1, :], scale_arr[[0, 1]] if scale_arr.size >= 3 else scale_arr),
     ]
 
