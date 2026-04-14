@@ -5,7 +5,7 @@ Reads common-space slices (OME-Zarr) and pairwise registration outputs,
 then produces a self-contained directory containing:
 
 - Per-slice AIP images (`.npz`) at a chosen pyramid level
-- Per-slice XY and XZ AIP projections (`.npz`) for manual Z-overlap review
+- Per-slice XZ and YZ center cross-sections (`.npz`) for manual Z-overlap review
 - Per-slice pairwise transform files (`.tfm` + metrics JSON)
 
 This package can be downloaded locally and opened directly by the
@@ -35,32 +35,39 @@ def _save_aip_npz(aip: np.ndarray, scale: np.ndarray, out_path: Path) -> None:
     np.savez_compressed(str(out_path), aip=aip.astype(np.float32), scale=np.array(scale, dtype=float))
 
 
-def _save_axis_aips(
+def _save_axis_views(
     volume: np.ndarray,
     scale: np.ndarray,
     sid: int,
-    aips_xy_dir: Path,
     aips_xz_dir: Path,
     aips_yz_dir: Path,
 ) -> None:
-    """Save XY, XZ, and YZ AIP projections as NPZ files."""
+    """Save XZ and YZ center cross-sections as NPZ files.
 
+    Unlike mean projections, center slices preserve structural detail
+    (e.g. tissue boundaries) needed to judge Z-overlap alignment.
+
+    Volume axis order is (Z, Y, X). The cross-sections are:
+      XZ: slice through the center Y row  → shape (Z, X), scale (Z, X)
+      YZ: slice through the center X col  → shape (Z, Y), scale (Z, Y)
+    Both are flipped along Z so depth increases downward in the viewer.
+    """
     if volume.ndim != 3 or min(volume.shape) == 0:
         return
 
-    # OME-Zarr scale order is (Z, Y, X)
     scale_arr = np.array(scale, dtype=float)
+    cy = volume.shape[1] // 2
+    cx = volume.shape[2] // 2
+
     views = [
-        # XY AIP: mean over Z axis → (Y, X)
-        (aips_xy_dir, volume.mean(axis=0), scale_arr[[1, 2]] if scale_arr.size >= 3 else scale_arr),
-        # XZ AIP: mean over Y axis → (Z, X), flip Z for display parity with the viewer.
-        (aips_xz_dir, volume.mean(axis=1)[::-1, :], scale_arr[[0, 2]] if scale_arr.size >= 3 else scale_arr),
-        # YZ AIP: mean over X axis → (Z, Y), flip Z for display parity with the viewer.
-        (aips_yz_dir, volume.mean(axis=2)[::-1, :], scale_arr[[0, 1]] if scale_arr.size >= 3 else scale_arr),
+        # XZ: center row (fix Y = cy) → (Z, X), flip Z
+        (aips_xz_dir, volume[:, cy, :][::-1, :], scale_arr[[0, 2]] if scale_arr.size >= 3 else scale_arr),
+        # YZ: center column (fix X = cx) → (Z, Y), flip Z
+        (aips_yz_dir, volume[:, :, cx][::-1, :], scale_arr[[0, 1]] if scale_arr.size >= 3 else scale_arr),
     ]
 
-    for out_dir, aip, aip_scale in views:
-        _save_aip_npz(aip, aip_scale, out_dir / f"slice_z{sid:02d}.npz")
+    for out_dir, img, img_scale in views:
+        _save_aip_npz(img, img_scale, out_dir / f"slice_z{sid:02d}.npz")
 
 
 def _build_arg_parser():
@@ -151,27 +158,25 @@ def main(argv=None):
     # Create output directories
     aips_dir = output_dir / "aips"
     aips_dir.mkdir(parents=True, exist_ok=True)
-    aips_xy_dir = output_dir / "aips_xy"
     aips_xz_dir = output_dir / "aips_xz"
     aips_yz_dir = output_dir / "aips_yz"
-    aips_xy_dir.mkdir(parents=True, exist_ok=True)
     aips_xz_dir.mkdir(parents=True, exist_ok=True)
     aips_yz_dir.mkdir(parents=True, exist_ok=True)
     tfm_dir = output_dir / "transforms"
     tfm_dir.mkdir(parents=True, exist_ok=True)
 
-    # Export standard AIPs plus axis-specific AIP projections as NPZ files.
-    logger.info(f"Computing AIPs and XY/XZ axis AIPs at pyramid level {level}...")
-    for sid, spath in tqdm(slice_paths.items(), desc="AIPs"):
+    # Export XY AIPs (mean over Z) and XZ/YZ center cross-sections.
+    logger.info(f"Computing AIPs and XZ/YZ center cross-sections at pyramid level {level}...")
+    for sid, spath in tqdm(slice_paths.items(), desc="slices"):
         vol, scale = read_omezarr(str(spath), level=level)
         arr = np.asarray(vol)
         scale_arr = np.array(scale, dtype=float)
 
-        # Keep original package AIPs (expected by current manual-align tool).
+        # XY AIP (mean over Z): lateral overview for XY alignment.
         _save_aip_npz(arr.mean(axis=0), scale_arr, aips_dir / f"slice_z{sid:02d}.npz")
 
-        # Export explicit XY/XZ AIP sets for future Z-overlap tooling.
-        _save_axis_aips(arr, scale_arr, sid, aips_xy_dir, aips_xz_dir, aips_yz_dir)
+        # XZ/YZ center cross-sections: preserve tissue detail for Z-overlap inspection.
+        _save_axis_views(arr, scale_arr, sid, aips_xz_dir, aips_yz_dir)
         logger.debug(f"  z{sid:02d}: shape={arr.shape}")
 
     # Export transforms
@@ -196,13 +201,13 @@ def main(argv=None):
         "pyramid_level": level,
         "n_slices": len(slice_paths),
         "slice_ids": sorted(slice_paths.keys()),
-        "axis_aips": {"xy_dir": "aips_xy", "xz_dir": "aips_xz", "yz_dir": "aips_yz"},
+        "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz"},
         "n_transforms": sum(1 for tpath in transform_paths.values() if list(tpath.glob("*.tfm"))),
     }
     metadata_path = output_dir / "manual_align_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
 
-    logger.info(f"Exported {len(slice_paths)} AIPs/axis-AIPs and {len(transform_paths)} transforms to {output_dir}")
+    logger.info(f"Exported {len(slice_paths)} AIPs/cross-sections and {len(transform_paths)} transforms to {output_dir}")
     logger.info(f"Metadata: {metadata_path}")
 
 
