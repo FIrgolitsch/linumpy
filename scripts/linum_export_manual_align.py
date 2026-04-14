@@ -2,14 +2,21 @@
 """Export lightweight data package for the manual alignment tool.
 
 Reads common-space slices (OME-Zarr) and pairwise registration outputs,
-then produces a self-contained directory containing:
+then produces a self-contained directory with the following layout::
 
-- Per-slice AIP images (`.npz`) at a chosen pyramid level
-- Per-slice XZ and YZ center cross-sections (`.npz`) for manual Z-overlap review
-- Per-slice pairwise transform files (`.tfm` + metrics JSON)
+    manual_align_package/
+      aips/           XY AIP (mean over Z)              -- XY alignment
+      aips_xz/        XZ center cross-section            -- Z-overlap review
+      aips_yz/        YZ center cross-section            -- Z-overlap review
+      transforms/     .tfm + offsets.txt + metrics JSON
+      manual_align_metadata.json
 
-This package can be downloaded locally and opened directly by the
-manual alignment tool without needing full-resolution 3D volumes.
+XZ/YZ cross-sections are extracted at the Y/X position with the highest
+integrated intensity, ensuring the cross-section always cuts through tissue
+even when the tissue is not centred in the field of view.
+
+The package can be downloaded locally and opened directly by the
+``linumpy-manual-align`` Napari plugin without needing the full 3-D volumes.
 """
 
 import linumpy._thread_config  # noqa: F401
