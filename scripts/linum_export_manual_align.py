@@ -269,7 +269,8 @@ def main(argv=None):
     output_dir = Path(args.output_dir)
     level = args.level
     # Use the explicitly provided server path when available; fall back to slices_dir.
-    slices_remote_dir = args.slices_remote_dir if args.slices_remote_dir else str(slices_dir)
+    # Normalize to remove any double-slashes produced by a trailing slash in params.output.
+    slices_remote_dir = str(Path(args.slices_remote_dir)) if args.slices_remote_dir else str(slices_dir)
 
     if not slices_dir.exists():
         logger.error(f"Slices directory not found: {slices_dir}")
