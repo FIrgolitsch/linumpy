@@ -382,6 +382,10 @@ def main(argv=None):
         "pyramid_level": level,
         "n_slices": len(slice_paths),
         "slice_ids": sorted(slice_paths.keys()),
+        # Exact filename for each slice (e.g. "slice_z02_normalize.ome.zarr").
+        # The suffix varies by pipeline step, so the widget uses this mapping
+        # rather than constructing a fixed pattern like "slice_z02.ome.zarr".
+        "slice_filenames": {str(sid): p.name for sid, p in slice_paths.items()},
         "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz", "paired": bool(pairs)},
         "n_transforms": sum(1 for tpath in transform_paths.values() if list(tpath.glob("*.tfm"))),
         # Absolute server path to the published per-slice OME-Zarr files.
