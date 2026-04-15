@@ -128,18 +128,20 @@ def _save_xy_aips_for_pair(
     moving_arr: np.ndarray,
     fixed_scale: np.ndarray,
     moving_scale: np.ndarray,
+    fixed_z: int,
+    moving_z: int,
     fid: int,
     mid: int,
     aips_dir: Path,
 ) -> None:
-    """Save paired XY AIPs restricted to the overlap-edge depth slabs.
+    """Save paired XY AIPs centred at the structural overlap depth of each volume.
 
     Projecting over the full Z extent mixes tissue from all depths and makes
-    lateral alignment hard.  In the common-space OME-Zarr volumes the overlap
-    between consecutive slices runs from the **top of the fixed volume** (low Z,
-    ``arr[:slab]``) to the **bottom of the moving volume** (high Z,
-    ``arr[-slab:]``).  Using these complementary edges samples matching anatomy
-    in both slices, giving an overlay that can be visually aligned.
+    lateral alignment hard.  ``fixed_z`` and ``moving_z`` are the Z indices in
+    each respective volume where the two volumes structurally coincide (the same
+    values used to centre the ZX/YZ paired cross-sections).  A ±5 % Z slab is
+    averaged around each overlap index so that the resulting XY projections show
+    matching anatomy and can be visually aligned.
 
     Output filenames follow the same convention as paired XZ/YZ files:
     ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
@@ -152,11 +154,16 @@ def _save_xy_aips_for_pair(
 
     nz_f = fixed_arr.shape[0]
     nz_m = moving_arr.shape[0]
-    slab_f = max(1, int(0.10 * nz_f))
-    slab_m = max(1, int(0.10 * nz_m))
+    slab = max(1, int(0.05 * nz_f))
 
-    fixed_aip = fixed_arr[:slab_f].mean(axis=0).astype(np.float32)
-    moving_aip = moving_arr[nz_m - slab_m :].mean(axis=0).astype(np.float32)
+    fz = max(0, min(fixed_z, nz_f - 1))
+    mz = max(0, min(moving_z, nz_m - 1))
+
+    fixed_slab = fixed_arr[max(0, fz - slab) : min(nz_f, fz + slab + 1)]
+    moving_slab = moving_arr[max(0, mz - slab) : min(nz_m, mz + slab + 1)]
+
+    fixed_aip = fixed_slab.mean(axis=0).astype(np.float32)
+    moving_aip = moving_slab.mean(axis=0).astype(np.float32)
 
     pair_stem = f"pair_z{fid:02d}_z{mid:02d}"
     _save_aip_npz(fixed_aip, np.array(fixed_scale, dtype=float), aips_dir / f"{pair_stem}_fixed.npz")
@@ -360,6 +367,8 @@ def _pair_task(args: tuple) -> tuple[int, int]:
         moving_arr,
         fixed_scale_arr,
         moving_scale_arr,
+        fixed_z,
+        moving_z,
         fid,
         mid,
         Path(aips_dir),
