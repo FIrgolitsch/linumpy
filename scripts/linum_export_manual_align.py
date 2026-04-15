@@ -229,7 +229,7 @@ def _build_arg_parser():
         "--workers",
         type=int,
         default=0,
-        help=("Number of parallel worker processes. 0 = use all available CPU cores. [%(default)s]"),
+        help=("Number of parallel worker processes. 0 = cpu_count - 2 (leaving 2 cores free). [%(default)s]"),
     )
     p.add_argument(
         "--slices_remote_dir",
@@ -310,7 +310,7 @@ def main(argv=None):
     # Use the explicitly provided server path when available; fall back to slices_dir.
     # Normalize to remove any double-slashes produced by a trailing slash in params.output.
     slices_remote_dir = str(Path(args.slices_remote_dir)) if args.slices_remote_dir else str(slices_dir)
-    workers = args.workers or os.cpu_count() or 4
+    workers = args.workers or max(1, (os.cpu_count() or 4) - 2)
 
     if not slices_dir.exists():
         logger.error(f"Slices directory not found: {slices_dir}")
