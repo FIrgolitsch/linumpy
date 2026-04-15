@@ -132,14 +132,14 @@ def _save_xy_aips_for_pair(
     mid: int,
     aips_dir: Path,
 ) -> None:
-    """Save paired XY AIPs restricted to the top (low-Z) depth slab of each volume.
+    """Save paired XY AIPs restricted to the overlap-edge depth slabs.
 
     Projecting over the full Z extent mixes tissue from all depths and makes
     lateral alignment hard.  In the common-space OME-Zarr volumes the overlap
-    between consecutive slices is located at **low Z indices** (near ``arr[0]``)
-    for both the fixed and the moving volume.  Taking the first 10 % of Z from
-    each volume therefore samples matching anatomy in both slices, giving an
-    overlay that can be visually aligned.
+    between consecutive slices runs from the **top of the fixed volume** (low Z,
+    ``arr[:slab]``) to the **bottom of the moving volume** (high Z,
+    ``arr[-slab:]``).  Using these complementary edges samples matching anatomy
+    in both slices, giving an overlay that can be visually aligned.
 
     Output filenames follow the same convention as paired XZ/YZ files:
     ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
@@ -156,7 +156,7 @@ def _save_xy_aips_for_pair(
     slab_m = max(1, int(0.10 * nz_m))
 
     fixed_aip = fixed_arr[:slab_f].mean(axis=0).astype(np.float32)
-    moving_aip = moving_arr[:slab_m].mean(axis=0).astype(np.float32)
+    moving_aip = moving_arr[nz_m - slab_m :].mean(axis=0).astype(np.float32)
 
     pair_stem = f"pair_z{fid:02d}_z{mid:02d}"
     _save_aip_npz(fixed_aip, np.array(fixed_scale, dtype=float), aips_dir / f"{pair_stem}_fixed.npz")
