@@ -47,9 +47,22 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _save_aip_npz(aip: np.ndarray, scale: np.ndarray, out_path: Path) -> None:
-    """Save one AIP projection to NPZ using the standard schema."""
-    np.savez_compressed(str(out_path), aip=aip.astype(np.float32), scale=np.array(scale, dtype=float))
+def _save_aip_npz(
+    aip: np.ndarray,
+    scale: np.ndarray,
+    out_path: Path,
+    center_pos: int | None = None,
+) -> None:
+    """Save one AIP projection to NPZ using the standard schema.
+
+    *center_pos* is the Y index (for XZ cross-sections) or X index (for YZ
+    cross-sections) at which the cross-section was taken.  Stored so the
+    plugin can initialise its interactive slider at the tissue centroid.
+    """
+    kwargs: dict = {"aip": aip.astype(np.float32), "scale": np.array(scale, dtype=float)}
+    if center_pos is not None:
+        kwargs["center_pos"] = np.array(center_pos, dtype=np.int32)
+    np.savez_compressed(str(out_path), **kwargs)
 
 
 def _brightest_index(volume: np.ndarray, axis: int) -> int:
@@ -85,14 +98,14 @@ def _save_axis_views(
     cx = _brightest_index(volume, axis=2)  # best X col for YZ view
 
     views = [
-        # XZ: brightest row (fix Y = cy) → (Z, X), flip Z
-        (aips_xz_dir, volume[:, cy, :][::-1, :], scale_arr[[0, 2]] if scale_arr.size >= 3 else scale_arr),
-        # YZ: brightest column (fix X = cx) → (Z, Y), flip Z
-        (aips_yz_dir, volume[:, :, cx][::-1, :], scale_arr[[0, 1]] if scale_arr.size >= 3 else scale_arr),
+        # XZ: brightest row (fix Y = cy) → (Z, X), flip Z; center_pos = cy
+        (aips_xz_dir, volume[:, cy, :][::-1, :], scale_arr[[0, 2]] if scale_arr.size >= 3 else scale_arr, cy),
+        # YZ: brightest column (fix X = cx) → (Z, Y), flip Z; center_pos = cx
+        (aips_yz_dir, volume[:, :, cx][::-1, :], scale_arr[[0, 1]] if scale_arr.size >= 3 else scale_arr, cx),
     ]
 
-    for out_dir, img, img_scale in views:
-        _save_aip_npz(img, img_scale, out_dir / f"slice_z{sid:02d}.npz")
+    for out_dir, img, img_scale, cp in views:
+        _save_aip_npz(img, img_scale, out_dir / f"slice_z{sid:02d}.npz", center_pos=cp)
 
 
 def _tissue_centroid(profile: np.ndarray) -> float:
@@ -193,9 +206,9 @@ def _save_axis_views_for_pair(
         sc_yz = sc[[0, 1]] if sc.size >= 3 else sc
 
         # XZ: fix Y = cy_i → (Z, X), flip Z so depth increases downward
-        _save_aip_npz(arr[:, cy_i, :][::-1, :], sc_xz, aips_xz_dir / f"{pair_stem}_{role}.npz")
+        _save_aip_npz(arr[:, cy_i, :][::-1, :], sc_xz, aips_xz_dir / f"{pair_stem}_{role}.npz", center_pos=cy_i)
         # YZ: fix X = cx_i → (Z, Y), flip Z
-        _save_aip_npz(arr[:, :, cx_i][::-1, :], sc_yz, aips_yz_dir / f"{pair_stem}_{role}.npz")
+        _save_aip_npz(arr[:, :, cx_i][::-1, :], sc_yz, aips_yz_dir / f"{pair_stem}_{role}.npz", center_pos=cx_i)
 
 
 def _build_arg_parser():
