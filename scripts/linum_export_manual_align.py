@@ -370,6 +370,11 @@ def main(argv=None):
         "slice_ids": sorted(slice_paths.keys()),
         "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz", "paired": bool(pairs)},
         "n_transforms": sum(1 for tpath in transform_paths.values() if list(tpath.glob("*.tfm"))),
+        # Remote path to the source OME-Zarr slice files on the server.
+        # Used by the plugin to open persistent SSH+Python readers for interactive
+        # cross-section navigation (slider to select Y or X position at full resolution).
+        "slices_remote_dir": str(slices_dir),
+        "cross_section_level": level,
     }
     metadata_path = output_dir / "manual_align_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
