@@ -93,6 +93,19 @@ def _save_axis_views(
         _save_aip_npz(img, img_scale, out_dir / f"slice_z{sid:02d}.npz")
 
 
+def _tissue_centroid(profile: np.ndarray) -> float:
+    """Return the intensity-weighted centroid of a 1-D column/row profile.
+
+    Weights are squared so that bright tissue dominates over low-level
+    background noise.  Falls back to the mid-point if the profile is flat.
+    """
+    w = profile.astype(float) ** 2
+    total = w.sum()
+    if total == 0:
+        return float(profile.size) / 2.0
+    return float(np.dot(np.arange(profile.size, dtype=float), w) / total)
+
+
 def _save_axis_views_for_pair(
     fixed_arr: np.ndarray,
     moving_arr: np.ndarray,
@@ -107,10 +120,21 @@ def _save_axis_views_for_pair(
 ) -> None:
     """Save paired XZ/YZ cross-sections that share the same column position.
 
-    Both slices are cut at the Y (XZ) and X (YZ) column that maximises the
-    *combined* normalised intensity in their respective overlap slices.  Using
-    a shared column guarantees that consecutive slices can be visually compared
-    without the cross-section drifting to a different part of the tissue.
+    Column selection strategy
+    -------------------------
+    Rather than picking the global intensity peak (which is biased toward
+    whichever slice is brighter), we:
+
+    1. Average a ±5 % Z-slab around each volume's overlap depth to suppress
+       noisy single-slice artefacts at the section boundary.
+    2. Compute the intensity-weighted centroid of the column profile for each
+       slice independently and take their average.  The centroid is robust to
+       lateral tissue displacement between consecutive slices, which is exactly
+       the misalignment the plugin is designed to correct.
+
+    Both slices are then cut at this shared Y (XZ) and X (YZ) column,
+    guaranteeing that consecutive slices always show the same anatomical
+    cross-section plane.
 
     Output filenames: ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
     ``pair_z{fid:02d}_z{mid:02d}_moving.npz``.
@@ -124,23 +148,34 @@ def _save_axis_views_for_pair(
     fz = max(0, min(fixed_z, fixed_arr.shape[0] - 1))
     mz = max(0, min(moving_z, moving_arr.shape[0] - 1))
 
-    # Normalise the two overlap slices to [0, 1] before combining so that
-    # intensity differences between volumes don't bias the column choice.
-    def _norm2d(a: np.ndarray) -> np.ndarray:
-        mx = float(a.max())
-        return a.astype(float) / mx if mx > 0 else a.astype(float)
+    # Average a ±5 % Z-slab so a single noisy boundary slice does not dominate
+    slab = max(1, int(0.05 * fixed_arr.shape[0]))
+    fo_slab = fixed_arr[max(0, fz - slab) : min(fixed_arr.shape[0], fz + slab + 1)]
+    mo_slab = moving_arr[max(0, mz - slab) : min(moving_arr.shape[0], mz + slab + 1)]
 
-    fo = _norm2d(fixed_arr[fz])  # (Y, X)
-    mo = _norm2d(moving_arr[mz])  # (Y, X)
+    def _mean2d(vol_slab: np.ndarray) -> np.ndarray:
+        """Mean over Z slab, normalised to [0, 1]."""
+        img = vol_slab.mean(axis=0).astype(float)
+        mx = img.max()
+        return img / mx if mx > 0 else img
 
-    # Handle volumes with different XY extents by using the minimum overlap
+    fo = _mean2d(fo_slab)  # (Y, X)
+    mo = _mean2d(mo_slab)  # (Y, X)
+
     ny = min(fo.shape[0], mo.shape[0])
     nx = min(fo.shape[1], mo.shape[1])
-    combined = fo[:ny, :nx] + mo[:ny, :nx]
+    fo, mo = fo[:ny, :nx], mo[:ny, :nx]
 
-    # Best shared Y row (XZ) and X column (YZ)
-    cy = int(np.argmax(combined.sum(axis=1)))
-    cx = int(np.argmax(combined.sum(axis=0)))
+    # Centroid of each slice's column profile, averaged to find the shared column.
+    # Using the average of two centroids rather than argmax of the combined sum
+    # handles the common case where the two slices have laterally shifted tissue.
+    cy_f = _tissue_centroid(fo.sum(axis=1))
+    cy_m = _tissue_centroid(mo.sum(axis=1))
+    cy = round((cy_f + cy_m) / 2.0)
+
+    cx_f = _tissue_centroid(fo.sum(axis=0))
+    cx_m = _tissue_centroid(mo.sum(axis=0))
+    cx = round((cx_f + cx_m) / 2.0)
 
     pair_stem = f"pair_z{fid:02d}_z{mid:02d}"
 
