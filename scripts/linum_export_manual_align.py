@@ -223,6 +223,17 @@ def _build_arg_parser():
         default=None,
         help="Only export specific slice IDs. Default: all.",
     )
+    p.add_argument(
+        "--slices_remote_dir",
+        default=None,
+        help=(
+            "Absolute server path to the published common-space slice directory "
+            "(e.g. /scratch/workspace/sub-22/output/bring_to_common_space). "
+            "Stored in metadata.json so the manual-align plugin can open "
+            "persistent SSH readers for interactive XZ/YZ cross-sections. "
+            "Defaults to slices_dir when not provided."
+        ),
+    )
     return p
 
 
@@ -257,6 +268,8 @@ def main(argv=None):
     transforms_dir = Path(args.transforms_dir)
     output_dir = Path(args.output_dir)
     level = args.level
+    # Use the explicitly provided server path when available; fall back to slices_dir.
+    slices_remote_dir = args.slices_remote_dir if args.slices_remote_dir else str(slices_dir)
 
     if not slices_dir.exists():
         logger.error(f"Slices directory not found: {slices_dir}")
@@ -370,10 +383,12 @@ def main(argv=None):
         "slice_ids": sorted(slice_paths.keys()),
         "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz", "paired": bool(pairs)},
         "n_transforms": sum(1 for tpath in transform_paths.values() if list(tpath.glob("*.tfm"))),
-        # Remote path to the source OME-Zarr slice files on the server.
+        # Absolute server path to the published per-slice OME-Zarr files.
+        # Passed via --slices_remote_dir from the Nextflow process so it points to
+        # the publishDir path rather than the work-directory staging path.
         # Used by the plugin to open persistent SSH+Python readers for interactive
         # cross-section navigation (slider to select Y or X position at full resolution).
-        "slices_remote_dir": str(slices_dir),
+        "slices_remote_dir": slices_remote_dir,
         "cross_section_level": level,
     }
     metadata_path = output_dir / "manual_align_metadata.json"

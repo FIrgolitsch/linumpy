@@ -684,7 +684,8 @@ process make_manual_align_package {
     script:
     """
     linum_export_manual_align.py slices transforms manual_align_package \
-        --level ${params.manual_align_level}
+        --level ${params.manual_align_level} \
+        --slices_remote_dir ${params.output}/bring_to_common_space
     """
 }
 
