@@ -154,7 +154,7 @@ def _save_xy_aips_for_pair(
 
     nz_f = fixed_arr.shape[0]
     nz_m = moving_arr.shape[0]
-    slab = max(1, int(0.05 * nz_f))
+    slab = max(1, int(0.15 * nz_f))
 
     fz = max(0, min(fixed_z, nz_f - 1))
     mz = max(0, min(moving_z, nz_m - 1))
