@@ -205,7 +205,7 @@ def main() -> None:
     manual_dir = Path(args.manual_transforms_dir)
     out_dir = Path(args.out_dir)
 
-    if out_dir.exists() and not args.f:
+    if out_dir.exists() and not args.overwrite:
         p.error(f"Output directory exists: {out_dir}. Use -f to overwrite.")
     out_dir.mkdir(parents=True, exist_ok=True)
 
