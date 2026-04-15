@@ -137,11 +137,11 @@ def _save_xy_aips_for_pair(
     """Save paired XY AIPs centred at the structural overlap depth of each volume.
 
     Projecting over the full Z extent mixes tissue from all depths and makes
-    lateral alignment hard.  ``fixed_z`` and ``moving_z`` are the Z indices in
-    each respective volume where the two volumes structurally coincide (the same
-    values used to centre the ZX/YZ paired cross-sections).  A ±5 % Z slab is
-    averaged around each overlap index so that the resulting XY projections show
-    matching anatomy and can be visually aligned.
+    lateral alignment hard.      ``fixed_z`` and ``moving_z`` are the Z indices that mark the *start* of the
+    overlap zone in each respective volume (the same values used by the ZX/YZ
+    paired cross-sections).      A 15 % Z slab is averaged extending **toward lower Z** (into the overlap
+    zone) from each boundary index, so the entire projection is drawn from
+    tissue both volumes have in common.
 
     Output filenames follow the same convention as paired XZ/YZ files:
     ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
@@ -159,8 +159,8 @@ def _save_xy_aips_for_pair(
     fz = max(0, min(fixed_z, nz_f - 1))
     mz = max(0, min(moving_z, nz_m - 1))
 
-    fixed_slab = fixed_arr[max(0, fz - slab) : min(nz_f, fz + slab + 1)]
-    moving_slab = moving_arr[max(0, mz - slab) : min(nz_m, mz + slab + 1)]
+    fixed_slab = fixed_arr[max(0, fz - slab) : fz + 1]
+    moving_slab = moving_arr[max(0, mz - slab) : mz + 1]
 
     fixed_aip = fixed_slab.mean(axis=0).astype(np.float32)
     moving_aip = moving_slab.mean(axis=0).astype(np.float32)
