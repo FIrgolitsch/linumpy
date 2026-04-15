@@ -6,14 +6,22 @@ then produces a self-contained directory with the following layout::
 
     manual_align_package/
       aips/           XY AIP (mean over Z)              -- XY alignment
-      aips_xz/        XZ center cross-section            -- Z-overlap review
-      aips_yz/        YZ center cross-section            -- Z-overlap review
+      aips_xz/        XZ cross-sections                  -- Z-overlap review
+      aips_yz/        YZ cross-sections                  -- Z-overlap review
       transforms/     .tfm + offsets.txt + metrics JSON
       manual_align_metadata.json
 
-XZ/YZ cross-sections are extracted at the Y/X position with the highest
-integrated intensity, ensuring the cross-section always cuts through tissue
-even when the tissue is not centred in the field of view.
+XZ/YZ cross-sections are generated in two complementary ways:
+
+  Per-pair files (preferred): ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
+  ``pair_z{fid:02d}_z{mid:02d}_moving.npz``.  Both slices in the pair share
+  the same Y/X column, chosen by maximising the *combined* intensity at the
+  overlap depth — so the two cross-sections always show the same anatomical
+  plane and can be compared directly.
+
+  Per-slice fallback: ``slice_z{sid:02d}.npz``, one per slice, using the
+  globally brightest column.  Kept for backward-compatibility with older
+  packages.
 
 The package can be downloaded locally and opened directly by the
 ``linumpy-manual-align`` Napari plugin without needing the full 3-D volumes.
@@ -83,6 +91,74 @@ def _save_axis_views(
 
     for out_dir, img, img_scale in views:
         _save_aip_npz(img, img_scale, out_dir / f"slice_z{sid:02d}.npz")
+
+
+def _save_axis_views_for_pair(
+    fixed_arr: np.ndarray,
+    moving_arr: np.ndarray,
+    fixed_scale: np.ndarray,
+    moving_scale: np.ndarray,
+    fixed_z: int,
+    moving_z: int,
+    fid: int,
+    mid: int,
+    aips_xz_dir: Path,
+    aips_yz_dir: Path,
+) -> None:
+    """Save paired XZ/YZ cross-sections that share the same column position.
+
+    Both slices are cut at the Y (XZ) and X (YZ) column that maximises the
+    *combined* normalised intensity in their respective overlap slices.  Using
+    a shared column guarantees that consecutive slices can be visually compared
+    without the cross-section drifting to a different part of the tissue.
+
+    Output filenames: ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
+    ``pair_z{fid:02d}_z{mid:02d}_moving.npz``.
+    """
+    if fixed_arr.ndim != 3 or moving_arr.ndim != 3:
+        return
+    if min(fixed_arr.shape) == 0 or min(moving_arr.shape) == 0:
+        return
+
+    # Clamp overlap indices to valid range
+    fz = max(0, min(fixed_z, fixed_arr.shape[0] - 1))
+    mz = max(0, min(moving_z, moving_arr.shape[0] - 1))
+
+    # Normalise the two overlap slices to [0, 1] before combining so that
+    # intensity differences between volumes don't bias the column choice.
+    def _norm2d(a: np.ndarray) -> np.ndarray:
+        mx = float(a.max())
+        return a.astype(float) / mx if mx > 0 else a.astype(float)
+
+    fo = _norm2d(fixed_arr[fz])  # (Y, X)
+    mo = _norm2d(moving_arr[mz])  # (Y, X)
+
+    # Handle volumes with different XY extents by using the minimum overlap
+    ny = min(fo.shape[0], mo.shape[0])
+    nx = min(fo.shape[1], mo.shape[1])
+    combined = fo[:ny, :nx] + mo[:ny, :nx]
+
+    # Best shared Y row (XZ) and X column (YZ)
+    cy = int(np.argmax(combined.sum(axis=1)))
+    cx = int(np.argmax(combined.sum(axis=0)))
+
+    pair_stem = f"pair_z{fid:02d}_z{mid:02d}"
+
+    for role, arr, scale_arr in [
+        ("fixed", fixed_arr, fixed_scale),
+        ("moving", moving_arr, moving_scale),
+    ]:
+        # Clamp to this volume's actual dimensions
+        cy_i = min(cy, arr.shape[1] - 1)
+        cx_i = min(cx, arr.shape[2] - 1)
+        sc = np.array(scale_arr, dtype=float)
+        sc_xz = sc[[0, 2]] if sc.size >= 3 else sc
+        sc_yz = sc[[0, 1]] if sc.size >= 3 else sc
+
+        # XZ: fix Y = cy_i → (Z, X), flip Z so depth increases downward
+        _save_aip_npz(arr[:, cy_i, :][::-1, :], sc_xz, aips_xz_dir / f"{pair_stem}_{role}.npz")
+        # YZ: fix X = cx_i → (Z, Y), flip Z
+        _save_aip_npz(arr[:, :, cx_i][::-1, :], sc_yz, aips_yz_dir / f"{pair_stem}_{role}.npz")
 
 
 def _build_arg_parser():
@@ -180,9 +256,11 @@ def main(argv=None):
     tfm_dir = output_dir / "transforms"
     tfm_dir.mkdir(parents=True, exist_ok=True)
 
-    # Export XY AIPs (mean over Z) and XZ/YZ center cross-sections.
-    logger.info(f"Computing AIPs and XZ/YZ center cross-sections at pyramid level {level}...")
-    for sid, spath in tqdm(slice_paths.items(), desc="slices"):
+    # ------------------------------------------------------------------
+    # Pass 1: XY AIPs (per slice) + per-slice XZ/YZ fallback files.
+    # ------------------------------------------------------------------
+    logger.info(f"Computing XY AIPs and per-slice XZ/YZ fallbacks at pyramid level {level}...")
+    for sid, spath in tqdm(slice_paths.items(), desc="AIPs"):
         vol, scale = read_omezarr(str(spath), level=level)
         arr = np.asarray(vol)
         scale_arr = np.array(scale, dtype=float)
@@ -190,9 +268,48 @@ def main(argv=None):
         # XY AIP (mean over Z): lateral overview for XY alignment.
         _save_aip_npz(arr.mean(axis=0), scale_arr, aips_dir / f"slice_z{sid:02d}.npz")
 
-        # XZ/YZ center cross-sections: preserve tissue detail for Z-overlap inspection.
+        # Per-slice XZ/YZ (brightest column, independent per slice).
+        # Kept as a fallback for packages without paired files.
         _save_axis_views(arr, scale_arr, sid, aips_xz_dir, aips_yz_dir)
         logger.debug(f"  z{sid:02d}: shape={arr.shape}")
+
+    # ------------------------------------------------------------------
+    # Pass 2: Paired XZ/YZ files — both slices share the same column,
+    # chosen from the combined signal at their mutual overlap depth.
+    # ------------------------------------------------------------------
+    sorted_ids = sorted(slice_paths.keys())
+    pairs = [(sorted_ids[i - 1], mid) for i, mid in enumerate(sorted_ids) if i > 0 and mid in transform_paths]
+
+    if pairs:
+        logger.info(f"Generating paired XZ/YZ cross-sections for {len(pairs)} pairs...")
+        for fid, mid in tqdm(pairs, desc="paired XZ/YZ"):
+            tpath = transform_paths[mid]
+            offsets_file = tpath / "offsets.txt"
+            fixed_z, moving_z = 0, 0
+            if offsets_file.exists():
+                try:
+                    arr_off = np.loadtxt(str(offsets_file), dtype=int)
+                    if arr_off.size >= 2:
+                        fixed_z, moving_z = int(arr_off[0]), int(arr_off[1])
+                except Exception:
+                    pass
+
+            fixed_vol, fixed_scale = read_omezarr(str(slice_paths[fid]), level=level)
+            moving_vol, moving_scale = read_omezarr(str(slice_paths[mid]), level=level)
+
+            _save_axis_views_for_pair(
+                np.asarray(fixed_vol),
+                np.asarray(moving_vol),
+                np.array(fixed_scale, dtype=float),
+                np.array(moving_scale, dtype=float),
+                fixed_z,
+                moving_z,
+                fid,
+                mid,
+                aips_xz_dir,
+                aips_yz_dir,
+            )
+            logger.debug(f"  pair z{fid:02d}/z{mid:02d}: overlap fixed_z={fixed_z} moving_z={moving_z}")
 
     # Export transforms
     logger.info("Copying pairwise transforms...")
@@ -216,13 +333,16 @@ def main(argv=None):
         "pyramid_level": level,
         "n_slices": len(slice_paths),
         "slice_ids": sorted(slice_paths.keys()),
-        "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz"},
+        "axis_views": {"xz_dir": "aips_xz", "yz_dir": "aips_yz", "paired": bool(pairs)},
         "n_transforms": sum(1 for tpath in transform_paths.values() if list(tpath.glob("*.tfm"))),
     }
     metadata_path = output_dir / "manual_align_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
 
-    logger.info(f"Exported {len(slice_paths)} AIPs/cross-sections and {len(transform_paths)} transforms to {output_dir}")
+    logger.info(
+        f"Exported {len(slice_paths)} AIPs, {len(pairs)} paired XZ/YZ sets, "
+        f"and {len(transform_paths)} transforms to {output_dir}"
+    )
     logger.info(f"Metadata: {metadata_path}")
 
 
