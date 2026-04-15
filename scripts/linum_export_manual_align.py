@@ -5,7 +5,9 @@ Reads common-space slices (OME-Zarr) and pairwise registration outputs,
 then produces a self-contained directory with the following layout::
 
     manual_align_package/
-      aips/           XY AIP (mean over Z)              -- XY alignment
+      aips/           XY AIPs: per-slice fallback (mean over Z) + per-pair edge
+                      projections (pair_z{fid}_z{mid}_{role}.npz) restricted to
+                      the overlap-edge depth slab of each volume    -- XY alignment
       aips_xz/        XZ cross-sections                  -- Z-overlap review
       aips_yz/        YZ cross-sections                  -- Z-overlap review
       transforms/     .tfm + offsets.txt + metrics JSON
@@ -119,6 +121,46 @@ def _tissue_centroid(profile: np.ndarray) -> float:
     if total == 0:
         return float(profile.size) / 2.0
     return float(np.dot(np.arange(profile.size, dtype=float), w) / total)
+
+
+def _save_xy_aips_for_pair(
+    fixed_arr: np.ndarray,
+    moving_arr: np.ndarray,
+    fixed_scale: np.ndarray,
+    moving_scale: np.ndarray,
+    fid: int,
+    mid: int,
+    aips_dir: Path,
+) -> None:
+    """Save paired XY AIPs restricted to the edge depth slabs of each volume.
+
+    Projecting over the full Z extent mixes tissue from all depths and makes
+    lateral alignment hard.  Instead each AIP uses only the 10 % of Z slices
+    at the relevant boundary:
+
+    - **Fixed slice**: last 10 % of Z (the bottom, facing the moving slice).
+    - **Moving slice**: first 10 % of Z (the top, facing the fixed slice).
+
+    Output filenames follow the same convention as paired XZ/YZ files:
+    ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
+    ``pair_z{fid:02d}_z{mid:02d}_moving.npz``.
+    """
+    if fixed_arr.ndim != 3 or moving_arr.ndim != 3:
+        return
+    if min(fixed_arr.shape) == 0 or min(moving_arr.shape) == 0:
+        return
+
+    nz_f = fixed_arr.shape[0]
+    nz_m = moving_arr.shape[0]
+    slab_f = max(1, int(0.10 * nz_f))
+    slab_m = max(1, int(0.10 * nz_m))
+
+    fixed_aip = fixed_arr[nz_f - slab_f :].mean(axis=0).astype(np.float32)
+    moving_aip = moving_arr[:slab_m].mean(axis=0).astype(np.float32)
+
+    pair_stem = f"pair_z{fid:02d}_z{mid:02d}"
+    _save_aip_npz(fixed_aip, np.array(fixed_scale, dtype=float), aips_dir / f"{pair_stem}_fixed.npz")
+    _save_aip_npz(moving_aip, np.array(moving_scale, dtype=float), aips_dir / f"{pair_stem}_moving.npz")
 
 
 def _save_axis_views_for_pair(
@@ -293,21 +335,34 @@ def _slice_task(args: tuple) -> int:
 
 
 def _pair_task(args: tuple) -> tuple[int, int]:
-    """Worker for Pass 2: load two zarr slices, write paired XZ/YZ NPZ files."""
-    fid, mid, fpath_str, mpath_str, fixed_z, moving_z, level, aips_xz_dir, aips_yz_dir = args
+    """Worker for Pass 2: load two zarr slices, write paired XY, XZ, and YZ NPZ files."""
+    fid, mid, fpath_str, mpath_str, fixed_z, moving_z, level, aips_dir, aips_xz_dir, aips_yz_dir = args
     fixed_vol, fixed_scale = read_omezarr(fpath_str, level=level)
     moving_vol, moving_scale = read_omezarr(mpath_str, level=level)
+    fixed_arr = np.asarray(fixed_vol)
+    moving_arr = np.asarray(moving_vol)
+    fixed_scale_arr = np.array(fixed_scale, dtype=float)
+    moving_scale_arr = np.array(moving_scale, dtype=float)
     _save_axis_views_for_pair(
-        np.asarray(fixed_vol),
-        np.asarray(moving_vol),
-        np.array(fixed_scale, dtype=float),
-        np.array(moving_scale, dtype=float),
+        fixed_arr,
+        moving_arr,
+        fixed_scale_arr,
+        moving_scale_arr,
         fixed_z,
         moving_z,
         fid,
         mid,
         Path(aips_xz_dir),
         Path(aips_yz_dir),
+    )
+    _save_xy_aips_for_pair(
+        fixed_arr,
+        moving_arr,
+        fixed_scale_arr,
+        moving_scale_arr,
+        fid,
+        mid,
+        Path(aips_dir),
     )
     return fid, mid
 
@@ -408,6 +463,7 @@ def main(argv=None):
                     fixed_z,
                     moving_z,
                     level,
+                    str(aips_dir),
                     str(aips_xz_dir),
                     str(aips_yz_dir),
                 )
