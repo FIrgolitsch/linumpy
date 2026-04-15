@@ -155,6 +155,7 @@ docs = [
 "linum_normalize_intensities_per_slice_gpu.py" = "scripts.linum_normalize_intensities_per_slice_gpu:main"
 "linum_normalize_intensities_per_slice.py" = "scripts.linum_normalize_intensities_per_slice:main"
 "linum_normalize_z_intensity.py" = "scripts.linum_normalize_z_intensity:main"
+"linum_refine_manual_transforms.py" = "scripts.linum_refine_manual_transforms:main"
 "linum_register_pairwise.py" = "scripts.linum_register_pairwise:main"
 "linum_reorient_nifti_to_ras.py" = "scripts.linum_reorient_nifti_to_ras:main"
 "linum_resample_mosaic_grid_gpu.py" = "scripts.linum_resample_mosaic_grid_gpu:main"

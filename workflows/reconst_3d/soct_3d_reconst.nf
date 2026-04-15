@@ -622,6 +622,28 @@ process register_pairwise {
     """
 }
 
+// Optional: re-register slice pairs that have a manual transform, using the
+// manual alignment as initialisation.  Produces a refined transform that
+// combines the manual correction with a tight image-based residual correction.
+// Only runs when params.refine_manual_transforms = true.
+process refine_manual_transforms {
+    publishDir "${params.output}/${task.process}", mode: 'copy'
+
+    input:
+    tuple path("slices/*"), path("transforms/*")
+
+    output:
+    path "*"
+
+    script:
+    """
+    linum_refine_manual_transforms.py slices transforms . \
+        --manual_transforms_dir ${params.manual_transforms_dir} \
+        --max_translation_px ${params.refine_max_translation_px} \
+        --max_rotation_deg ${params.refine_max_rotation_deg} -f
+    """
+}
+
 // Auto-exclude extended clusters of consecutive low-quality registrations.
 // Reads pairwise_registration_metrics.json from the registration output and
 // produces a CSV listing slice IDs whose transforms should be force-skipped
@@ -721,8 +743,11 @@ process stack {
         options += " --force_skip_slices ${auto_exclude_csv}"
     }
 
-    // Manual alignment overrides
-    if (params.manual_transforms_dir) {
+    // Manual alignment overrides.
+    // Skip when refine_manual_transforms is active: the refinement step already
+    // baked manual corrections into transforms_for_stack, so passing
+    // --manual_transforms_dir again would double-apply them.
+    if (params.manual_transforms_dir && !params.refine_manual_transforms) {
         options += " --manual_transforms_dir ${params.manual_transforms_dir}"
     }
 
@@ -1201,9 +1226,29 @@ workflow {
         make_manual_align_package(export_input)
     }
 
+    // Stage 6.75: Optional refinement of manual transforms.
+    // Re-runs pairwise registration initialised from the manual transform for
+    // each manually-corrected pair; non-manual pairs are copied unchanged.
+    // Only active when both refine_manual_transforms and manual_transforms_dir
+    // are set.  The refined outputs replace automated transforms for stacking.
+    if (params.refine_manual_transforms && params.manual_transforms_dir) {
+        log.info "Refining manual transforms from: ${params.manual_transforms_dir}"
+        refine_input = slices_collected
+            .combine(transforms_collected)
+            .map { items ->
+                def slices = items.findAll { it.getName().endsWith('.ome.zarr') }
+                def transforms = items.findAll { !it.getName().endsWith('.ome.zarr') }
+                tuple(slices, transforms)
+            }
+        refine_manual_transforms(refine_input)
+        transforms_for_stack = refine_manual_transforms.out.collect()
+    } else {
+        transforms_for_stack = transforms_collected
+    }
+
     // Auto-exclude: detect clusters of consecutive low-quality registrations
     if (params.auto_exclude_enabled) {
-        auto_exclude_slices(transforms_collected)
+        auto_exclude_slices(transforms_for_stack)
         auto_exclude_csv = auto_exclude_slices.out.csv
     } else {
         auto_exclude_csv = Channel.value(file('NO_AUTO_EXCLUDE'))
@@ -1211,7 +1256,7 @@ workflow {
 
     stack_input = slices_collected
         .combine(shifts_xy)
-        .combine(transforms_collected)
+        .combine(transforms_for_stack)
         .combine(auto_exclude_csv)
         .map { items ->
             def slices = []
