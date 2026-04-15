@@ -32,8 +32,10 @@ import linumpy._thread_config  # noqa: F401
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -224,6 +226,12 @@ def _build_arg_parser():
         help="Only export specific slice IDs. Default: all.",
     )
     p.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help=("Number of parallel worker processes. 0 = use all available CPU cores. [%(default)s]"),
+    )
+    p.add_argument(
         "--slices_remote_dir",
         default=None,
         help=(
@@ -260,6 +268,37 @@ def _discover_transforms(transforms_dir: Path) -> dict[int, Path]:
     return dict(sorted(transforms.items()))
 
 
+def _slice_task(args: tuple) -> int:
+    """Worker for Pass 1: load one zarr slice, write XY AIP + per-slice XZ/YZ NPZ files."""
+    sid, spath_str, level, aips_dir, aips_xz_dir, aips_yz_dir = args
+    vol, scale = read_omezarr(spath_str, level=level)
+    arr = np.asarray(vol)
+    scale_arr = np.array(scale, dtype=float)
+    _save_aip_npz(arr.mean(axis=0), scale_arr, Path(aips_dir) / f"slice_z{sid:02d}.npz")
+    _save_axis_views(arr, scale_arr, sid, Path(aips_xz_dir), Path(aips_yz_dir))
+    return sid
+
+
+def _pair_task(args: tuple) -> tuple[int, int]:
+    """Worker for Pass 2: load two zarr slices, write paired XZ/YZ NPZ files."""
+    fid, mid, fpath_str, mpath_str, fixed_z, moving_z, level, aips_xz_dir, aips_yz_dir = args
+    fixed_vol, fixed_scale = read_omezarr(fpath_str, level=level)
+    moving_vol, moving_scale = read_omezarr(mpath_str, level=level)
+    _save_axis_views_for_pair(
+        np.asarray(fixed_vol),
+        np.asarray(moving_vol),
+        np.array(fixed_scale, dtype=float),
+        np.array(moving_scale, dtype=float),
+        fixed_z,
+        moving_z,
+        fid,
+        mid,
+        Path(aips_xz_dir),
+        Path(aips_yz_dir),
+    )
+    return fid, mid
+
+
 def main(argv=None):
     p = _build_arg_parser()
     args = p.parse_args(argv)
@@ -271,6 +310,7 @@ def main(argv=None):
     # Use the explicitly provided server path when available; fall back to slices_dir.
     # Normalize to remove any double-slashes produced by a trailing slash in params.output.
     slices_remote_dir = str(Path(args.slices_remote_dir)) if args.slices_remote_dir else str(slices_dir)
+    workers = args.workers or os.cpu_count() or 4
 
     if not slices_dir.exists():
         logger.error(f"Slices directory not found: {slices_dir}")
@@ -307,31 +347,35 @@ def main(argv=None):
 
     # ------------------------------------------------------------------
     # Pass 1: XY AIPs (per slice) + per-slice XZ/YZ fallback files.
+    # Each slice is independent — process in parallel.
     # ------------------------------------------------------------------
-    logger.info(f"Computing XY AIPs and per-slice XZ/YZ fallbacks at pyramid level {level}...")
-    for sid, spath in tqdm(slice_paths.items(), desc="AIPs"):
-        vol, scale = read_omezarr(str(spath), level=level)
-        arr = np.asarray(vol)
-        scale_arr = np.array(scale, dtype=float)
-
-        # XY AIP (mean over Z): lateral overview for XY alignment.
-        _save_aip_npz(arr.mean(axis=0), scale_arr, aips_dir / f"slice_z{sid:02d}.npz")
-
-        # Per-slice XZ/YZ (brightest column, independent per slice).
-        # Kept as a fallback for packages without paired files.
-        _save_axis_views(arr, scale_arr, sid, aips_xz_dir, aips_yz_dir)
-        logger.debug(f"  z{sid:02d}: shape={arr.shape}")
+    logger.info(f"Computing XY AIPs and per-slice XZ/YZ fallbacks at pyramid level {level} using {workers} workers...")
+    slice_tasks = [
+        (sid, str(spath), level, str(aips_dir), str(aips_xz_dir), str(aips_yz_dir)) for sid, spath in slice_paths.items()
+    ]
+    with ProcessPoolExecutor(max_workers=min(workers, len(slice_tasks))) as pool:
+        futures = {pool.submit(_slice_task, t): t[0] for t in slice_tasks}
+        with tqdm(total=len(futures), desc="AIPs") as bar:
+            for fut in as_completed(futures):
+                sid = futures[fut]
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error(f"z{sid:02d} failed: {exc}")
+                bar.update(1)
 
     # ------------------------------------------------------------------
     # Pass 2: Paired XZ/YZ files — both slices share the same column,
     # chosen from the combined signal at their mutual overlap depth.
+    # Each pair is independent — process in parallel.
     # ------------------------------------------------------------------
     sorted_ids = sorted(slice_paths.keys())
     pairs = [(sorted_ids[i - 1], mid) for i, mid in enumerate(sorted_ids) if i > 0 and mid in transform_paths]
 
     if pairs:
-        logger.info(f"Generating paired XZ/YZ cross-sections for {len(pairs)} pairs...")
-        for fid, mid in tqdm(pairs, desc="paired XZ/YZ"):
+        logger.info(f"Generating paired XZ/YZ cross-sections for {len(pairs)} pairs using {workers} workers...")
+        pair_tasks = []
+        for fid, mid in pairs:
             tpath = transform_paths[mid]
             offsets_file = tpath / "offsets.txt"
             fixed_z, moving_z = 0, 0
@@ -342,23 +386,30 @@ def main(argv=None):
                         fixed_z, moving_z = int(arr_off[0]), int(arr_off[1])
                 except Exception:
                     pass
-
-            fixed_vol, fixed_scale = read_omezarr(str(slice_paths[fid]), level=level)
-            moving_vol, moving_scale = read_omezarr(str(slice_paths[mid]), level=level)
-
-            _save_axis_views_for_pair(
-                np.asarray(fixed_vol),
-                np.asarray(moving_vol),
-                np.array(fixed_scale, dtype=float),
-                np.array(moving_scale, dtype=float),
-                fixed_z,
-                moving_z,
-                fid,
-                mid,
-                aips_xz_dir,
-                aips_yz_dir,
+            pair_tasks.append(
+                (
+                    fid,
+                    mid,
+                    str(slice_paths[fid]),
+                    str(slice_paths[mid]),
+                    fixed_z,
+                    moving_z,
+                    level,
+                    str(aips_xz_dir),
+                    str(aips_yz_dir),
+                )
             )
-            logger.debug(f"  pair z{fid:02d}/z{mid:02d}: overlap fixed_z={fixed_z} moving_z={moving_z}")
+
+        with ProcessPoolExecutor(max_workers=min(workers, len(pair_tasks))) as pool:
+            futures = {pool.submit(_pair_task, t): (t[0], t[1]) for t in pair_tasks}
+            with tqdm(total=len(futures), desc="paired XZ/YZ") as bar:
+                for fut in as_completed(futures):
+                    fid, mid = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as exc:
+                        logger.error(f"pair z{fid:02d}/z{mid:02d} failed: {exc}")
+                    bar.update(1)
 
     # Export transforms
     logger.info("Copying pairwise transforms...")
