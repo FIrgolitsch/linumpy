@@ -128,22 +128,19 @@ def _save_xy_aips_for_pair(
     moving_arr: np.ndarray,
     fixed_scale: np.ndarray,
     moving_scale: np.ndarray,
-    overlap_um: float,
-    imaging_depth_um: float,
+    overlap_px: int,
     fid: int,
     mid: int,
     aips_dir: Path,
 ) -> None:
-    """Save paired XY AIPs covering the expected physical overlap zone.
+    """Save paired XY AIPs covering the overlap zone at the edges of each volume.
 
-    The slab size is computed as a **fraction of each volume's Z extent**
-    (``overlap_um / imaging_depth_um``), which is robust to pyramid-level
-    downsampling and does not rely on the Z voxel size from the scale metadata
-    (which may be identical across all pyramid levels in some zarr files).
+    ``overlap_px`` is the number of Z voxels (at the working pyramid level) to
+    average at each boundary:
 
-    - **Fixed slice**: last *slab* voxels of Z — the bottom of the fixed
+    - **Fixed slice**: last *overlap_px* voxels of Z — the bottom of the fixed
       volume, which physically overlaps with the top of the moving volume.
-    - **Moving slice**: first *slab* voxels of Z — the top of the moving
+    - **Moving slice**: first *overlap_px* voxels of Z — the top of the moving
       volume, which physically overlaps with the bottom of the fixed volume.
 
     Both projections cover the same tissue depth, giving matching structure in
@@ -160,16 +157,11 @@ def _save_xy_aips_for_pair(
 
     nz_f = fixed_arr.shape[0]
     nz_m = moving_arr.shape[0]
+    slab_f = min(overlap_px, nz_f)
+    slab_m = min(overlap_px, nz_m)
 
-    # Use the overlap fraction of the Z extent rather than converting µm → voxels
-    # via the scale, because the zarr metadata may report the same scale for all
-    # pyramid levels (all levels show the base-resolution 10 µm scale).
-    overlap_fraction = overlap_um / imaging_depth_um
-    slab_f = max(1, round(nz_f * overlap_fraction))
-    slab_m = max(1, round(nz_m * overlap_fraction))
-
-    fixed_slab = fixed_arr[max(0, nz_f - slab_f) :]
-    moving_slab = moving_arr[: min(nz_m, slab_m)]
+    fixed_slab = fixed_arr[nz_f - slab_f :]
+    moving_slab = moving_arr[:slab_m]
 
     fixed_aip = fixed_slab.mean(axis=0).astype(np.float32)
     moving_aip = moving_slab.mean(axis=0).astype(np.float32)
@@ -314,18 +306,15 @@ def _build_arg_parser():
         ),
     )
     p.add_argument(
-        "--section_thickness",
-        type=float,
-        default=200.0,
-        metavar="UM",
-        help="Thickness of each histological section in µm. [%(default)s]",
-    )
-    p.add_argument(
-        "--imaging_depth",
-        type=float,
-        default=300.0,
-        metavar="UM",
-        help="OCT imaging depth per acquisition in µm. [%(default)s]",
+        "--xy_overlap_px",
+        type=int,
+        default=35,
+        metavar="PX",
+        help=(
+            "Number of Z voxels (at the working pyramid level) to project at the"
+            " boundary of each slice for the XY overlap AIPs."
+            " Fixed: last PX voxels; Moving: first PX voxels. [%(default)s]"
+        ),
     )
     return p
 
@@ -374,8 +363,7 @@ def _pair_task(args: tuple) -> tuple[int, int]:
         fixed_z,
         moving_z,
         level,
-        overlap_um,
-        imaging_depth_um,
+        overlap_px,
         aips_dir,
         aips_xz_dir,
         aips_yz_dir,
@@ -403,8 +391,7 @@ def _pair_task(args: tuple) -> tuple[int, int]:
         moving_arr,
         fixed_scale_arr,
         moving_scale_arr,
-        overlap_um,
-        imaging_depth_um,
+        overlap_px,
         fid,
         mid,
         Path(aips_dir),
@@ -424,17 +411,8 @@ def main(argv=None):
     # Normalize to remove any double-slashes produced by a trailing slash in params.output.
     slices_remote_dir = str(Path(args.slices_remote_dir)) if args.slices_remote_dir else str(slices_dir)
     workers = args.workers or max(1, (os.cpu_count() or 4) - 2)
-    imaging_depth_um = args.imaging_depth
-    overlap_um = imaging_depth_um - args.section_thickness
-    if overlap_um <= 0:
-        logger.warning(
-            f"imaging_depth ({imaging_depth_um} µm) ≤ section_thickness ({args.section_thickness} µm); "
-            "XY pair AIPs will fall back to a single voxel slab."
-        )
-    logger.info(
-        f"XY overlap depth: {overlap_um:.0f} µm ({imaging_depth_um:.0f} - {args.section_thickness:.0f})"
-        f" = {overlap_um / imaging_depth_um:.0%} of each volume"
-    )
+    overlap_px = args.xy_overlap_px
+    logger.info(f"XY overlap slab: {overlap_px} voxels at pyramid level {args.level}")
 
     if not slices_dir.exists():
         logger.error(f"Slices directory not found: {slices_dir}")
@@ -519,8 +497,7 @@ def main(argv=None):
                     fixed_z,
                     moving_z,
                     level,
-                    overlap_um,
-                    imaging_depth_um,
+                    overlap_px,
                     str(aips_dir),
                     str(aips_xz_dir),
                     str(aips_yz_dir),
