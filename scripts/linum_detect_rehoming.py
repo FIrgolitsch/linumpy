@@ -301,14 +301,16 @@ def main():
     if total_corrected == 0:
         print("No encoder artifacts detected — shifts unchanged.")
 
-    # Add a 'reliable' column: 0 for transitions whose original motor step magnitude
-    # exceeded max_shift_mm (large shifts that may not be trustworthy), 1 otherwise.
-    # This enables linum_align_mosaics_3d_from_shifts.py --refine_unreliable to use
-    # image-based registration to find the true XY position for those transitions,
-    # producing a more accurate common-space alignment before pairwise registration.
-    shift_mag_before = np.sqrt(shifts_before["x_shift_mm"] ** 2 + shifts_before["y_shift_mm"] ** 2)
+    # Add a 'reliable' column: 0 for transitions whose *corrected* motor step
+    # magnitude still exceeds max_shift_mm — meaning neither Pass 1 (tile
+    # offset) nor Pass 2 (spike) was able to explain the motor step, so
+    # the true XY transition is unknown. Rows that pass 1/2 successfully
+    # corrected are marked reliable=1.
+    # This drives linum_align_mosaics_3d_from_shifts.py --refine_unreliable,
+    # which falls back to image-based registration only for reliable=0 rows.
     shifts_after = shifts_after.copy()
-    shifts_after["reliable"] = (shift_mag_before <= args.max_shift_mm).astype(int)
+    shift_mag_after = np.sqrt(shifts_after["x_shift_mm"] ** 2 + shifts_after["y_shift_mm"] ** 2)
+    shifts_after["reliable"] = (shift_mag_after <= args.max_shift_mm).astype(int)
     n_unreliable = int((shifts_after["reliable"] == 0).sum())
     if n_unreliable > 0:
         unreliable_ids = [
