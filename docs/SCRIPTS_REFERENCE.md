@@ -144,16 +144,6 @@ Resample mosaic grid to different resolution.
 linum_resample_mosaic_grid.py <input.ome.zarr> <output.ome.zarr> -r <resolution>
 ```
 
-### linum_resample_mosaic_grid_gpu.py
-
-GPU-accelerated version of mosaic grid resampling (5-12x speedup).
-
-```bash
-linum_resample_mosaic_grid_gpu.py <input.ome.zarr> <output.ome.zarr> -r <resolution> --use_gpu
-```
-
-Falls back to CPU if GPU is not available.
-
 ---
 
 ## Preprocessing
@@ -370,11 +360,6 @@ linum_estimate_global_transform.py <mosaics_dir> <output_transform.npy> \
 ```
 
 The output `.npy` can be passed to `linum_stitch_3d_refined.py --input_transform`.
-
-### linum_estimate_global_transform_gpu.py
-
-GPU-accelerated version of `linum_estimate_global_transform.py` (phase
-correlation on GPU). Accepts the same arguments plus `--use_gpu / --no-use_gpu`.
 
 ### linum_analyze_stitch_affine.py
 
@@ -768,14 +753,6 @@ linum_assess_slice_quality.py <mosaics_dir> <output_slice_config.csv> \
 | `--exclude_first` | Exclude the first N calibration slices |
 | `--update_existing` | Update an existing slice config with quality info |
 
-### linum_assess_slice_quality_gpu.py
-
-GPU-accelerated version of `linum_assess_slice_quality.py` (3-8x speedup). Accepts the same arguments plus `--use_gpu / --no-use_gpu`.
-
-```bash
-linum_assess_slice_quality_gpu.py <mosaics_dir> <output_slice_config.csv> [options]
-```
-
 ### linum_analyze_registration_transforms.py
 
 Analyze cumulative rotation and translation across pairwise registration transforms to detect drift.
@@ -1131,80 +1108,6 @@ linum_benchmark_gpu.py --output results.json --iterations 10
 | `--full` | Run with multiple sizes |
 | `--sizes` | Custom sizes to test |
 | `--skip-correctness` | Skip result verification |
-
-### linum_estimate_transform_gpu.py
-
-GPU-accelerated transform estimation using phase correlation.
-
-```bash
-linum_estimate_transform_gpu.py <input_images> <output.npy> [--use_gpu] [-v]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--initial_overlap` | Initial overlap fraction (default: 0.3) |
-| `--tile_shape` | Tile shape in pixels |
-| `--n_samples` | Max tile pairs for optimization |
-| `--use_gpu/--no-use_gpu` | Enable/disable GPU |
-
-### linum_create_mosaic_grid_3d_gpu.py
-
-GPU-accelerated mosaic grid creation with galvo detection.
-
-```bash
-linum_create_mosaic_grid_3d_gpu.py <output.ome.zarr> --from_tiles_list <tiles> [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--resolution` | Output resolution in µm/pixel |
-| `--fix_galvo_shift` | Enable galvo correction |
-| `--galvo_threshold` | Galvo detection threshold (default: 0.6) |
-| `--use_gpu/--no-use_gpu` | Enable/disable GPU |
-
-### linum_normalize_intensities_per_slice_gpu.py
-
-GPU-accelerated normalization of intensities per slice (4-10x speedup).
-
-```bash
-linum_normalize_intensities_per_slice_gpu.py <input.ome.zarr> <output.ome.zarr> \
-    [--percentile_max <pmax>] \
-    [--use_gpu/--no-use_gpu]
-```
-
-### linum_fix_illumination_3d_gpu.py
-
-GPU-accelerated illumination correction using BaSiCPy on JAX (2-5x speedup). Requires JAX GPU setup — see [GPU_ACCELERATION.md](GPU_ACCELERATION.md#jax-gpu-for-basicpy-fix_illumination).
-
-```bash
-linum_fix_illumination_3d_gpu.py <input.ome.zarr> <output.ome.zarr> \
-    [--n_processes <n>] \
-    [--use_gpu/--no-use_gpu]
-```
-
-### linum_generate_mosaic_aips_gpu.py
-
-GPU-accelerated version of `linum_generate_mosaic_aips.py`. Note: mean projection offers no genuine speedup (≤1x); this script is provided for pipeline consistency.
-
-```bash
-linum_generate_mosaic_aips_gpu.py <mosaics_dir> <output_dir> \
-    [--level <pyramid_level>] \
-    [--use_gpu/--no-use_gpu]
-```
-
-### GPU Script Comparison
-
-| GPU Script | CPU Equivalent | Accelerated Operations |
-|------------|----------------|------------------------|
-| `linum_estimate_transform_gpu.py` | `linum_estimate_transform.py` | FFT (9-47x), phase correlation (8-16x) |
-| `linum_create_mosaic_grid_3d_gpu.py` | `linum_create_mosaic_grid_3d.py` | Resize (5-12x) |
-| `linum_resample_mosaic_grid_gpu.py` | `linum_resample_mosaic_grid.py` | Resize (5-12x) |
-| `linum_normalize_intensities_per_slice_gpu.py` | `linum_normalize_intensities_per_slice.py` | Normalization (4-10x) |
-| `linum_fix_illumination_3d_gpu.py` | `linum_fix_illumination_3d.py` | BaSiCPy via JAX (2-5x) |
-| `linum_assess_slice_quality_gpu.py` | `linum_assess_slice_quality.py` | SSIM, morphology (3-8x) |
-| `linum_generate_mosaic_aips_gpu.py` | `linum_generate_mosaic_aips.py` | AIP mean projection (≤1x) |
-
-*Note: `linum_aip_gpu.py` exists but offers no speedup for mean projection (0.5x = GPU is 2x slower due to transfer overhead). Use `linum_aip_png.py` or `linum_generate_mosaic_aips.py` instead.*
 
 ---
 

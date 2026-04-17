@@ -14,12 +14,6 @@ nextflow.enable.dsl = 2
 // HELPER FUNCTIONS
 // =============================================================================
 
-// GPU/CPU script picker. `cpuName` is the CPU script's basename; the GPU
-// equivalent is assumed to be `<stem>_gpu.py` (the project-wide convention).
-def gpuScript(String cpuName) {
-    return params.use_gpu ? cpuName.replaceAll(/\.py$/, '_gpu.py') : cpuName
-}
-
 // Annotated-screenshot CLI flags shared by `stack` and `normalize_z_intensity`.
 def annotatedScreenshotArgs(String sliceIdsStr) {
     def show_lines = params.annotated_show_lines ? '--show_lines' : ''
@@ -359,10 +353,9 @@ process resample_mosaic_grid {
     tuple val(slice_id), path("mosaic_grid_z${slice_id}_resampled.ome.zarr")
 
     script:
-    def script_name = gpuScript('linum_resample_mosaic_grid.py')
-    def gpu_flag = params.use_gpu ? "--use_gpu" : ""
+    def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     """
-    ${script_name} ${mosaic_grid} "mosaic_grid_z${slice_id}_resampled.ome.zarr" \
+    linum_resample_mosaic_grid.py ${mosaic_grid} "mosaic_grid_z${slice_id}_resampled.ome.zarr" \
         -r ${params.resolution} ${gpu_flag} -v
     """
 }
@@ -390,11 +383,11 @@ process fix_illumination {
     tuple val(slice_id), path("mosaic_grid_z${slice_id}_illum_fix.ome.zarr")
 
     script:
-    def script_name = gpuScript('linum_fix_illumination_3d.py')
+    def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     """
-    ${script_name} ${mosaic_grid} "mosaic_grid_z${slice_id}_illum_fix.ome.zarr" \
+    linum_fix_illumination_3d.py ${mosaic_grid} "mosaic_grid_z${slice_id}_illum_fix.ome.zarr" \
         --n_processes ${params.processes} \
-        --percentile_max ${params.clip_percentile_upper}
+        --percentile_max ${params.clip_percentile_upper} ${gpu_flag}
     """
 }
 
@@ -425,9 +418,9 @@ process estimate_global_transform {
     def include_arg = params.stitch_global_transform_slices?.trim()
         ? "--include_slice " + params.stitch_global_transform_slices.toString().split('[,\\s]+').join(' ')
         : ""
-    def script_name = gpuScript('linum_estimate_global_transform.py')
+    def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     """
-    ${script_name} pool_input global_affine.npy \
+    linum_estimate_global_transform.py pool_input global_affine.npy \
         --overlap_fraction ${params.stitch_overlap_fraction} \
         ${slice_config_arg} \
         ${include_arg} \
@@ -436,7 +429,7 @@ process estimate_global_transform {
         ${n_samples_arg} \
         --seed ${params.stitch_global_transform_seed} \
         --diagnostics_json global_affine.json \
-        -f
+        -f ${gpu_flag}
     """
 }
 
@@ -530,10 +523,9 @@ process normalize {
     path("*_metrics.json"), optional: true, emit: metrics
 
     script:
-    def script_name = gpuScript('linum_normalize_intensities_per_slice.py')
-    def gpu_flag = params.use_gpu ? "--use_gpu" : ""
+    def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     """
-    ${script_name} ${image} "slice_z${slice_id}_normalize.ome.zarr" \
+    linum_normalize_intensities_per_slice.py ${image} "slice_z${slice_id}_normalize.ome.zarr" \
         --percentile_max ${params.clip_percentile_upper} \
         --min_contrast_fraction ${params.normalize_min_contrast} ${gpu_flag}
     """
@@ -855,10 +847,9 @@ process normalize_z_intensity {
         ? "--mode histogram --strength ${params.znorm_strength} --tissue_threshold ${params.znorm_tissue_threshold}"
         : "--mode percentile --smooth_sigma ${params.znorm_smooth_sigma} --percentile ${params.znorm_percentile} --max_scale ${params.znorm_max_scale} --min_scale ${params.znorm_min_scale} --strength ${params.znorm_strength}"
     def annotated_args = annotatedScreenshotArgs(slice_ids_str)
-    def script_name = gpuScript('linum_normalize_z_intensity.py')
-    def gpu_flag = params.use_gpu ? "--use_gpu" : ""
+    def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     """
-    ${script_name} ${stacked_zarr} ${subject_name}.ome.zarr \
+    linum_normalize_z_intensity.py ${stacked_zarr} ${subject_name}.ome.zarr \
         ${n_slices_opt} \
         ${znorm_opts} \
         ${pyramidArgs()} ${gpu_flag}

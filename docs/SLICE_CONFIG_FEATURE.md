@@ -142,7 +142,7 @@ The pipeline never fabricates a slice from a weighted blend when registration fa
 
 ### Automatic Quality Detection
 
-The `linum_assess_slice_quality.py` script (and GPU version `linum_assess_slice_quality_gpu.py`) can analyze mosaic grids to detect quality issues and update the slice configuration.
+The `linum_assess_slice_quality.py` script can analyze mosaic grids to detect quality issues and update the slice configuration. GPU acceleration is enabled by default (pass `--no-use_gpu` to disable).
 
 **Quality Metrics:**
 | Metric | Weight | Description |
@@ -191,8 +191,8 @@ linum_assess_slice_quality.py /path/to/mosaics slice_config.csv \
 linum_assess_slice_quality.py /path/to/mosaics slice_config.csv \
     --min_quality 0.3
 
-# GPU-accelerated quality assessment
-linum_assess_slice_quality_gpu.py /path/to/mosaics slice_config.csv
+# GPU-accelerated quality assessment (default; pass --no-use_gpu to disable)
+linum_assess_slice_quality.py /path/to/mosaics slice_config.csv --use_gpu
 
 # Report only (don't write file)
 linum_assess_slice_quality.py /path/to/mosaics slice_config.csv --report_only

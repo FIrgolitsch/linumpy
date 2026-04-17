@@ -19,9 +19,9 @@ keeping the blend-shift sub-pixel refinement.
 The script is read-only with respect to its inputs and does not touch
 any pipeline outputs.
 
-For a GPU-accelerated variant (CuPy-backed phase correlation, same
-pooling and LS fit) see ``linum_estimate_global_transform_gpu.py``.
-The pipeline selects between the two scripts based on ``params.use_gpu``.
+GPU acceleration (CuPy-backed phase correlation) is used when available
+(--use_gpu, default on). Falls back to CPU automatically if no GPU is
+detected.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
+from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.io import slice_config as slice_config_io
 from linumpy.stitching.motor import pool_pairs_and_fit_global_affine
 
@@ -143,12 +144,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Optional JSON sidecar for fit diagnostics and per-volume stats.",
     )
     p.add_argument("--overwrite", "-f", action="store_true", help="Overwrite the output transform if it already exists.")
+    p.add_argument(
+        "--use_gpu",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use GPU-accelerated phase correlation via CuPy if available. [%(default)s]",
+    )
+    p.add_argument("--verbose", "-v", action="store_true", help="Print GPU information on startup.")
     return p
 
 
 def main() -> int:
     parser = _build_arg_parser()
     args = parser.parse_args()
+
+    use_gpu = args.use_gpu and GPU_AVAILABLE
+    if args.verbose:
+        print_gpu_info()
+    if args.use_gpu and not GPU_AVAILABLE:
+        logger.info("No CUDA device detected; falling back to CPU phase correlation")
 
     input_dir = Path(args.input_dir)
     if not input_dir.is_dir():
@@ -176,7 +190,7 @@ def main() -> int:
         max_empty_fraction=args.max_empty_fraction,
         n_samples=args.n_samples,
         seed=args.seed,
-        use_gpu=False,
+        use_gpu=use_gpu,
     )
 
     model = diagnostics["displacement_model"]

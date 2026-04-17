@@ -1199,12 +1199,20 @@ When adding a new process: prefer extending an existing helper to copy-pasting
 shell-arg blocks (e.g. add another `stack*Args()` rather than an inline
 60-line `if` chain inside the process script).
 
-### gpuScript()
+### GPU flag
 
-Use `gpuScript('linum_foo.py')` whenever a process has a CPU and GPU variant
-of the same script. The convention is `<stem>.py` ↔ `<stem>_gpu.py`. This
-replaces the hand-rolled `def script_name = params.use_gpu ? "..._gpu.py" : "....py"`
-pattern that historically drifted between processes.
+Each process that performs GPU-accelerated work passes `--use_gpu` or
+`--no-use_gpu` based on `params.use_gpu`. Use the pattern:
+
+```groovy
+def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
+"""
+linum_foo.py ... ${gpu_flag}
+"""
+```
+
+There is no longer a separate `<stem>_gpu.py` script; all GPU-capable scripts
+have a single unified name and accept `--use_gpu`/`--no-use_gpu`.
 
 ---
 
