@@ -32,7 +32,7 @@ from skimage.filters import threshold_otsu
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.fft_ops import phase_correlation
 from linumpy.io.zarr import read_omezarr
-from linumpy.utils import mosaic_grid
+from linumpy.stitching import mosaic_grid
 
 configure_all_libraries()
 
@@ -188,7 +188,7 @@ def main():
 
         # Loop over mosaics (random order)
         if args.seed is not None:
-            random.seed = args.seed
+            random.seed(args.seed)
         mosaic_idx = list(range(len(mosaics)))
         random.shuffle(mosaic_idx)
 
