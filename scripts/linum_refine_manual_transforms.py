@@ -86,10 +86,30 @@ def _normalize(image: np.ndarray) -> np.ndarray:
 
 
 def _load_manual_transform(tfm_path: Path) -> tuple[float, float, float, float, float]:
-    """Return (tx, ty, rot_deg, cx, cy) from a SimpleITK Euler3DTransform file."""
+    """Return (tx, ty, rot_deg, cx, cy) from a SimpleITK Euler3DTransform file.
+
+    Warns if the stored transform has non-planar Euler components (rx or ry
+    non-zero, or tz non-zero) — the pairwise refinement is 2D rigid and
+    cannot represent non-planar rotations, so those components would be
+    silently dropped by the composition. Hand-edited .tfm files containing
+    such components should be authored via the manual alignment plugin
+    instead, which only emits planar transforms.
+    """
     tfm = sitk.ReadTransform(str(tfm_path))
     params = tfm.GetParameters()
     # Euler3DTransform params: [rx, ry, rz, tx, ty, tz]
+    non_planar_rot = any(abs(float(params[i])) > 1e-6 for i in (0, 1))
+    non_planar_t = len(params) > 5 and abs(float(params[5])) > 1e-6
+    if non_planar_rot or non_planar_t:
+        logger.warning(
+            "  manual transform %s has non-planar Euler components "
+            "(rx=%.4g rad, ry=%.4g rad, tz=%.4g px); they will be dropped "
+            "during 2D refinement composition.",
+            tfm_path,
+            float(params[0]),
+            float(params[1]),
+            float(params[5]) if len(params) > 5 else 0.0,
+        )
     rot_deg = float(np.degrees(params[2]))
     tx = float(params[3])
     ty = float(params[4])
@@ -97,6 +117,54 @@ def _load_manual_transform(tfm_path: Path) -> tuple[float, float, float, float, 
     cx = float(fixed_params[0]) if len(fixed_params) > 0 else 0.0
     cy = float(fixed_params[1]) if len(fixed_params) > 1 else 0.0
     return tx, ty, rot_deg, cx, cy
+
+
+def _compose_rigid_2d(
+    man_tx: float,
+    man_ty: float,
+    man_rot_deg: float,
+    man_cx: float,
+    man_cy: float,
+    delta_tx: float,
+    delta_ty: float,
+    delta_rot_deg: float,
+    final_cx: float,
+    final_cy: float,
+) -> tuple[float, float, float]:
+    """Compose manual ∘ delta as a single 2D rigid transform about ``(final_cx, final_cy)``.
+
+    Manual: T_m(p) = R_m (p - c_m) + c_m + t_m      (centre = (man_cx, man_cy))
+    Delta:  T_δ(p) = R_δ (p - c_f) + c_f + t_δ      (centre = (final_cx, final_cy))
+    Final:  T_f(p) = R_f (p - c_f) + c_f + t_f      with R_f = R_δ R_m
+
+    We solve for (t_f, θ_f) so that T_f(p) = T_δ(T_m(p)) for all p. For 2D
+    planar rotations θ_f = θ_m + θ_δ; evaluating at p = c_f gives t_f in
+    closed form without sampling or a numerical fit:
+
+        t_f = R_delta (T_m(c_f) - c_f) + t_delta
+
+    Returns (tx, ty, rot_deg).
+    """
+
+    def _rot(theta_rad: float) -> np.ndarray:
+        c = float(np.cos(theta_rad))
+        s = float(np.sin(theta_rad))
+        return np.array([[c, -s], [s, c]])
+
+    c_final = np.array([final_cx, final_cy])
+    c_manual = np.array([man_cx, man_cy])
+    t_manual = np.array([man_tx, man_ty])
+    t_delta = np.array([delta_tx, delta_ty])
+
+    r_manual = _rot(np.radians(man_rot_deg))
+    r_delta = _rot(np.radians(delta_rot_deg))
+
+    # T_m(c_final):
+    p_manual = r_manual @ (c_final - c_manual) + c_manual + t_manual
+    # t_final = R_delta (p_manual - c_final) + t_delta
+    t_final = r_delta @ (p_manual - c_final) + t_delta
+
+    return float(t_final[0]), float(t_final[1]), float(man_rot_deg + delta_rot_deg)
 
 
 def _warp_moving(moving: np.ndarray, tx: float, ty: float, rot_deg: float, cx: float, cy: float) -> np.ndarray:
@@ -291,15 +359,27 @@ def main() -> None:
         )
         logger.info(f"  z{slice_id:02d}: refinement delta tx={delta_tx:.2f} ty={delta_ty:.2f} rot={delta_rot:.3f}°")
 
-        # Compose: final = manual + refinement delta (valid for small deltas)
-        final_tx = man_tx + delta_tx
-        final_ty = man_ty + delta_ty
-        final_rot = man_rot + delta_rot
+        # Compose manual ∘ delta about the fixed-slice centre.
+        # The refinement runs in the fixed-slice reference frame with rotation
+        # centre at its geometric centre, so the composite must be re-expressed
+        # about that same centre for the saved .tfm to round-trip correctly.
+        final_center = [fixed_slice.shape[1] / 2.0, fixed_slice.shape[0] / 2.0]
+        final_tx, final_ty, final_rot = _compose_rigid_2d(
+            man_tx,
+            man_ty,
+            man_rot,
+            man_cx,
+            man_cy,
+            delta_tx,
+            delta_ty,
+            delta_rot,
+            final_center[0],
+            final_center[1],
+        )
         logger.info(f"  z{slice_id:02d}: final    tx={final_tx:.2f} ty={final_ty:.2f} rot={final_rot:.3f}°")
 
         # Write output
         pair_out.mkdir(parents=True, exist_ok=True)
-        final_center = [fixed_slice.shape[1] / 2.0, fixed_slice.shape[0] / 2.0]
         final_tfm = create_transform(final_tx, final_ty, final_rot, final_center)
         sitk.WriteTransform(final_tfm, str(pair_out / "transform.tfm"))
         np.savetxt(str(pair_out / "offsets.txt"), [fixed_z, moving_z], fmt="%d")
