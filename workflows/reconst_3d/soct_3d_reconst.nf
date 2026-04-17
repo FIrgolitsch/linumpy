@@ -1125,7 +1125,11 @@ workflow {
         or specify the path with --shifts_xy /path/to/shifts_xy.csv
         """
     }
-    shifts_xy = channel.of(file(shifts_xy_path))
+    // Value channel (not channel.of) so the same shifts file can be consumed
+    // by analyze_shifts, detect_rehoming, common_space, stack_input,
+    // analyze_acquisition_rotation, and stack_motor_only without exhausting
+    // the queue.
+    shifts_xy = channel.value(file(shifts_xy_path))
 
     // Slice config (optional)
     def slice_config_path = params.slice_config ?: joinPath(inputDir, "slice_config.csv")
@@ -1221,13 +1225,19 @@ workflow {
     // Optionally correct encoder glitch spikes before alignment. When a
     // real slice_config is available, detect_rehoming also stamps
     // rehomed/rehoming_reliable flags back into it.
-    current_slice_config = effective_slice_config
+    // .first() promotes each queue channel to a value channel so the same
+    // slice_config can be consumed by .merge() in common_space_input AND by
+    // .combine() in stack_input later. Without it, the queue channel is
+    // exhausted by the first consumer and stack silently skips. Nextflow may
+    // warn that .first() is "useless" in code paths where the channel is
+    // already a value channel — that warning is harmless and we accept it.
+    current_slice_config = effective_slice_config.first()
     if (params.detect_rehoming) {
         detect_rehoming_input = shifts_xy.combine(current_slice_config)
         detect_rehoming_events(detect_rehoming_input)
         aligned_shifts = detect_rehoming_events.out.corrected_shifts
         if (has_slice_config) {
-            current_slice_config = detect_rehoming_events.out.slice_config
+            current_slice_config = detect_rehoming_events.out.slice_config.first()
         }
     } else {
         aligned_shifts = shifts_xy
@@ -1291,7 +1301,7 @@ workflow {
                 current_slice_config,
                 interpolate_missing_slice.out.manifest.collect(),
             )
-            current_slice_config = finalise_interpolation.out
+            current_slice_config = finalise_interpolation.out.first()
         }
 
         all_slices = slices_common_space
@@ -1368,7 +1378,7 @@ workflow {
     stack_slice_config = current_slice_config
     if (params.auto_exclude_enabled && has_slice_config) {
         auto_exclude_slices(transforms_for_stack, current_slice_config)
-        stack_slice_config = auto_exclude_slices.out.slice_config
+        stack_slice_config = auto_exclude_slices.out.slice_config.first()
     }
 
     stack_input = slices_collected
