@@ -384,23 +384,66 @@ process stitch_3d {
     """
 }
 
+process estimate_global_transform {
+    publishDir "${params.output}/${task.process}", mode: 'copy'
+
+    input:
+    path(mosaic_grids)
+    path(slice_config)
+
+    output:
+    path("global_affine.npy"), emit: transform
+    path("global_affine.json"), optional: true, emit: diagnostics
+
+    script:
+    def slice_config_arg = slice_config.name != 'NO_SLICE_CONFIG' ? "--slice_config ${slice_config}" : ""
+    def histogram_arg = params.stitch_global_transform_histogram_match ? "--histogram_match" : ""
+    def empty_arg = params.stitch_global_transform_max_empty_fraction != null
+        ? "--max_empty_fraction ${params.stitch_global_transform_max_empty_fraction}"
+        : ""
+    def n_samples_arg = (params.stitch_global_transform_n_samples as int) > 0
+        ? "--n_samples ${params.stitch_global_transform_n_samples as int}"
+        : ""
+    def include_arg = params.stitch_global_transform_slices?.trim()
+        ? "--include_slice " + params.stitch_global_transform_slices.toString().split('[,\\s]+').join(' ')
+        : ""
+    """
+    mkdir -p pool_input
+    for f in ${mosaic_grids}; do
+        ln -sf "\$(readlink -f \$f)" pool_input/
+    done
+    linum_estimate_global_transform.py pool_input global_affine.npy \
+        --overlap_fraction ${params.stitch_overlap_fraction} \
+        ${slice_config_arg} \
+        ${include_arg} \
+        ${histogram_arg} \
+        ${empty_arg} \
+        ${n_samples_arg} \
+        --seed ${params.stitch_global_transform_seed} \
+        --diagnostics_json global_affine.json \
+        -f
+    """
+}
+
 process stitch_3d_with_refinement {
     publishDir "${params.output}/${task.process}", mode: 'copy', pattern: "*_metrics.json"
 
     input:
-    tuple val(slice_id), path(mosaic_grid)
+    tuple val(slice_id), path(mosaic_grid), path(input_transform)
 
     output:
     tuple val(slice_id), path("slice_z${slice_id}_stitch_3d.ome.zarr"), emit: stitched
     path("*_metrics.json"), optional: true, emit: metrics
 
     script:
+    def transform_arg = input_transform.name != 'NO_TRANSFORM' ? "--input_transform ${input_transform}" : ""
     """
     linum_stitch_3d_refined.py ${mosaic_grid} "slice_z${slice_id}_stitch_3d.ome.zarr" \
         --overlap_fraction ${params.stitch_overlap_fraction} \
         --blending_method ${params.stitch_blending_method} \
         --refinement_mode blend_shift \
         --max_refinement_px ${params.max_blend_refinement_px} \
+        ${transform_arg} \
         -f
     """
 }
@@ -1104,7 +1147,17 @@ workflow {
     illum_fixed = params.fix_illum_enabled ? fix_illumination(focal_fixed) : focal_fixed
 
     // Stage 2: XY Stitching (image-registration-based blend refinement)
-    stitch_3d_with_refinement(illum_fixed)
+    if (params.stitch_global_transform) {
+        pooled_mosaics = illum_fixed.map { _id, p -> p }.collect()
+        slice_config_file = file(slice_config_path).exists() ? file(slice_config_path) : file('NO_SLICE_CONFIG')
+        estimate_global_transform(pooled_mosaics, slice_config_file)
+        global_transform = estimate_global_transform.out.transform
+        stitch_inputs = illum_fixed.combine(global_transform)
+    } else {
+        no_transform = channel.of(file('NO_TRANSFORM'))
+        stitch_inputs = illum_fixed.combine(no_transform)
+    }
+    stitch_3d_with_refinement(stitch_inputs)
     stitched_slices = stitch_3d_with_refinement.out.stitched
 
     if (params.stitch_preview) {

@@ -70,7 +70,15 @@ def compute_motor_positions(
 
 
 def compute_registration_refinements(
-    volume: np.ndarray, tile_shape: tuple, nx: int, ny: int, overlap_fraction: float, max_refinement_px: float = 10.0
+    volume: np.ndarray,
+    tile_shape: tuple,
+    nx: int,
+    ny: int,
+    overlap_fraction: float,
+    max_refinement_px: float = 10.0,
+    *,
+    histogram_match: bool = False,
+    max_empty_fraction: float | None = None,
 ) -> dict:
     """Correlate neighboring tiles within a slice to measure displacement errors.
 
@@ -96,6 +104,18 @@ def compute_registration_refinements(
     max_refinement_px : float
         Maximum residual shift retained for blend refinement. Larger residuals
         are clamped. Does not affect the absolute displacements in 'pairs'.
+    histogram_match : bool, keyword-only
+        If True, match the intensity histogram of the second overlap to the
+        first before phase correlation.  Improves robustness when tile-edge
+        illumination is uneven; disabled by default to preserve existing
+        behaviour.
+    max_empty_fraction : float or None, keyword-only
+        If set, use an Otsu threshold on the central plane to classify
+        tissue vs background, and skip any pair whose overlap contains more
+        than this fraction of background pixels (mirrors the behaviour of
+        ``linumpy.stitching.registration.estimate_mosaic_transform``).
+        When ``None`` (default), the prior ``mean(overlap > 0) < 0.1``
+        heuristic is used.
 
     Returns
     -------
@@ -124,6 +144,26 @@ def compute_registration_refinements(
     all_shifts = []
     z_mid = volume.shape[0] // 2
 
+    empty_threshold: float | None = None
+    if max_empty_fraction is not None:
+        from skimage.filters import threshold_otsu
+
+        plane = np.asarray(volume[z_mid])
+        positive = plane[plane > 0]
+        if positive.size > 0:
+            empty_threshold = float(threshold_otsu(positive))
+
+    match_histograms_fn = None
+    if histogram_match:
+        from skimage.exposure import match_histograms as _match_histograms
+
+        match_histograms_fn = _match_histograms
+
+    def _is_empty(ov: np.ndarray) -> bool:
+        if empty_threshold is not None and max_empty_fraction is not None:
+            return bool(np.sum(ov <= empty_threshold) > max_empty_fraction * ov.size)
+        return bool(np.mean(ov > 0) < 0.1)
+
     # Horizontal refinements (between columns: tile (i,j) → (i,j+1))
     # The expected displacement is (0, step_x); registration measures residual
     for i in range(nx):
@@ -136,8 +176,11 @@ def compute_registration_refinements(
             overlap1 = volume[z_mid, r1_start:r1_end, c1_end - overlap_x : c1_end]
             overlap2 = volume[z_mid, r1_start:r1_end, c2_start : c2_start + overlap_x]
 
-            if np.mean(overlap1 > 0) < 0.1 or np.mean(overlap2 > 0) < 0.1:
+            if _is_empty(overlap1) or _is_empty(overlap2):
                 continue
+
+            if match_histograms_fn is not None:
+                overlap2 = match_histograms_fn(overlap2, overlap1)
 
             refinements["stats"]["total_pairs"] += 1
             try:
@@ -180,8 +223,11 @@ def compute_registration_refinements(
             overlap1 = volume[z_mid, r1_end - overlap_y : r1_end, c_start:c_end]
             overlap2 = volume[z_mid, r2_start : r2_start + overlap_y, c_start:c_end]
 
-            if np.mean(overlap1 > 0) < 0.1 or np.mean(overlap2 > 0) < 0.1:
+            if _is_empty(overlap1) or _is_empty(overlap2):
                 continue
+
+            if match_histograms_fn is not None:
+                overlap2 = match_histograms_fn(overlap2, overlap1)
 
             refinements["stats"]["total_pairs"] += 1
             try:
