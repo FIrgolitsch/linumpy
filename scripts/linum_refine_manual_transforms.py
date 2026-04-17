@@ -35,8 +35,6 @@ from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
-from scipy.ndimage import affine_transform as scipy_affine
-from scipy.ndimage import shift as scipy_shift
 
 from linumpy.io.zarr import read_omezarr
 from linumpy.stitching.registration import create_transform, register_refinement
@@ -168,29 +166,40 @@ def _compose_rigid_2d(
 
 
 def _warp_moving(moving: np.ndarray, tx: float, ty: float, rot_deg: float, cx: float, cy: float) -> np.ndarray:
-    """Apply a 2D rigid transform to *moving* using scipy.
+    """Apply a 2D rigid transform to *moving* using SimpleITK.
 
-    Uses the same output→input inverse mapping convention as in the manual
-    alignment plugin so the visual result matches what the user aligned.
+    The resampling uses SimpleITK's standard output->input convention -- the
+    same convention used by ``linumpy.stitching.stacking.apply_2d_transform``
+    (the downstream consumer of the refined tfm) and by
+    ``linum_register_pairwise.py`` (the automated producer). Positive ``tx``
+    therefore shifts content LEFT in the output (equivalent to
+    ``scipy.ndimage.shift`` with ``[-ty, -tx]``).
 
     Parameters
     ----------
     moving : np.ndarray  Shape (H, W).
-    tx, ty : float  Full-resolution pixel translation (SimpleITK X/Y convention).
-    rot_deg : float  Rotation in degrees (CCW positive, same convention as plugin).
-    cx, cy : float  Rotation centre in SimpleITK X/Y convention (col, row).
+    tx, ty : float  Full-resolution pixel translation in SimpleITK convention.
+    rot_deg : float  Rotation in degrees (CCW positive).
+    cx, cy : float  Rotation centre in (x, y) = (col, row).
     """
+
     out = moving.astype(np.float32)
-    if abs(rot_deg) > 0.01:
-        # scipy convention: array is (row, col), rotation centre is (row, col)
-        angle_rad = np.radians(-rot_deg)  # negative: scipy maps output→input
-        cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
-        m = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
-        c = np.array([cy, cx])  # (row, col)
-        out = scipy_affine(out, m, offset=c - m @ c, mode="constant", cval=0, order=1).astype(np.float32)
-    if abs(tx) > 1e-6 or abs(ty) > 1e-6:
-        out = scipy_shift(out, [ty, tx], order=1, mode="constant", cval=0).astype(np.float32)
-    return out
+    if abs(rot_deg) < 0.01 and abs(tx) < 1e-6 and abs(ty) < 1e-6:
+        return out
+
+    img = sitk.GetImageFromArray(out)
+    tfm = sitk.Euler2DTransform()
+    tfm.SetCenter([float(cx), float(cy)])
+    tfm.SetAngle(float(np.radians(rot_deg)))
+    tfm.SetTranslation([float(tx), float(ty)])
+
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(img)
+    resampler.SetTransform(tfm)
+    resampler.SetInterpolator(sitk.sitkLinear)
+    resampler.SetDefaultPixelValue(0.0)
+    warped = sitk.GetArrayFromImage(resampler.Execute(img))
+    return warped.astype(np.float32)
 
 
 def _discover_slice_zarrs(slices_dir: Path) -> dict[int, Path]:
@@ -378,7 +387,38 @@ def main() -> None:
         )
         logger.info(f"  z{slice_id:02d}: final    tx={final_tx:.2f} ty={final_ty:.2f} rot={final_rot:.3f}°")
 
-        # Write output
+        # region agent log
+        # DEBUG-6fa1b3 (runId=refine-sitk-convention): record the final tfm
+        # that is about to be written so the post-fix stack can be
+        # cross-checked against pre-fix values.
+        try:
+            import json as _dbg_json
+            import time as _dbg_time
+
+            _dbg_entry = {
+                "sessionId": "6fa1b3",
+                "runId": "refine-sitk-convention",
+                "hypothesisId": "H14-signflip",
+                "location": "linum_refine_manual_transforms.py:write_tfm",
+                "message": "refine-stored-tfm-sitk-convention",
+                "timestamp": int(_dbg_time.time() * 1000),
+                "data": {
+                    "sid": int(slice_id),
+                    "final_tx": float(final_tx),
+                    "final_ty": float(final_ty),
+                    "final_rot_deg": float(final_rot),
+                },
+            }
+            with Path("/scratch/workspace/debug-6fa1b3.log").open("a") as _dbg_f:
+                _dbg_f.write(_dbg_json.dumps(_dbg_entry) + "\n")
+        except Exception as _dbg_exc:
+            logger.warning(f"debug log write failed: {_dbg_exc}")
+        # endregion
+
+        # Write output. The manual tfm, the refinement delta, and the
+        # composed final tfm are all in SimpleITK output->input (point-map)
+        # convention now that _warp_moving and the manual-align widget both
+        # produce/consume sitk-convention translations.
         pair_out.mkdir(parents=True, exist_ok=True)
         final_tfm = create_transform(final_tx, final_ty, final_rot, final_center)
         sitk.WriteTransform(final_tfm, str(pair_out / "transform.tfm"))
