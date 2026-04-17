@@ -223,6 +223,7 @@ allowed-confusables = ["–", "×", "σ", "ℹ"]
 "scripts/linum_normalize_intensities_per_slice.py" = ["E402"]
 "scripts/linum_normalize_intensities_per_slice_gpu.py" = ["E402"]
 "scripts/linum_normalize_z_intensity.py" = ["E402"]
+"scripts/linum_normalize_z_intensity_gpu.py" = ["E402"]
 # Star imports are intentional re-exports in __init__.py
 "linumpy/stitching/__init__.py" = ["F403"]
 # Scientific code: I (intensity), l (wavelength) are standard physics notation
