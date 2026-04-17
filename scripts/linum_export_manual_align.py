@@ -39,6 +39,7 @@ import re
 import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from tqdm import tqdm
@@ -61,7 +62,7 @@ def _save_aip_npz(
     cross-sections) at which the cross-section was taken.  Stored so the
     plugin can initialise its interactive slider at the tissue centroid.
     """
-    kwargs: dict = {"aip": aip.astype(np.float32), "scale": np.array(scale, dtype=float)}
+    kwargs: dict[str, Any] = {"aip": aip.astype(np.float32), "scale": np.array(scale, dtype=float)}
     if center_pos is not None:
         kwargs["center_pos"] = np.array(center_pos, dtype=np.int32)
     np.savez_compressed(str(out_path), **kwargs)
@@ -308,7 +309,7 @@ def _build_arg_parser():
     p.add_argument(
         "--xy_overlap_px",
         type=int,
-        default=35,
+        default=20,
         metavar="PX",
         help=(
             "Number of Z voxels (at the working pyramid level) to project at the"
@@ -340,6 +341,19 @@ def _discover_transforms(transforms_dir: Path) -> dict[int, Path]:
             if m:
                 transforms[int(m.group(1))] = p
     return dict(sorted(transforms.items()))
+
+
+def _read_overlap_z_offsets(offsets_file: Path) -> tuple[int, int]:
+    """Load (fixed_z, moving_z) from pairwise ``offsets.txt``, or (0, 0) if missing/invalid."""
+    if not offsets_file.exists():
+        return 0, 0
+    try:
+        arr_off = np.loadtxt(str(offsets_file), dtype=int)
+        if arr_off.size >= 2:
+            return int(arr_off[0]), int(arr_off[1])
+    except (OSError, ValueError):
+        pass
+    return 0, 0
 
 
 def _slice_task(args: tuple) -> int:
@@ -437,15 +451,12 @@ def main(argv=None):
         slice_paths = {k: v for k, v in slice_paths.items() if k in requested}
         logger.info(f"Filtered to {len(slice_paths)} requested slices")
 
-    # Create output directories
     aips_dir = output_dir / "aips"
-    aips_dir.mkdir(parents=True, exist_ok=True)
     aips_xz_dir = output_dir / "aips_xz"
     aips_yz_dir = output_dir / "aips_yz"
-    aips_xz_dir.mkdir(parents=True, exist_ok=True)
-    aips_yz_dir.mkdir(parents=True, exist_ok=True)
     tfm_dir = output_dir / "transforms"
-    tfm_dir.mkdir(parents=True, exist_ok=True)
+    for d in (aips_dir, aips_xz_dir, aips_yz_dir, tfm_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Pass 1: XY AIPs (per slice) + per-slice XZ/YZ fallback files.
@@ -472,22 +483,14 @@ def main(argv=None):
     # Each pair is independent — process in parallel.
     # ------------------------------------------------------------------
     sorted_ids = sorted(slice_paths.keys())
-    pairs = [(sorted_ids[i - 1], mid) for i, mid in enumerate(sorted_ids) if i > 0 and mid in transform_paths]
+    pairs = [(sorted_ids[i - 1], sorted_ids[i]) for i in range(1, len(sorted_ids)) if sorted_ids[i] in transform_paths]
 
     if pairs:
         logger.info(f"Generating paired XZ/YZ cross-sections for {len(pairs)} pairs using {workers} workers...")
         pair_tasks = []
         for fid, mid in pairs:
             tpath = transform_paths[mid]
-            offsets_file = tpath / "offsets.txt"
-            fixed_z, moving_z = 0, 0
-            if offsets_file.exists():
-                try:
-                    arr_off = np.loadtxt(str(offsets_file), dtype=int)
-                    if arr_off.size >= 2:
-                        fixed_z, moving_z = int(arr_off[0]), int(arr_off[1])
-                except Exception:
-                    pass
+            fixed_z, moving_z = _read_overlap_z_offsets(tpath / "offsets.txt")
             pair_tasks.append(
                 (
                     fid,
