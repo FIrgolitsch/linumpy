@@ -1016,7 +1016,7 @@ def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 
     Parameters
     ----------
     vol : np.ndarray
-        Volume with shape (X, Y, Z) — already transposed from OME-Zarr (Z, X, Y).
+        Volume with shape (Y, X, Z) — already transposed from OME-Zarr (Z, Y, X).
     sigma_xy : float
         Gaussian smoothing sigma in XY before Z-gradient.
     sigma_z : float
@@ -1037,13 +1037,13 @@ def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 
     vol_smooth = gaussian_filter(vol_f, (sigma_xy, sigma_xy, 0))
     dz = gaussian_filter1d(vol_smooth, sigma=sigma_z, axis=-1, order=1)
 
-    # Per-pixel interface detection: argmax along Z for each (X, Y)
-    iface_map = np.argmax(dz, axis=2)  # (X, Y)
+    # Per-pixel interface detection: argmax along Z for each (Y, X)
+    iface_map = np.argmax(dz, axis=2)  # (Y, X)
 
     # Tissue mask: keep only pixels with a strong Z gradient (i.e. a
     # water→tissue transition).  Using 10 % of the peak gradient as
     # threshold cleanly separates tissue pixels from noise-only pixels.
-    max_dz = np.max(dz, axis=2)  # (X, Y)
+    max_dz = np.max(dz, axis=2)  # (Y, X)
     grad_threshold = np.max(max_dz) * 0.1
     tissue_mask = max_dz > grad_threshold
 
@@ -1069,7 +1069,7 @@ def crop_below_interface(
     Parameters
     ----------
     vol_zxy : np.ndarray
-        Volume with shape (Z, X, Y) as returned by read_omezarr.
+        Volume with shape (Z, Y, X) as returned by read_omezarr.
     depth_um : float
         Target depth below interface in microns.
     resolution_um : float

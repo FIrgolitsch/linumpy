@@ -37,7 +37,7 @@ def compute_aip_gpu(vol, use_gpu: bool = True) -> np.ndarray:
     Parameters
     ----------
     vol:
-        Dask array of shape (Z, X, Y) from read_omezarr.
+        Dask array of shape (Z, Y, X) from read_omezarr.
     use_gpu:
         Whether to use GPU acceleration for the averaging.
 

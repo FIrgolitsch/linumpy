@@ -203,7 +203,7 @@ def main():
     print(f"Loading {args.in_zarr} ...")
     vol_da, res = read_omezarr(args.in_zarr, level=0)
     vol = vol_da[:].astype(np.float32)
-    print(f"Volume shape: Z={vol.shape[0]}, X={vol.shape[1]}, Y={vol.shape[2]}")
+    print(f"Volume shape: Z={vol.shape[0]}, Y={vol.shape[1]}, X={vol.shape[2]}")
 
     if args.mode == "histogram":
         print(

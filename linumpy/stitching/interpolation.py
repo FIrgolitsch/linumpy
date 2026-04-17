@@ -78,9 +78,9 @@ def interpolate_average(vol_before: np.ndarray, vol_after: np.ndarray) -> np.nda
     Parameters
     ----------
     vol_before : np.ndarray
-        Volume before missing slice (Z, X, Y).
+        Volume before missing slice (Z, Y, X).
     vol_after : np.ndarray
-        Volume after missing slice (Z, X, Y).
+        Volume after missing slice (Z, Y, X).
 
     Returns
     -------
@@ -130,9 +130,9 @@ def find_best_overlap_planes(vol_before: np.ndarray, vol_after: np.ndarray, sear
     Parameters
     ----------
     vol_before : np.ndarray
-        3D volume (Z, X, Y) before the missing slice.
+        3D volume (Z, Y, X) before the missing slice.
     vol_after : np.ndarray
-        3D volume (Z, X, Y) after the missing slice.
+        3D volume (Z, Y, X) after the missing slice.
     search_window : int
         Number of z-planes to search at each boundary. Default 5.
 
@@ -207,9 +207,9 @@ def interpolate_registration_based(
     Parameters
     ----------
     vol_before : np.ndarray
-        3D volume (Z, X, Y) before the missing slice.
+        3D volume (Z, Y, X) before the missing slice.
     vol_after : np.ndarray
-        3D volume (Z, X, Y) after the missing slice.
+        3D volume (Z, Y, X) after the missing slice.
     metric : str
         Registration metric: 'MSE', 'CC', or 'MI'.
     max_iterations : int

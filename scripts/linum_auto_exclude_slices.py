@@ -4,9 +4,11 @@ and output a list of slice IDs whose transforms should be force-skipped during
 stacking (motor-only positioning).
 
 Reads ``pairwise_registration_metrics.json`` files from the registration output
-directory.  When *N* or more consecutive slice pairs all have
-``z_correlation < threshold``, the interior slices of that cluster are flagged
-for force-skipping.
+directory.  Any cluster of consecutive slice pairs of length at least
+``--consecutive_threshold`` whose ``z_correlation`` values are all below
+``--z_corr_threshold`` triggers exclusion of **every** slice in that cluster
+(including the endpoints), since a long run of poorly registered neighbours
+usually means the whole block cannot be trusted.
 
 Usage
 -----

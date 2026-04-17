@@ -21,7 +21,7 @@ def normalize_volume(
     Parameters
     ----------
     vol : np.ndarray
-        Input volume with shape (Z, X, Y).
+        Input volume with shape (Z, Y, X).
     agarose_mask : np.ndarray
         2D binary mask indicating agarose regions (shape X, Y).
     percentile_max : float

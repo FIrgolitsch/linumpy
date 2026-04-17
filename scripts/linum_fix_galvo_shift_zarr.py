@@ -791,7 +791,7 @@ def main():
     n_cy = arr.shape[2] // chunk_y
 
     print("\nMosaic info (level 0):")
-    print(f"  shape        = {arr.shape}  (Z, X, Y)")
+    print(f"  shape        = {arr.shape}  (Z, Y, X)")
     print(f"  tile chunks  = ({chunk_x}, {chunk_y}) px in (X, Y)")
     print(f"  tile grid    = {n_cx} × {n_cy} tiles")
     if args.mode == "fix":

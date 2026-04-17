@@ -25,7 +25,7 @@ def save_orthogonal_views(
     Parameters
     ----------
     image : array-like
-        3D volume (Z, X, Y) - as returned by read_omezarr.
+        3D volume (Z, Y, X) - as returned by read_omezarr.
     out_path : str
         Output figure path (e.g. 'view.png').
     z_slice, x_slice, y_slice : int or None
@@ -327,7 +327,7 @@ def save_annotated_views(
     Parameters
     ----------
     image : array-like
-        3D volume (Z, X, Y).
+        3D volume (Z, Y, X).
     out_path : str
         Output figure path.
     n_input_slices : int or None
