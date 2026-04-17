@@ -532,7 +532,13 @@ process auto_assess_quality {
     publishDir "${params.output}/${task.process}", mode: 'copy'
 
     input:
-    tuple path("inputs/*"), path(existing_slice_config)
+    // Two separate input channels rather than a single tuple: Nextflow's
+    // .combine() auto-flattens a .collect()-list when it lands in a
+    // ``tuple path(...), path(...)`` binding, which would consume the
+    // first zarr as the config file. Keeping them separate preserves the
+    // list as a single multi-file staging and the config as a singleton.
+    path "inputs/*"
+    path existing_slice_config
 
     output:
     path "slice_config.csv", emit: slice_config
@@ -648,8 +654,13 @@ process interpolate_missing_slice {
 process finalise_interpolation {
     publishDir "${params.output}", mode: 'copy'
 
+    // Two separate inputs rather than a tuple: same reason as in
+    // ``auto_assess_quality`` — .combine() with a .collect()-list + singleton
+    // auto-flattens the list inside a ``tuple path(), path()`` binding and
+    // would stage only the first fragment.
     input:
-    tuple path(slice_config), path("fragments/*")
+    path slice_config
+    path "fragments/*"
 
     output:
     path "slice_config_final.csv"
@@ -721,8 +732,13 @@ process refine_manual_transforms {
 process auto_exclude_slices {
     publishDir "$params.output/$task.process", mode: 'copy'
 
+    // Two separate inputs rather than a tuple: same reason as in
+    // ``auto_assess_quality`` — .combine() with a .collect()-list + singleton
+    // auto-flattens the list inside a ``tuple path(), path()`` binding and
+    // would stage only the first transform plus misroute the slice_config.
     input:
-    tuple path("transforms/*"), path(slice_config_in)
+    path "transforms/*"
+    path slice_config_in
 
     output:
     path "slice_config.csv", emit: slice_config
@@ -1195,7 +1211,7 @@ workflow {
         existing_slice_config_file = file(slice_config_path).exists()
             ? file(slice_config_path)
             : file('NO_SLICE_CONFIG')
-        auto_assess_quality(auto_assess_inputs.combine(channel.of(existing_slice_config_file)))
+        auto_assess_quality(auto_assess_inputs, channel.value(existing_slice_config_file))
         effective_slice_config = auto_assess_quality.out.slice_config
     } else {
         effective_slice_config = slice_config_channel
@@ -1271,9 +1287,10 @@ workflow {
         // diagnostics. Skipped when no real slice_config.csv is present
         // (nothing to merge into).
         if (has_slice_config) {
-            finalise_input = current_slice_config
-                .combine(interpolate_missing_slice.out.manifest.collect())
-            finalise_interpolation(finalise_input)
+            finalise_interpolation(
+                current_slice_config,
+                interpolate_missing_slice.out.manifest.collect(),
+            )
             current_slice_config = finalise_interpolation.out.first()
         }
 
@@ -1350,8 +1367,7 @@ workflow {
     // Requires a real slice_config to stamp into.
     stack_slice_config = current_slice_config
     if (params.auto_exclude_enabled && has_slice_config) {
-        auto_exclude_input = transforms_for_stack.combine(current_slice_config)
-        auto_exclude_slices(auto_exclude_input)
+        auto_exclude_slices(transforms_for_stack, current_slice_config)
         stack_slice_config = auto_exclude_slices.out.slice_config.first()
     }
 
