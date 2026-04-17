@@ -1221,13 +1221,13 @@ workflow {
     // Optionally correct encoder glitch spikes before alignment. When a
     // real slice_config is available, detect_rehoming also stamps
     // rehomed/rehoming_reliable flags back into it.
-    current_slice_config = effective_slice_config.first()
+    current_slice_config = effective_slice_config
     if (params.detect_rehoming) {
         detect_rehoming_input = shifts_xy.combine(current_slice_config)
         detect_rehoming_events(detect_rehoming_input)
         aligned_shifts = detect_rehoming_events.out.corrected_shifts
         if (has_slice_config) {
-            current_slice_config = detect_rehoming_events.out.slice_config.first()
+            current_slice_config = detect_rehoming_events.out.slice_config
         }
     } else {
         aligned_shifts = shifts_xy
@@ -1291,7 +1291,7 @@ workflow {
                 current_slice_config,
                 interpolate_missing_slice.out.manifest.collect(),
             )
-            current_slice_config = finalise_interpolation.out.first()
+            current_slice_config = finalise_interpolation.out
         }
 
         all_slices = slices_common_space
@@ -1368,7 +1368,7 @@ workflow {
     stack_slice_config = current_slice_config
     if (params.auto_exclude_enabled && has_slice_config) {
         auto_exclude_slices(transforms_for_stack, current_slice_config)
-        stack_slice_config = auto_exclude_slices.out.slice_config.first()
+        stack_slice_config = auto_exclude_slices.out.slice_config
     }
 
     stack_input = slices_collected
