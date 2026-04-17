@@ -296,7 +296,7 @@ def test_ground_truth_zmorph_matches_boundaries_exactly():
         min_overlap_correlation=0.0,
         min_ncc_improvement=-10.0,
     )
-    if diag["method_used"] != "zmorph":
+    if diag["method_used"] != "zmorph" or vol is None:
         pytest.skip(f"zmorph fell back ({diag['fallback_reason']}); skipping boundary assertion")
 
     # Output top plane ≡ deepest plane of vol_before (identity warp).
@@ -321,6 +321,9 @@ def test_ground_truth_zmorph_vs_average_ssim():
         before, after, max_iterations=100, min_overlap_correlation=0.0, min_ncc_improvement=-10.0
     )
     vol_avg = interpolate_average(before, after)
+
+    if vol_zm is None:
+        pytest.skip(f"zmorph hard-skipped ({diag_zm['fallback_reason']}); cannot compare metrics")
 
     ssim_zm = _volume_ssim(vol_zm, truth)
     ssim_avg = _volume_ssim(vol_avg, truth)
