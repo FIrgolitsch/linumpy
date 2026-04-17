@@ -13,14 +13,15 @@ AVAILABLE_RESOLUTIONS = [10, 25, 50, 100]
 
 
 def numpy_to_sitk_image(volume: np.ndarray, spacing: tuple, cast_dtype=None) -> sitk.Image:
-    """Convert numpy array (Z, X, Y) to SimpleITK image format.
+    """Convert numpy array (Z, Y, X) to SimpleITK image format.
 
     Parameters
     ----------
     volume : np.ndarray
-        3D volume with shape (Z, X, Y)
+        3D volume with shape (Z, Y, X) matching the project-wide convention
+        (axis 0 = Z/depth, axis 1 = Y/row, axis 2 = X/column).
     spacing : tuple
-        Voxel spacing in mm (res_z, res_x, res_y)
+        Voxel spacing in mm as (res_z, res_y, res_x).
     cast_dtype : numpy dtype or None
         If provided, cast the volume to this dtype before creating the SITK image
         (useful for registration where float32 is expected). If None, preserve
@@ -31,15 +32,13 @@ def numpy_to_sitk_image(volume: np.ndarray, spacing: tuple, cast_dtype=None) -> 
     sitk.Image
         SimpleITK image with proper spacing and orientation
     """
-    # Note: volume is (Z, X, Y), SimpleITK GetImageFromArray interprets as (Z, Y, X)
-    # So we transpose: (Z, X, Y) -> (Z, Y, X) to match SimpleITK's expectation
-    vol_for_sitk = np.transpose(volume, (0, 2, 1))
-    vol_for_sitk = vol_for_sitk.astype(cast_dtype) if cast_dtype is not None else vol_for_sitk.copy()
+    # sitk.GetImageFromArray interprets a numpy array with shape (Z, Y, X) as a
+    # SITK image with size (X, Y, Z), so no transpose is needed.
+    vol_for_sitk = volume.astype(cast_dtype) if cast_dtype is not None else volume.copy()
     vol_sitk = sitk.GetImageFromArray(vol_for_sitk)
-    # Spacing: SimpleITK uses (X, Y, Z) = (width, height, depth)
-    # Our spacing is (res_z, res_x, res_y), so:
-    # X spacing = res_x, Y spacing = res_y, Z spacing = res_z
-    vol_sitk.SetSpacing([spacing[1], spacing[2], spacing[0]])  # (x, y, z) in SimpleITK
+    # Spacing: SimpleITK uses (X, Y, Z) = (width, height, depth).
+    # Our spacing is (res_z, res_y, res_x), so SITK spacing is (res_x, res_y, res_z).
+    vol_sitk.SetSpacing([spacing[2], spacing[1], spacing[0]])
     vol_sitk.SetOrigin([0, 0, 0])
     vol_sitk.SetDirection([1, 0, 0, 0, 1, 0, 0, 0, 1])
     return vol_sitk
@@ -139,9 +138,9 @@ def register_3d_rigid_to_allen(
     Parameters
     ----------
     moving_image : np.ndarray
-        3D brain volume to register (shape: Z, X, Y)
+        3D brain volume to register (shape: Z, Y, X)
     moving_spacing : tuple
-        Voxel spacing in mm (res_z, res_x, res_y)
+        Voxel spacing in mm (res_z, res_y, res_x)
     allen_resolution : int
         Allen template resolution in micron (default: 100)
     metric : str
@@ -173,7 +172,7 @@ def register_3d_rigid_to_allen(
     # first keeps the volume compact so most of the brain survives resampling,
     # giving the optimizer a much better cost-function landscape.
     margin_voxels = 10
-    crop_origin_mm = (0.0, 0.0, 0.0)  # physical offset in (Z, X, Y) order
+    crop_origin_mm = (0.0, 0.0, 0.0)  # physical offset in (Z, Y, X) order
     nonzero_coords = np.nonzero(moving_image)
     if len(nonzero_coords[0]) > 0:
         bbox_slices = tuple(
@@ -428,9 +427,9 @@ def register_3d_rigid_to_allen(
     if any(v != 0.0 for v in crop_origin_mm):
         params = list(final_transform.GetParameters())
         # SITK Euler3D params: (rx, ry, rz, tx, ty, tz) in SITK XYZ order
-        # numpy axis order (Z, X, Y)  ->  SITK (X, Y, Z):
-        params[3] += crop_origin_mm[1]  # SITK X = numpy axis 1
-        params[4] += crop_origin_mm[2]  # SITK Y = numpy axis 2
+        # numpy axis order (Z, Y, X)  ->  SITK (X, Y, Z):
+        params[3] += crop_origin_mm[2]  # SITK X = numpy axis 2
+        params[4] += crop_origin_mm[1]  # SITK Y = numpy axis 1
         params[5] += crop_origin_mm[0]  # SITK Z = numpy axis 0
         final_transform.SetParameters(params)
         if verbose:

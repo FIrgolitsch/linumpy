@@ -194,7 +194,8 @@ def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        4x4 affine matrix in (Z, X, Y) coordinate ordering
+        4x4 affine matrix in (Z, Y, X) coordinate ordering, matching the
+        OME-NGFF axis declaration used by the pipeline.
     """
     if isinstance(transform, sitk.Euler3DTransform):
         center = np.array(transform.GetCenter())
@@ -229,8 +230,8 @@ def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
     else:
         raise ValueError(f"Unsupported transform type: {type(transform)}")
 
-    # Permute from SimpleITK (X, Y, Z) to our (Z, X, Y) ordering
-    permute = np.array([[0, 0, 1, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
+    # Permute from SimpleITK (X, Y, Z) to our (Z, Y, X) ordering (OME-NGFF axis order).
+    permute = np.array([[0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1]])
     return permute @ matrix @ permute.T
 
 
@@ -484,8 +485,7 @@ def apply_transform_to_zarr(
     del transformed_sitk  # free SimpleITK image after extracting numpy array
     update_pbar()
 
-    # Convert from SITK (Z, Y, X) to our (Z, X, Y) ordering
-    transformed = np.transpose(transformed, (0, 2, 1))
+    # GetArrayFromImage already yields numpy (Z, Y, X) matching our convention.
     update_pbar()
 
     # Convert back to original dtype
@@ -533,7 +533,7 @@ def create_input_preview(input_path: str, output_path: str, level: int = 0):
     vmin, vmax = np.percentile(vol, [1, 99])
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 14))
-    fig.suptitle(f"Input Volume Preview\nShape: {vol.shape} (Z, X, Y), Resolution: {resolution} mm", fontsize=14, y=0.98)
+    fig.suptitle(f"Input Volume Preview\nShape: {vol.shape} (Z, Y, X), Resolution: {resolution} mm", fontsize=14, y=0.98)
 
     # Axial slice (dim0 midpoint)
     axes[0, 0].imshow(vol[z_mid, :, :].T, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
@@ -640,22 +640,21 @@ def create_alignment_preview(
         resampler.SetDefaultPixelValue(bg_value)
         resampler.SetTransform(centered_transform)
         transformed_sitk = resampler.Execute(vol_sitk)
-        vol_aligned = np.transpose(sitk.GetArrayFromImage(transformed_sitk), (0, 2, 1))
+        vol_aligned = sitk.GetArrayFromImage(transformed_sitk)
     update_pbar()
 
     # Load Allen template at native resolution for reference
     # We'll just show it as a reference, not spatially aligned
     allen_sitk = allen.download_template_ras_aligned(allen_resolution, cache=True)
     allen_template = sitk.GetArrayFromImage(allen_sitk)
-    # Convert from SITK (Z, Y, X) to our (Z, X, Y) ordering
-    allen_template = np.transpose(allen_template, (0, 2, 1))
+    # GetArrayFromImage already yields numpy (Z, Y, X) matching our convention.
     update_pbar()
 
     # Helper functions
     def get_center_slices(vol):
         """Get center slices in each plane."""
-        z, x, y = vol.shape[0] // 2, vol.shape[1] // 2, vol.shape[2] // 2
-        return vol[z, :, :], vol[:, x, :], vol[:, :, y]
+        z, y, x = vol.shape[0] // 2, vol.shape[1] // 2, vol.shape[2] // 2
+        return vol[z, :, :], vol[:, y, :], vol[:, :, x]
 
     def get_display_range(vol):
         """Get display range from non-zero values."""
