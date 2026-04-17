@@ -167,7 +167,8 @@ def joinPath(base, filename) {
     return "${normalizePath(base)}/${filename}"
 }
 
-// Parse a slice_config.csv and return the set of slice IDs marked for use.
+// Parse a slice_config.csv and return a map with the sets of slice IDs
+// marked for use vs. excluded: `[use: Set<String>, excluded: Set<String>]`.
 // Boolean parsing is kept in lockstep with `linumpy.io.slice_config._parse_bool`
 // (true / 1 / yes / y / t, case-insensitive). Edit there when the canonical
 // schema changes — Nextflow can't depend on Python at workflow-init time.
@@ -192,8 +193,7 @@ def parseSliceConfig(configPath) {
         }
     }
 
-    log.info "Slice config: ${slicesToUse.size()} to USE, ${slicesExcluded.size()} EXCLUDED"
-    return slicesToUse
+    return [use: slicesToUse, excluded: slicesExcluded]
 }
 
 // Detect single-slice gaps in a sorted slice list.
@@ -934,8 +934,11 @@ workflow {
     def slice_config_path = params.slice_config ?: joinPath(inputDir, "slice_config.csv")
     def slicesToUse = null
     if (file(slice_config_path).exists()) {
-        slicesToUse = parseSliceConfig(slice_config_path)
         log.info "Slice config: ${slice_config_path}"
+        def parsed = parseSliceConfig(slice_config_path)
+        slicesToUse = parsed.use
+        def total = slicesToUse.size() + parsed.excluded.size()
+        log.info "Slice config: ${total} entries (${slicesToUse.size()} included, ${parsed.excluded.size()} excluded)"
     } else if (params.slice_config) {
         error("Slice config file not found: ${slice_config_path}")
     }
@@ -951,7 +954,19 @@ workflow {
     if (mosaicFiles.isEmpty()) {
         error("No mosaic grids found in ${inputDir}. Expected: mosaic_grid*_z00.ome.zarr")
     }
-    log.info "Found ${mosaicFiles.size()} mosaic grids"
+
+    def selectedIds = mosaicFiles.collect { f -> extractSliceId(f) }.findAll { sid ->
+        if (debugSlices != null) return debugSlices.contains(sid)
+        if (slicesToUse != null) return slicesToUse.contains(sid)
+        return true
+    }
+    def skippedCount = mosaicFiles.size() - selectedIds.size()
+    if (skippedCount > 0) {
+        def reason = debugSlices != null ? "debug_slices filter" : "slice_config"
+        log.info "Found ${mosaicFiles.size()} mosaic grids; ${selectedIds.size()} selected, ${skippedCount} skipped (${reason})"
+    } else {
+        log.info "Found ${mosaicFiles.size()} mosaic grids; all selected"
+    }
 
     inputSlices = channel
         .fromList(mosaicFiles)
