@@ -523,20 +523,13 @@ process detect_rehoming_events {
     """
 }
 
-// Auto-assess slice quality after normalization.
-// When an existing slice_config.csv is provided (name != 'NO_SLICE_CONFIG'),
-// it is merged so that manually-excluded slices stay excluded regardless of
-// their computed quality score. This prevents the auto-assessment from
-// silently re-enabling slices that the user or preproc step flagged as bad.
+// Auto-assess slice quality after normalization. An existing slice_config.csv
+// (when supplied) is merged so manually-excluded slices stay excluded.
+// See docs/NEXTFLOW_WORKFLOWS.md "Authoring Notes" for the two-input pattern.
 process auto_assess_quality {
     publishDir "${params.output}/${task.process}", mode: 'copy'
 
     input:
-    // Two separate input channels rather than a single tuple: Nextflow's
-    // .combine() auto-flattens a .collect()-list when it lands in a
-    // ``tuple path(...), path(...)`` binding, which would consume the
-    // first zarr as the config file. Keeping them separate preserves the
-    // list as a single multi-file staging and the config as a singleton.
     path "inputs/*"
     path existing_slice_config
 
@@ -602,14 +595,8 @@ process generate_common_space_preview {
 }
 
 // Interpolate a single missing slice via z-aware morphing (zmorph).
-//
-// When zmorph's quality gates fail (low boundary NCC, no reliable affine,
-// ...) the script exits successfully WITHOUT producing an interpolated
-// zarr — fabricating a blended slice would also be made-up data. The
-// manifest fragment carries `interpolation_failed=true` and a specific
-// `fallback_reason`; downstream `finalise_interpolation` stamps the result
-// into `slice_config_final.csv` and the slot remains a genuine gap in the
-// stacked volume.
+// On gate failure the zarr is omitted (hard skip); see
+// docs/SLICE_INTERPOLATION_FEATURE.md for the full failure policy.
 process interpolate_missing_slice {
     publishDir "${params.output}/${task.process}", mode: 'copy'
 
@@ -646,18 +633,11 @@ process interpolate_missing_slice {
     """
 }
 
-// Merge per-slice interpolation manifest fragments into slice_config.csv so
-// downstream tooling and the final report see, per slice, whether it was
-// interpolated and with what diagnostics. Fragments are staged into a
-// `fragments/` directory and consumed via `linum_interpolate_missing_slice.py
-// --finalise`.
+// Merge per-slice interpolation manifest fragments into slice_config.csv.
+// See docs/NEXTFLOW_WORKFLOWS.md "Authoring Notes" for the two-input pattern.
 process finalise_interpolation {
     publishDir "${params.output}", mode: 'copy'
 
-    // Two separate inputs rather than a tuple: same reason as in
-    // ``auto_assess_quality`` — .combine() with a .collect()-list + singleton
-    // auto-flattens the list inside a ``tuple path(), path()`` binding and
-    // would stage only the first fragment.
     input:
     path slice_config
     path "fragments/*"
@@ -724,18 +704,13 @@ process refine_manual_transforms {
     """
 }
 
-// Auto-exclude extended clusters of consecutive low-quality registrations.
-// Reads pairwise_registration_metrics.json from the registration output and
-// stamps `auto_excluded` / `auto_exclude_reason` into slice_config.csv. The
-// stacking step reads the same slice_config via `--slice_config` and treats
-// those slices as motor-only (transforms force-skipped).
+// Auto-exclude clusters of consecutive low-quality registrations by stamping
+// auto_excluded/auto_exclude_reason into slice_config.csv; stack reads them
+// via --slice_config and treats those slices as motor-only.
+// See docs/NEXTFLOW_WORKFLOWS.md "Authoring Notes" for the two-input pattern.
 process auto_exclude_slices {
     publishDir "$params.output/$task.process", mode: 'copy'
 
-    // Two separate inputs rather than a tuple: same reason as in
-    // ``auto_assess_quality`` — .combine() with a .collect()-list + singleton
-    // auto-flattens the list inside a ``tuple path(), path()`` binding and
-    // would stage only the first transform plus misroute the slice_config.
     input:
     path "transforms/*"
     path slice_config_in
@@ -1059,6 +1034,15 @@ def detectSingleGaps(sliceList) {
     return gaps
 }
 
+// Partition a flat list of staged files into (slices, transforms): .ome.zarr
+// items go to slices, everything else (excluding *.json metrics) to
+// transforms. Used by export_manual_align / refine_manual_transforms inputs.
+def partitionSlicesAndTransforms(items) {
+    def slices = items.findAll { it.getName().endsWith('.ome.zarr') }
+    def transforms = items.findAll { def n = it.getName(); !n.endsWith('.ome.zarr') && !n.endsWith('.json') }
+    return tuple(slices, transforms)
+}
+
 // Parse debug_slices parameter; supports "25,26", "25-29", or "25,27-29".
 // Returns a set of zero-padded slice IDs, or null if not specified.
 def parseDebugSlices(debugSlicesStr) {
@@ -1125,10 +1109,8 @@ workflow {
         or specify the path with --shifts_xy /path/to/shifts_xy.csv
         """
     }
-    // Value channel (not channel.of) so the same shifts file can be consumed
-    // by analyze_shifts, detect_rehoming, common_space, stack_input,
-    // analyze_acquisition_rotation, and stack_motor_only without exhausting
-    // the queue.
+    // Value channel — fans out to many consumers; see "Authoring Notes" in
+    // docs/NEXTFLOW_WORKFLOWS.md.
     shifts_xy = channel.value(file(shifts_xy_path))
 
     // Slice config (optional)
@@ -1168,9 +1150,10 @@ workflow {
         }
 
     def has_slice_config = file(slice_config_path).exists() || params.auto_assess_quality
-    slice_config_channel = file(slice_config_path).exists()
-        ? channel.fromPath(slice_config_path)
-        : channel.of(file('NO_SLICE_CONFIG'))
+    // Value channel — consumed by auto_assess, common_space, finalise, stack.
+    slice_config_channel = channel.value(
+        file(slice_config_path).exists() ? file(slice_config_path) : file('NO_SLICE_CONFIG')
+    )
 
     if (params.analyze_shifts) {
         analyze_shifts(shifts_xy)
@@ -1184,12 +1167,11 @@ workflow {
     // Stage 2: XY Stitching (image-registration-based blend refinement)
     if (params.stitch_global_transform) {
         pooled_mosaics = illum_fixed.map { _id, p -> p }.collect()
-        slice_config_file = file(slice_config_path).exists() ? file(slice_config_path) : file('NO_SLICE_CONFIG')
-        estimate_global_transform(pooled_mosaics, slice_config_file)
-        global_transform = estimate_global_transform.out.transform
-        stitch_inputs = illum_fixed.combine(global_transform)
+        estimate_global_transform(pooled_mosaics, slice_config_channel)
+        stitch_inputs = illum_fixed.combine(estimate_global_transform.out.transform)
     } else {
-        no_transform = channel.of(file('NO_TRANSFORM'))
+        // Value channel so the placeholder can fan out to every per-slice tuple.
+        no_transform = channel.value(file('NO_TRANSFORM'))
         stitch_inputs = illum_fixed.combine(no_transform)
     }
     stitch_3d_with_refinement(stitch_inputs)
@@ -1204,40 +1186,30 @@ workflow {
     crop_interface(beam_profile_correction.out.corrected)
     normalize(crop_interface.out.cropped)
 
-    // Stage 3.5: Auto slice quality assessment (optional)
-    // Runs after normalization, generates a slice_config.csv that marks
-    // degraded slices. When a static slice_config.csv is present it is
-    // merged so that manually-excluded slices remain excluded.
+    // Stage 3.5: Auto slice quality assessment (optional). Generates a
+    // slice_config.csv that marks degraded slices; an existing static
+    // slice_config.csv is merged so manually-excluded slices stay excluded.
     if (params.auto_assess_quality) {
         auto_assess_inputs = normalize.out.normalized
             .map { _id, norm_path -> norm_path }
             .collect()
-        existing_slice_config_file = file(slice_config_path).exists()
-            ? file(slice_config_path)
-            : file('NO_SLICE_CONFIG')
-        auto_assess_quality(auto_assess_inputs, channel.value(existing_slice_config_file))
+        auto_assess_quality(auto_assess_inputs, slice_config_channel)
         effective_slice_config = auto_assess_quality.out.slice_config
     } else {
         effective_slice_config = slice_config_channel
     }
 
-    // Stage 4: Common Space Alignment
-    // Optionally correct encoder glitch spikes before alignment. When a
-    // real slice_config is available, detect_rehoming also stamps
+    // Stage 4: Common Space Alignment.
+    // detect_rehoming optionally corrects encoder-glitch spikes in the
+    // shifts file and (when a real slice_config exists) stamps
     // rehomed/rehoming_reliable flags back into it.
-    // .first() promotes each queue channel to a value channel so the same
-    // slice_config can be consumed by .merge() in common_space_input AND by
-    // .combine() in stack_input later. Without it, the queue channel is
-    // exhausted by the first consumer and stack silently skips. Nextflow may
-    // warn that .first() is "useless" in code paths where the channel is
-    // already a value channel — that warning is harmless and we accept it.
-    current_slice_config = effective_slice_config.first()
+    current_slice_config = effective_slice_config
     if (params.detect_rehoming) {
         detect_rehoming_input = shifts_xy.combine(current_slice_config)
         detect_rehoming_events(detect_rehoming_input)
         aligned_shifts = detect_rehoming_events.out.corrected_shifts
         if (has_slice_config) {
-            current_slice_config = detect_rehoming_events.out.slice_config.first()
+            current_slice_config = detect_rehoming_events.out.slice_config
         }
     } else {
         aligned_shifts = shifts_xy
@@ -1265,15 +1237,10 @@ workflow {
         generate_common_space_preview(preview_input)
     }
 
-    // Stage 5: Missing Slice Interpolation (optional)
-    //
-    // Gaps in the slice sequence are driven by slice_config.csv: any slice
-    // with use=false (either set manually during preproc or automatically by
-    // auto_assess_quality) is filtered out upstream and then appears as a
-    // gap here. detectSingleGaps turns each single-slice gap into an
-    // interpolation job. The resulting per-slice diagnostics are merged
-    // back into slice_config_final.csv so the record of what happened to
-    // each slice survives to the final report.
+    // Stage 5: Missing Slice Interpolation (optional).
+    // Single-slice gaps (use=false slices already filtered upstream) are
+    // interpolated with zmorph; per-slice diagnostics are merged into
+    // slice_config_final.csv. See docs/SLICE_INTERPOLATION_FEATURE.md.
     if (params.interpolate_missing_slices) {
         gaps_channel = slices_common_space
             .map { sliceList -> [detectSingleGaps(sliceList), sliceList] }
@@ -1292,16 +1259,15 @@ workflow {
 
         interpolate_missing_slice(gaps_channel)
 
-        // Merge per-slice manifest fragments back into slice_config so the
-        // final CSV records which slices were interpolated and with what
-        // diagnostics. Skipped when no real slice_config.csv is present
-        // (nothing to merge into).
+        // Merge per-slice manifest fragments into slice_config so the final
+        // CSV records which slices were interpolated. Skipped when there is
+        // no real slice_config.csv to merge into.
         if (has_slice_config) {
             finalise_interpolation(
                 current_slice_config,
                 interpolate_missing_slice.out.manifest.collect(),
             )
-            current_slice_config = finalise_interpolation.out.first()
+            current_slice_config = finalise_interpolation.out
         }
 
         all_slices = slices_common_space
@@ -1325,60 +1291,41 @@ workflow {
 
     register_pairwise(pairs)
 
-    // Stage 7: Stacking
-    log.info "Stacking slices with registration refinements"
-
     slices_collected = all_slices.flatten().collect()
     transforms_collected = register_pairwise.out.collect()
 
-    // Stage 6.5: Export Manual Alignment Data (optional)
+    // Stage 6.5: Export manual-alignment package (optional).
     if (params.export_manual_align) {
         export_input = slices_collected
             .combine(transforms_collected)
-            .map { items ->
-                def slices = []
-                def transforms = []
-                items.each { item ->
-                    def name = item.getName()
-                    if (name.endsWith('.ome.zarr')) {
-                        slices << item
-                    } else if (!name.endsWith('.json')) {
-                        transforms << item
-                    }
-                }
-                tuple(slices, transforms)
-            }
+            .map { partitionSlicesAndTransforms(it) }
         make_manual_align_package(export_input)
     }
 
-    // Stage 6.75: Optional refinement of manual transforms.
-    // Re-runs pairwise registration initialised from the manual transform for
-    // each manually-corrected pair; non-manual pairs are copied unchanged.
-    // Only active when both refine_manual_transforms and manual_transforms_dir
-    // are set.  The refined outputs replace automated transforms for stacking.
+    // Stage 6.75: Refine manual transforms (optional). Re-runs pairwise
+    // registration initialised from each manual transform; non-manual pairs
+    // are copied unchanged. Refined outputs replace automated transforms.
     if (params.refine_manual_transforms && params.manual_transforms_dir) {
         log.info "Refining manual transforms from: ${params.manual_transforms_dir}"
         refine_input = slices_collected
             .combine(transforms_collected)
-            .map { items ->
-                def slices = items.findAll { it.getName().endsWith('.ome.zarr') }
-                def transforms = items.findAll { !it.getName().endsWith('.ome.zarr') }
-                tuple(slices, transforms)
-            }
+            .map { partitionSlicesAndTransforms(it) }
         refine_manual_transforms(refine_input)
         transforms_for_stack = refine_manual_transforms.out.collect()
     } else {
         transforms_for_stack = transforms_collected
     }
 
+    // Stage 7: Stacking
+    log.info "Stacking slices with registration refinements"
+
     // Auto-exclude: detect clusters of consecutive low-quality registrations.
-    // The script stamps auto_excluded=true/auto_exclude_reason into slice_config,
-    // so downstream stack sees it via --slice_config (no separate CSV).
-    // Requires a real slice_config to stamp into.
+    // Stamps auto_excluded/auto_exclude_reason into slice_config so stack
+    // sees them via --slice_config. Requires a real slice_config.
     stack_slice_config = current_slice_config
     if (params.auto_exclude_enabled && has_slice_config) {
         auto_exclude_slices(transforms_for_stack, current_slice_config)
-        stack_slice_config = auto_exclude_slices.out.slice_config.first()
+        stack_slice_config = auto_exclude_slices.out.slice_config
     }
 
     stack_input = slices_collected

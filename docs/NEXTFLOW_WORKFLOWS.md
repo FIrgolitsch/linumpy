@@ -895,6 +895,139 @@ nextflow run workflow.nf -w /fast/storage/work
 
 ---
 
+## Authoring Notes (linumpy reconstruction workflow)
+
+These notes apply specifically to `workflows/reconst_3d/soct_3d_reconst.nf` and
+explain a few patterns and pitfalls that the workflow file otherwise had to
+re-document inline. Refer to this section before changing the channel topology.
+
+### Value vs queue channels
+
+Nextflow has two channel kinds, with very different consumption semantics:
+
+- **Queue channels** are consumed once. When two operators read from the same
+  queue channel, only the first one observes the data; the second sees an
+  empty channel. Any process that depends (directly or transitively) on an
+  empty channel is silently skipped — there is no error.
+- **Value channels** can be consumed any number of times by any number of
+  downstream operators. They are the safe default for inputs that fan out.
+
+In the reconstruction workflow several channels fan out to multiple
+consumers. They must therefore be value channels:
+
+| Channel             | Consumers                                                              |
+|---------------------|------------------------------------------------------------------------|
+| `shifts_xy`         | `analyze_shifts`, `detect_rehoming`, `bring_to_common_space`, `stack`, `analyze_acquisition_rotation`, `stack_motor_only` |
+| `slice_config_channel` / `current_slice_config` | `auto_assess`, `detect_rehoming`, `bring_to_common_space`, `finalise_interpolation`, `auto_exclude_slices`, `stack` |
+| `no_transform`      | `stitch_3d_with_refinement` (combined with every slice tuple)           |
+
+To create a value channel from a file path, use `channel.value(file(path))`,
+**not** `channel.of(file(path))` or `channel.fromPath(path)` — the latter two
+produce queue channels that exhaust after the first consumer.
+
+### Auto-promotion of process outputs
+
+Nextflow DSL2 auto-promotes a process output to a value channel when **all**
+of the process's inputs are value channels. The reconstruction workflow
+relies on this: once the source channels above are value channels, every
+downstream `process.out` we re-assign to `current_slice_config` is also a
+value channel — no `.first()` is needed to convert it.
+
+If you ever introduce a queue input into one of those processes (e.g. by
+collecting per-slice tuples without `.collect()`), the corresponding output
+will revert to a queue channel and `current_slice_config` will silently
+exhaust the next time it is consumed twice.
+
+### `.first()` is a last resort
+
+`.first()` converts a queue channel to a value channel by emitting only the
+first value. We avoid it in the reconstruction workflow because:
+
+1. When applied to a value channel it triggers the warning
+   `WARN: The operator first is useless when applied to a value channel which returns a single value by definition`.
+2. Whenever it is *needed* it indicates that a source or upstream process is
+   producing a queue channel where it shouldn't — usually a sign that one of
+   the source-channel rules above was violated.
+
+Prefer fixing the upstream channel kind. Reach for `.first()` only when an
+external API genuinely returns a queue channel that you cannot influence.
+
+### `tuple path(...), path(...)` + `.combine()` flattens lists
+
+When a process input is declared as a tuple of paths and the upstream
+channel is built with `.combine()` against a `.collect()`-ed list:
+
+```groovy
+auto_assess_inputs = normalize.out.normalized.map { _id, p -> p }.collect()  // list of paths
+auto_assess_quality(auto_assess_inputs.combine(existing_slice_config))
+```
+
+…Nextflow flattens the collected list into the tuple binding, so the first
+zarr in the list is bound to the slot that was supposed to receive the
+config CSV (we observed this as
+`IsADirectoryError: Is a directory: 'slice_z02_normalize.ome.zarr'`).
+
+The fix is to declare each item as a separate input and pass them as
+separate positional arguments:
+
+```groovy
+process auto_assess_quality {
+    input:
+    path "inputs/*"
+    path existing_slice_config
+}
+
+auto_assess_quality(auto_assess_inputs, channel.value(existing_slice_config_file))
+```
+
+The same pattern applies to `finalise_interpolation` and
+`auto_exclude_slices`.
+
+### Slice config flow
+
+Several stages produce or consume a per-slice configuration CSV
+(`slice_config.csv`). The flow is:
+
+```
+slice_config_channel
+   └── (auto_assess_quality, optional) ──┐
+                                         ▼
+                       effective_slice_config (value)
+                                         │
+                                         ▼
+                          current_slice_config (value)
+                                         │
+              ┌──────────────────────────┼──────────────────────────┐
+              ▼                          ▼                          ▼
+      detect_rehoming           bring_to_common_space     finalise_interpolation
+              │                                                    │
+              └────► current_slice_config (re-bound) ◄──────────────┘
+                                         │
+                                         ▼
+                              auto_exclude_slices
+                                         │
+                                         ▼
+                            stack_slice_config (value)
+                                         │
+                                         ▼
+                                       stack
+```
+
+Every assignment along that flow is a value channel, so the same config can
+be merged into `bring_to_common_space` and combined into `stack_input`
+without exhaustion.
+
+### Hard-skip behaviour for failed interpolation
+
+`interpolate_missing_slice` produces an *optional* `zarr` output. When
+zmorph's quality gates reject the interpolation it emits a manifest fragment
+with `interpolation_failed=true` and no zarr; `finalise_interpolation`
+stamps that into `slice_config_final.csv` and the slot stays a genuine gap
+in the stacked volume. See [`SLICE_INTERPOLATION_FEATURE.md`](SLICE_INTERPOLATION_FEATURE.md)
+for the full policy.
+
+---
+
 ## Reference
 
 - [Nextflow Documentation](https://www.nextflow.io/docs/latest/)
