@@ -1026,6 +1026,28 @@ stamps that into `slice_config_final.csv` and the slot stays a genuine gap
 in the stacked volume. See [`SLICE_INTERPOLATION_FEATURE.md`](SLICE_INTERPOLATION_FEATURE.md)
 for the full policy.
 
+### `finalise_interpolation` is published-only
+
+`finalise_interpolation.out` is **not** rebound to `current_slice_config`
+even though it logically refines it. Two reasons:
+
+1. When there are no single-slice gaps, `interpolate_missing_slice` is not
+   invoked; its `.manifest` channel never emits; `manifest.collect()`
+   therefore does not emit either; `finalise_interpolation` is not invoked;
+   and `finalise_interpolation.out` is an empty channel. Rebinding
+   `current_slice_config` to that empty channel propagates the emptiness
+   downstream and **silently skips `stack`** (and everything after it).
+2. `linum_stack_slices_motor.py` only reads `use` and `auto_excluded` from
+   the slice config (via `slice_config_io.force_skip_slices`).
+   `finalise_interpolation` only adds `interpolated` and
+   `interpolation_failed`, so it does not change any column that `stack`
+   acts on. The published `slice_config_final.csv` is consumed directly
+   from the output directory by `linum_generate_pipeline_report.py`, which
+   gracefully falls back to `slice_config.csv` if the final file is absent.
+
+Treat `finalise_interpolation` as an artifact-emitting side effect; do not
+rebind its output into the channel chain.
+
 ---
 
 ## Reference

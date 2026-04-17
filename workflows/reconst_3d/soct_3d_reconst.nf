@@ -1259,15 +1259,18 @@ workflow {
 
         interpolate_missing_slice(gaps_channel)
 
-        // Merge per-slice manifest fragments into slice_config so the final
-        // CSV records which slices were interpolated. Skipped when there is
-        // no real slice_config.csv to merge into.
+        // Publish slice_config_final.csv as an artifact for the report.
+        // Intentionally NOT piped back into current_slice_config: when no
+        // gaps exist, interpolate_missing_slice does not run and finalise's
+        // output channel is empty, which would in turn empty out
+        // current_slice_config and silently skip stack. Stack only reads
+        // use/auto_excluded — neither column is modified here — so reading
+        // the upstream config is equivalent.
         if (has_slice_config) {
             finalise_interpolation(
                 current_slice_config,
                 interpolate_missing_slice.out.manifest.collect(),
             )
-            current_slice_config = finalise_interpolation.out
         }
 
         all_slices = slices_common_space
