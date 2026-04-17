@@ -23,6 +23,7 @@ from tqdm import tqdm
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
 from linumpy.io import OmeZarrWriter, read_omezarr
+from linumpy.preproc.resampling import resolution_is_mm
 
 
 def _build_arg_parser():
@@ -153,14 +154,17 @@ def main():
     # Read input mosaic
     print(f"Loading: {args.in_mosaic}")
     vol, source_res = read_omezarr(args.in_mosaic)
-    target_res = args.resolution / 1000.0  # conversion um to mm
+    # Match the CPU helper: keep scaling_factor unit-consistent with source_res.
+    source_in_mm = resolution_is_mm(source_res)
+    target_res = args.resolution / 1000.0 if source_in_mm else float(args.resolution)
 
     tile_shape = vol.chunks
     scaling_factor = np.asarray(source_res) / target_res
 
     print(f"  Volume shape: {vol.shape}")
     print(f"  Tile shape: {tile_shape}")
-    print(f"  Source resolution: {[f'{r * 1000:.2f}' for r in source_res]} µm")
+    source_um = [r * 1000 for r in source_res] if source_in_mm else list(source_res)
+    print(f"  Source resolution: {[f'{r:.2f}' for r in source_um]} µm")
     print(f"  Target resolution: {args.resolution} µm")
     print(f"  Scale factor: {scaling_factor}")
 
@@ -181,7 +185,9 @@ def main():
     _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape, scaling_factor, use_gpu)
 
     print("Building pyramid...")
-    out_zarr.finalize([target_res] * 3, args.n_levels)
+    # out_res is in the same unit as source_res (mm or µm) for parity with the CPU path.
+    out_res = [target_res] * 3
+    out_zarr.finalize(out_res, args.n_levels)
 
     elapsed = time.time() - start_time
     print(f"Done in {elapsed:.1f}s ({total_tiles / elapsed:.1f} tiles/s)")
