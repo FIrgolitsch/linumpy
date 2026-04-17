@@ -407,12 +407,13 @@ process estimate_global_transform {
     def include_arg = params.stitch_global_transform_slices?.trim()
         ? "--include_slice " + params.stitch_global_transform_slices.toString().split('[,\\s]+').join(' ')
         : ""
+    def script_name = params.use_gpu ? "linum_estimate_global_transform_gpu.py" : "linum_estimate_global_transform.py"
     """
     mkdir -p pool_input
     for f in ${mosaic_grids}; do
         ln -sf "\$(readlink -f \$f)" pool_input/
     done
-    linum_estimate_global_transform.py pool_input global_affine.npy \
+    ${script_name} pool_input global_affine.npy \
         --overlap_fraction ${params.stitch_overlap_fraction} \
         ${slice_config_arg} \
         ${include_arg} \

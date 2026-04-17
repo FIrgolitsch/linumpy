@@ -1,27 +1,15 @@
 #!/usr/bin/env python3
-"""Estimate a single 2x2 tile-placement affine pooled across many 3D mosaic grids.
+"""GPU-accelerated variant of ``linum_estimate_global_transform.py``.
 
-For each input ``mosaic_grid_*.ome.zarr`` volume, load only the central Z
-plane and call
-:func:`linumpy.stitching.motor.compute_registration_refinements` to
-measure per-pair absolute tile displacements via phase correlation.
-Pairs from every input are concatenated into one pool and a single 2×2
-affine transform is fitted via
-:func:`~linumpy.stitching.motor.estimate_affine_from_pairs`.
+Pools per-pair tile-displacement measurements from many mosaic grids
+(central Z-plane only) and fits a single 2x2 affine transform.
+Phase correlation is dispatched through
+:func:`linumpy.gpu.fft_ops.phase_correlation`; falls back to CPU silently
+when CuPy / a CUDA device is unavailable.
 
-The resulting transform captures instrument-level geometry (scan-to-stage
-rotation θ, motor non-perpendicularity φ, effective per-axis step in
-pixels) which is constant across an acquisition session. Use the
-resulting ``.npy`` as ``--input_transform`` for
-``linum_stitch_3d_refined.py`` to remove per-slice affine jitter while
-keeping the blend-shift sub-pixel refinement.
-
-The script is read-only with respect to its inputs and does not touch
-any pipeline outputs.
-
-For a GPU-accelerated variant (CuPy-backed phase correlation, same
-pooling and LS fit) see ``linum_estimate_global_transform_gpu.py``.
-The pipeline selects between the two scripts based on ``params.use_gpu``.
+See ``linum_estimate_global_transform.py`` for the full description of
+the pooled-affine workflow; this script is a drop-in replacement whose
+only difference is the GPU-backed phase correlations.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -36,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.stitching.motor import pool_pairs_and_fit_global_affine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -102,51 +91,28 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="mosaic_grid*_z*.ome.zarr",
         help="Glob pattern used to discover input mosaic grids. [%(default)s]",
     )
-    p.add_argument(
-        "--slice_config",
-        type=str,
-        default=None,
-        help="Optional slice_config.csv — rows with use=false are skipped.",
-    )
+    p.add_argument("--slice_config", type=str, default=None, help="Optional slice_config.csv.")
     p.add_argument(
         "--include_slice",
         type=str,
         nargs="+",
         default=None,
-        help="Optional explicit list of slice ids (zero-padded, e.g. '10 11 12')\n"
-        "to include. Combined with --slice_config via intersection when both\n"
-        "are provided.",
+        help="Optional explicit list of zero-padded slice ids to include.",
     )
-    p.add_argument(
-        "--histogram_match",
-        action="store_true",
-        help="Match overlap histograms before phase correlation (more robust\n"
-        "to uneven tile-edge illumination; matches the old\n"
-        "linum_estimate_transform.py behaviour).",
-    )
+    p.add_argument("--histogram_match", action="store_true", help="Match overlap histograms before phase correlation.")
     p.add_argument(
         "--max_empty_fraction",
         type=float,
         default=None,
-        help="If set, use an Otsu threshold to detect empty overlaps and skip\n"
-        "any pair with more than this fraction of background pixels.\n"
-        "When unset, the default per-volume 'mean(overlap > 0) < 0.1'\n"
-        "heuristic is used.",
+        help="Otsu-based empty-overlap filter fraction; unset = default heuristic.",
     )
     p.add_argument(
         "--n_samples",
         type=int,
         default=None,
-        help="Maximum number of pooled pairs to feed into the LS fit.\n"
-        "If set and the pool exceeds this size, a reproducible random\n"
-        "sub-sample is drawn. Unset means use every pair.",
+        help="Maximum number of pooled pairs to feed into the LS fit (random sub-sample).",
     )
-    p.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Seed for pair sub-sampling (used only when --n_samples is set). [%(default)s]",
-    )
+    p.add_argument("--seed", type=int, default=0, help="Seed for pair sub-sampling. [%(default)s]")
     p.add_argument(
         "--diagnostics_json",
         type=str,
@@ -154,12 +120,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Optional JSON sidecar for fit diagnostics and per-volume stats.",
     )
     p.add_argument("--overwrite", "-f", action="store_true", help="Overwrite the output transform if it already exists.")
+    p.add_argument("--verbose", "-v", action="store_true", help="Print GPU information on startup.")
     return p
 
 
 def main() -> int:
     parser = _build_arg_parser()
     args = parser.parse_args()
+
+    if args.verbose:
+        print_gpu_info()
+
+    if not GPU_AVAILABLE:
+        logger.info("No CUDA device detected; linum_estimate_global_transform_gpu.py is falling back to CPU")
+    use_gpu = GPU_AVAILABLE
 
     input_dir = Path(args.input_dir)
     if not input_dir.is_dir():
@@ -187,7 +161,7 @@ def main() -> int:
         max_empty_fraction=args.max_empty_fraction,
         n_samples=args.n_samples,
         seed=args.seed,
-        use_gpu=False,
+        use_gpu=use_gpu,
     )
 
     model = diagnostics["displacement_model"]
