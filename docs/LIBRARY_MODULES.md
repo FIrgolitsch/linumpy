@@ -15,13 +15,18 @@ The linumpy library provides Python modules for microscopy data processing. This
 linumpy/
 ├── _thread_config.py      # CPU thread management
 ├── __init__.py
-├── io/                    # Input/Output modules
+├── io/                    # Input/Output modules (zarr, allen, npz, thorlabs,
+│                          #   test_data, slice_config, data_io)
 ├── gpu/                   # GPU acceleration modules
-├── microscope/            # Microscope-specific modules
-├── preproc/               # Preprocessing modules
+├── microscope/            # Microscope-specific modules (oct)
+├── preproc/               # Preprocessing modules (icorr, normalization,
+│                          #   resampling, xyzcorr)
 ├── psf/                   # Point spread function
-├── stitching/             # Image stitching
-├── utils/                 # Utility modules
+├── shifts/                # XY shift CSV utilities
+├── stitching/             # Image stitching (registration, motor, stacking,
+│                          #   interpolation, topology, mosaic_grid, ...)
+├── utils/                 # Utility modules (io, metrics, orientation,
+│                          #   image_quality, visualization)
 ├── reconstruction.py      # Core reconstruction
 ├── segmentation.py        # Segmentation tools
 └── utils_images.py        # Image utilities
@@ -99,6 +104,43 @@ from linumpy.io.test_data import get_data
 
 # Get path to test data
 raw_tiles_path = get_data('raw_tiles')
+```
+
+### slice_config.py - Slice Config I/O
+
+Shared helpers for reading, writing, and stamping `slice_config.csv` — the
+per-slice trace file threaded through the reconstruction pipeline. Each
+pipeline stage that makes a per-slice decision (quality assessment, rehoming
+correction, auto-exclusion, missing-slice interpolation) stamps its flag
+columns via this module and hands the enriched file to the next stage.
+
+```python
+from linumpy.io.slice_config import (
+    CANONICAL_COLUMNS,  # list of pipeline decision columns
+    read,               # load slice_config.csv as dict keyed by slice_id
+    write,              # write dict back to CSV with canonical column order
+    stamp,              # update per-slice flags (use, auto_excluded, etc.) and write
+    merge_fragments,    # merge per-slice manifest fragments into a single CSV
+    force_skip_slices,  # return set of slice_ids where use=false or auto_excluded=true
+)
+```
+
+The module does not implement file locking; concurrency safety is provided by
+Nextflow's channel discipline (each process receives an immutable copy; merges
+happen in a single downstream process).
+
+### data_io.py - Slicer Data I/O
+
+Legacy readers for slicer-format volumes, NIfTI files and tile metadata.
+
+```python
+from linumpy.io.data_io import (
+    listSlicesInDir,
+    getSliceListIndices,
+    load_volume,
+    loadTiffImage,
+    saveImage,
+)
 ```
 
 ---
@@ -424,27 +466,25 @@ from linumpy.stitching.FileUtils import (
 )
 ```
 
+### mosaic_grid.py - Mosaic Grid Class
+
+The `MosaicGrid` class manages 2D mosaic grid images (a 2D image containing
+all tiles for a slice without overlap). Provides tile iteration, affine tile
+placement, and stitching utilities including diffusion-based blending.
+
+```python
+from linumpy.stitching.mosaic_grid import MosaicGrid, getDiffusionBlendingWeights
+
+mg = MosaicGrid(image, tile_shape=(512, 512), overlap_fraction=0.2)
+stitched = mg.stitch(blending_method='diffusion')
+
+# Blending weights helper (also used standalone)
+weights = getDiffusionBlendingWeights(mask_fixed, mask_moving, factor=2)
+```
+
 ---
 
 ## Utilities Module (`linumpy.utils`)
-
-### mosaic_grid.py - Mosaic Grid Utilities
-
-Functions for working with mosaic grids.
-
-```python
-from linumpy.utils.mosaic_grid import (
-    getDiffusionBlendingWeights,
-    compute_grid_shape
-)
-
-# Compute blending weights for slice fusion
-weights = getDiffusionBlendingWeights(
-    mask_fixed,
-    mask_moving,
-    factor=2
-)
-```
 
 ### io.py - I/O Utilities
 
@@ -491,17 +531,6 @@ cpus = get_available_cpus()  # e.g., 12 on a 16-core system
 # With LINUMPY_MAX_CPUS=8 (takes precedence)
 os.environ['LINUMPY_MAX_CPUS'] = '8'
 cpus = get_available_cpus()  # 8 (or total if less than 8)
-```
-
-### data_io.py - Data I/O Helpers
-
-Data reading/writing utilities.
-
-```python
-from linumpy.utils.data_io import (
-    load_image,
-    save_image
-)
 ```
 
 ### metrics.py - Pipeline Quality Metrics
@@ -554,12 +583,14 @@ summary = compute_summary_statistics(aggregated['pairwise_registration'])
 | `z_offset_std` | 10.0 | 25.0 | No |
 | `z_offset_range` | 15.0 | 30.0 | No |
 
-### shifts.py - XY Shift Utilities
+## XY Shifts Module (`linumpy.shifts`)
+
+### shifts/utils.py - XY Shift Utilities
 
 Load and process XY shift CSV files for inter-slice alignment.
 
 ```python
-from linumpy.utils.shifts import load_shifts_csv, detect_shift_units
+from linumpy.shifts.utils import load_shifts_csv, detect_shift_units
 
 # Load shifts and compute cumulative positions
 cumsum, all_ids = load_shifts_csv("shifts_xy.csv")
