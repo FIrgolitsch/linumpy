@@ -12,7 +12,6 @@ When slices are skipped, their shifts are accumulated to maintain proper alignme
 import linumpy._thread_config  # noqa: F401
 
 import argparse
-import csv
 import re
 from os.path import split as psplit
 from pathlib import Path
@@ -21,6 +20,7 @@ import dask.array as da
 import numpy as np
 import pandas as pd
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.shifts.utils import build_cumulative_shifts
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
@@ -93,16 +93,8 @@ def _build_arg_parser():
 
 
 def load_slice_config(config_path):
-    """Load slice configuration and return set of slice IDs to use."""
-    slices_to_use = set()
-    with Path(config_path).open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            slice_id = int(row["slice_id"])
-            use = row["use"].lower().strip() in ("true", "1", "yes")
-            if use:
-                slices_to_use.add(slice_id)
-    return slices_to_use
+    """Return the integer slice IDs marked ``use=true`` in ``config_path``."""
+    return {int(sid) for sid in slice_config_io.filter_slices_to_use(config_path)}
 
 
 def _replace_with_local_median(df, idx, window, skip_mask=None):

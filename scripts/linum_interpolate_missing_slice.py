@@ -1,66 +1,56 @@
 #!/usr/bin/env python3
 """
-Interpolate a missing or degraded slice using information from adjacent slices.
+Interpolate a missing slice using information from adjacent slices.
 
-This script implements registration-based morphing interpolation to reconstruct
-a missing slice in a serial sectioning dataset. The method:
+Uses z-aware morphing (``zmorph``): an affine transform ``T`` between the
+boundary planes of the two neighbours is computed, then for each output
+plane at fractional depth ``alpha`` the before-boundary is warped by
+``T**alpha`` and the after-boundary by ``T**(alpha - 1)`` and the two are
+cross-faded.
 
-1. Registers the slice before the gap to the slice after
-2. Computes a half-transform (midpoint transformation)
-3. Warps both adjacent slices toward the midpoint
-4. Blends the warped slices to create the interpolated result
-5. Optionally blends with a degraded slice if available
+**Hard skip on gate failure.** When zmorph's 2D boundary registration fails
+any quality gate, no interpolated zarr is produced: the slot is left as a
+genuine gap rather than filled with a blended (and therefore fabricated)
+volume. A manifest fragment and diagnostics JSON are still emitted so the
+failure is visible in ``slice_config_final.csv`` and the final report. The
+``average`` / ``weighted`` methods remain available as explicit,
+user-requested baselines.
 
-If a degraded slice is provided, its quality is automatically assessed using
-structural similarity (SSIM) and edge preservation metrics. The degraded slice
-is blended with the interpolated result based on its quality score.
+Only a SINGLE missing slice can be reconstructed — two or more consecutive
+gaps carry insufficient information.
 
-This approach is based on motion-compensated interpolation techniques commonly
-used in video frame interpolation, adapted for 3D microscopy volumes.
-
-References:
-- Lee et al. (1991) "Shape-based interpolation of multidimensional grey-level
-  images", IEEE Trans. Medical Imaging
-- Bao et al. (2019) "Depth-Aware Video Frame Interpolation", CVPR
-- Penney et al. (2004) "A comparison of similarity measures for use in 2-D-3-D
-  medical image registration", IEEE Trans. Medical Imaging
-
-Note: This method is only suitable for interpolating a SINGLE missing slice.
-When two or more consecutive slices are missing, there is insufficient
-information for accurate reconstruction.
+See ``docs/SLICE_INTERPOLATION_FEATURE.md`` for the physical model and
+parameter-tuning guidance.
 
 Example usage:
-    # Without degraded slice (pure interpolation)
     linum_interpolate_missing_slice.py slice_z00.ome.zarr slice_z02.ome.zarr \\
-        slice_z01_interpolated.ome.zarr --method registration
+        slice_z01_interpolated.ome.zarr
 
-    # With degraded slice (quality-weighted blend)
-    linum_interpolate_missing_slice.py slice_z00.ome.zarr slice_z02.ome.zarr \\
-        slice_z01_interpolated.ome.zarr --degraded_slice slice_z01_bad.ome.zarr
+    # Finalise mode: merge per-slice manifest fragments into slice_config.csv
+    linum_interpolate_missing_slice.py --finalise \\
+        --slice_config_in  slice_config.csv \\
+        --slice_config_out slice_config_final.csv \\
+        --fragments        interpolate_missing_slice/
 """
 
-# Configure thread limits before numpy/scipy imports
 import linumpy._thread_config  # noqa: F401
-
-# Configure all libraries (especially SimpleITK) to respect thread limits
 from linumpy._thread_config import configure_all_libraries
 
 import argparse
+import json
 from pathlib import Path
 
 import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.stitching.interpolation import (
-    assess_degraded_slice_quality,
-    blend_with_degraded,
     interpolate_average,
-    interpolate_registration_based,
     interpolate_weighted,
+    interpolate_z_morph,
 )
-from linumpy.stitching.registration import register_2d_images_sitk
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
 
 configure_all_libraries()
@@ -68,16 +58,16 @@ configure_all_libraries()
 
 def _build_arg_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("slice_before", help="Path to the slice BEFORE the missing slice (*.ome.zarr)")
-    p.add_argument("slice_after", help="Path to the slice AFTER the missing slice (*.ome.zarr)")
-    p.add_argument("output", help="Output path for the interpolated slice (*.ome.zarr)")
+    p.add_argument("slice_before", nargs="?", help="Path to the slice BEFORE the missing slice (*.ome.zarr)")
+    p.add_argument("slice_after", nargs="?", help="Path to the slice AFTER the missing slice (*.ome.zarr)")
+    p.add_argument("output", nargs="?", help="Output path for the interpolated slice (*.ome.zarr)")
     p.add_argument(
         "--method",
-        choices=["registration", "average", "weighted"],
-        default="registration",
+        choices=["zmorph", "average", "weighted"],
+        default="zmorph",
         help="Interpolation method:\n"
-        "  registration - Registration-based morphing (recommended)\n"
-        "  average - Simple average of adjacent slices\n"
+        "  zmorph   - z-aware morphing (respects serial-section geometry; recommended)\n"
+        "  average  - Simple average of adjacent slices\n"
         "  weighted - Weighted average with distance falloff\n"
         "[default: %(default)s]",
     )
@@ -100,56 +90,97 @@ def _build_arg_parser():
         "--max_iterations", type=int, default=1000, help="Maximum iterations for registration [default: %(default)s]"
     )
     p.add_argument(
-        "--reference_slice",
-        type=int,
-        default=None,
-        help="Z-index (in each volume, clamped to that volume's bounds)\n"
-        "to use as the registration reference plane.\n"
-        "If not specified, the best-correlated plane pair within\n"
-        "--overlap_search_window planes from each boundary is used\n"
-        "automatically (recommended).",
-    )
-    p.add_argument(
         "--overlap_search_window",
         type=int,
         default=5,
         help="Number of z-planes to search at each volume boundary\n"
         "when selecting the registration reference pair automatically.\n"
-        "Ignored when --reference_slice is set. [default: %(default)s]",
+        "[default: %(default)s]",
     )
     p.add_argument(
         "--min_overlap_correlation",
         type=float,
-        default=0.1,
+        default=0.3,
         help="Minimum normalized cross-correlation required between the\n"
         "boundary planes to proceed with registration. Below this\n"
-        "threshold the method falls back to a simple average.\n"
+        "threshold zmorph emits no output (hard skip).\n"
         "[default: %(default)s]",
     )
-
-    # Degraded slice options
-    degraded_group = p.add_argument_group("Degraded Slice Options", "Use a degraded/damaged slice to improve interpolation")
-    degraded_group.add_argument(
-        "--degraded_slice",
+    p.add_argument(
+        "--reference_slab_size",
+        type=int,
+        default=3,
+        help="Number of z-planes averaged around the boundary reference\n"
+        "plane when running the 2D registration. Larger slabs are\n"
+        "more robust to per-plane noise. [default: %(default)s]",
+    )
+    p.add_argument(
+        "--min_foreground_fraction",
+        type=float,
+        default=0.1,
+        help="Minimum fraction of foreground pixels required for a\n"
+        "candidate boundary plane to be considered. [default: %(default)s]",
+    )
+    p.add_argument(
+        "--min_ncc_improvement",
+        type=float,
+        default=0.05,
+        help="Minimum improvement in boundary NCC required after 2D\n"
+        "registration to accept the transform. Below this zmorph emits\n"
+        "no output (hard skip). [default: %(default)s]",
+    )
+    p.add_argument(
+        "--diagnostics",
         type=str,
         default=None,
-        help="Path to a degraded slice that has usable data (*.ome.zarr).\n"
-        "Quality is automatically assessed and blended accordingly.",
+        help="Path to write a JSON diagnostics file (plane selection,\n"
+        "pre/post NCC, half-transform verification, fallback reason).",
     )
-    degraded_group.add_argument(
-        "--degraded_weight",
-        type=float,
+    p.add_argument(
+        "--manifest_entry",
+        type=str,
         default=None,
-        help="Manual override for degraded slice weight (0.0-1.0).\n"
-        "If not specified, weight is automatically computed from quality.",
+        help="Path to write a single-line CSV manifest entry for this\ninterpolated slice (aggregated downstream).",
     )
-    degraded_group.add_argument(
-        "--min_quality_threshold",
-        type=float,
-        default=0.2,
-        help="Minimum quality score to use degraded slice.\n"
-        "Below this threshold, degraded slice is ignored.\n"
-        "[default: %(default)s]",
+    p.add_argument(
+        "--slice_id",
+        type=str,
+        default=None,
+        help="Slice id string (e.g. '02') to record in the manifest entry.",
+    )
+
+    # Finalise / slice_config merge mode
+    finalise_group = p.add_argument_group(
+        "Finalise Mode",
+        "Merge per-slice interpolation manifest fragments into slice_config.csv. "
+        "When --finalise is set, the positional slice arguments are ignored and "
+        "the script instead consumes --slice_config_in + --fragments and writes "
+        "--slice_config_out.",
+    )
+    finalise_group.add_argument(
+        "--finalise",
+        action="store_true",
+        help="Run in finalise mode: merge fragments into slice_config.csv.",
+    )
+    finalise_group.add_argument(
+        "--slice_config_in",
+        type=str,
+        default=None,
+        help="Input slice_config.csv (finalise mode).",
+    )
+    finalise_group.add_argument(
+        "--slice_config_out",
+        type=str,
+        default=None,
+        help="Output slice_config.csv (finalise mode).",
+    )
+    finalise_group.add_argument(
+        "--fragments",
+        type=str,
+        default=None,
+        help="Directory containing per-slice manifest fragment CSVs (finalise mode). "
+        "Fragments are discovered by glob; empty dir results in slice_config copied "
+        "unchanged.",
     )
 
     # Preview/debug options
@@ -158,11 +189,11 @@ def _build_arg_parser():
         "--preview",
         type=str,
         default=None,
-        help="Path to save a preview image (PNG) showing:\n"
-        "- Slice before, slice after\n"
-        "- Interpolated result\n"
-        "- Degraded slice (if provided)\n"
-        "Useful for verifying interpolation quality.",
+        help=(
+            "Path to save a preview image (PNG) showing slice before, slice\n"
+            "after, and the interpolated result. Useful for verifying\n"
+            "interpolation quality."
+        ),
     )
     preview_group.add_argument(
         "--preview_slice", type=int, default=None, help="Z-index to use for preview. Default: middle slice."
@@ -173,112 +204,41 @@ def _build_arg_parser():
     return p
 
 
-def invert_transform(transform):
-    """
-    Compute the inverse of a transform.
-
-    Parameters
-    ----------
-    transform : sitk.Transform
-        Transform to invert.
-
-    Returns
-    -------
-    sitk.Transform
-        Inverted transform.
-    """
-    return transform.GetInverse()
-
-
-def register_slices_2d(fixed_slice, moving_slice, metric="MSE", max_iterations=1000):
-    """
-    Register a 2D slice from moving volume to fixed volume.
-
-    Parameters
-    ----------
-    fixed_slice : np.ndarray
-        2D fixed image.
-    moving_slice : np.ndarray
-        2D moving image.
-    metric : str
-        Registration metric.
-    max_iterations : int
-        Maximum iterations.
-
-    Returns
-    -------
-    sitk.Transform
-        The computed transform.
-    float
-        Registration error metric.
-    """
-    # Normalize images for registration
-    fixed_norm = fixed_slice.astype(np.float32)
-    moving_norm = moving_slice.astype(np.float32)
-
-    # Normalize to [0, 1]
-    if fixed_norm.max() > fixed_norm.min():
-        fixed_norm = (fixed_norm - fixed_norm.min()) / (fixed_norm.max() - fixed_norm.min())
-    if moving_norm.max() > moving_norm.min():
-        moving_norm = (moving_norm - moving_norm.min()) / (moving_norm.max() - moving_norm.min())
-
-    transform, _, error = register_2d_images_sitk(
-        fixed_norm,
-        moving_norm,
-        method="affine",
-        metric=metric,
-        max_iterations=max_iterations,
-        return_3d_transform=False,
-        verbose=False,
-    )
-
-    return transform, error
-
-
 def generate_preview(
     vol_before,
     vol_after,
     interpolated,
     output_path,
-    vol_degraded=None,
-    final_result=None,
     preview_slice=None,
     dpi=150,
-    degraded_weight=None,
-    quality_threshold=None,
+    failure_reason: str | None = None,
 ):
     """
     Generate a preview image showing the interpolation results.
 
+    When *interpolated* is ``None`` the preview degrades gracefully to a
+    before/after pair with a red banner explaining why no output was
+    produced. This keeps visual QA working even for hard-skipped slices.
+
     Parameters
     ----------
-    vol_before : np.ndarray
-        Volume before the missing slice.
-    vol_after : np.ndarray
-        Volume after the missing slice.
-    interpolated : np.ndarray
-        Pure interpolated result.
+    vol_before, vol_after : np.ndarray
+        Neighbouring volumes.
+    interpolated : np.ndarray | None
+        Interpolated result, or ``None`` for a hard-skipped slice.
     output_path : str or Path
         Path to save the preview image.
-    vol_degraded : np.ndarray, optional
-        Degraded slice volume if provided.
-    final_result : np.ndarray, optional
-        Final result after blending with degraded (if different from interpolated).
     preview_slice : int, optional
         Z-index to use for preview. Default: middle slice.
     dpi : int
         DPI for the output image.
-    degraded_weight : float, optional
-        Weight used for degraded slice blending.
-    quality_threshold : float, optional
-        Quality threshold used.
+    failure_reason : str, optional
+        Text shown in the banner when *interpolated* is ``None``.
     """
-    # Determine slice index
     if preview_slice is None:
         preview_slice = vol_before.shape[0] // 2
     preview_slice = max(0, min(preview_slice, vol_before.shape[0] - 1))
 
-    # Normalize function for display
     def normalize_for_display(img):
         img = img.astype(np.float32)
         p1, p99 = np.percentile(img[img > 0], [1, 99]) if np.any(img > 0) else (0, 1)
@@ -286,107 +246,70 @@ def generate_preview(
             img = (img - p1) / (p99 - p1)
         return np.clip(img, 0, 1)
 
-    # Extract slices
     before_slice = normalize_for_display(vol_before[preview_slice])
     after_slice = normalize_for_display(vol_after[preview_slice])
-    interp_slice = normalize_for_display(interpolated[preview_slice])
 
-    # Determine layout based on whether we have degraded slice
-    has_degraded = vol_degraded is not None
-    has_final = final_result is not None and not np.allclose(final_result, interpolated)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()
 
-    if has_degraded and has_final:
-        # 2x3 layout: before, after, degraded, interpolated, final, difference
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        axes = axes.flatten()
+    axes[0].imshow(before_slice, cmap="gray")
+    axes[0].set_title("Slice Before (input)")
+    axes[0].axis("off")
 
-        degraded_slice = normalize_for_display(vol_degraded[preview_slice])
-        final_slice = normalize_for_display(final_result[preview_slice])
+    axes[1].imshow(after_slice, cmap="gray")
+    axes[1].set_title("Slice After (input)")
+    axes[1].axis("off")
 
-        # Row 1: inputs
-        axes[0].imshow(before_slice, cmap="gray")
-        axes[0].set_title("Slice Before (input)")
-        axes[0].axis("off")
+    if interpolated is None:
+        axes[2].set_facecolor("#3a0a0a")
+        axes[2].text(
+            0.5,
+            0.55,
+            "INTERPOLATION FAILED",
+            color="white",
+            ha="center",
+            va="center",
+            fontsize=16,
+            fontweight="bold",
+            transform=axes[2].transAxes,
+        )
+        if failure_reason:
+            axes[2].text(
+                0.5,
+                0.35,
+                f"reason: {failure_reason}",
+                color="#ffd0d0",
+                ha="center",
+                va="center",
+                fontsize=10,
+                transform=axes[2].transAxes,
+            )
+        axes[2].set_xticks([])
+        axes[2].set_yticks([])
 
-        axes[1].imshow(after_slice, cmap="gray")
-        axes[1].set_title("Slice After (input)")
-        axes[1].axis("off")
-
-        axes[2].imshow(degraded_slice, cmap="gray")
-        title = "Degraded Slice"
-        if degraded_weight is not None:
-            title += f"\n(quality={degraded_weight:.2f})"
-        axes[2].set_title(title)
-        axes[2].axis("off")
-
-        # Row 2: outputs
-        axes[3].imshow(interp_slice, cmap="gray")
-        axes[3].set_title("Pure Interpolation")
+        # XZ view still useful for context — skip the missing middle slab.
+        y_mid = vol_before.shape[1] // 2
+        xz_before = normalize_for_display(vol_before[:, y_mid, :])
+        xz_after = normalize_for_display(vol_after[:, y_mid, :])
+        gap = np.full(
+            (max(1, min(vol_before.shape[0], vol_after.shape[0]) // 2), xz_before.shape[1]),
+            0.15,
+            dtype=np.float32,
+        )
+        xz_combined = np.vstack([xz_before, gap, xz_after])
+        axes[3].imshow(xz_combined, cmap="gray", aspect="auto")
+        axes[3].set_title("XZ View: Before | [skipped] | After")
         axes[3].axis("off")
-
-        axes[4].imshow(final_slice, cmap="gray")
-        title = "Final Result (blended)"
-        if degraded_weight is not None:
-            title += f"\n(w={degraded_weight:.2f})"
-        axes[4].set_title(title)
-        axes[4].axis("off")
-
-        # Difference image
-        diff = np.abs(interp_slice - degraded_slice)
-        axes[5].imshow(diff, cmap="hot")
-        axes[5].set_title("|Interpolated - Degraded|")
-        axes[5].axis("off")
-
-    elif has_degraded:
-        # 2x2 layout: before, after, interpolated, degraded
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        axes = axes.flatten()
-
-        degraded_slice = normalize_for_display(vol_degraded[preview_slice])
-
-        axes[0].imshow(before_slice, cmap="gray")
-        axes[0].set_title("Slice Before (input)")
-        axes[0].axis("off")
-
-        axes[1].imshow(after_slice, cmap="gray")
-        axes[1].set_title("Slice After (input)")
-        axes[1].axis("off")
-
-        axes[2].imshow(interp_slice, cmap="gray")
-        axes[2].set_title("Interpolated (output)")
-        axes[2].axis("off")
-
-        axes[3].imshow(degraded_slice, cmap="gray")
-        title = "Degraded (not used)"
-        if degraded_weight is not None:
-            title = f"Degraded (q={degraded_weight:.2f} < {quality_threshold})"
-        axes[3].set_title(title)
-        axes[3].axis("off")
-
     else:
-        # 2x2 layout: before, after, interpolated, XZ view
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        axes = axes.flatten()
-
-        axes[0].imshow(before_slice, cmap="gray")
-        axes[0].set_title("Slice Before (input)")
-        axes[0].axis("off")
-
-        axes[1].imshow(after_slice, cmap="gray")
-        axes[1].set_title("Slice After (input)")
-        axes[1].axis("off")
-
+        interp_slice = normalize_for_display(interpolated[preview_slice])
         axes[2].imshow(interp_slice, cmap="gray")
         axes[2].set_title("Interpolated (output)")
         axes[2].axis("off")
 
-        # Show XZ cross-section to visualize z-continuity
         y_mid = vol_before.shape[1] // 2
         xz_before = normalize_for_display(vol_before[:, y_mid, :])
         xz_interp = normalize_for_display(interpolated[:, y_mid, :])
         xz_after = normalize_for_display(vol_after[:, y_mid, :])
-
-        # Stack them for comparison
         xz_combined = np.vstack([xz_before, xz_interp, xz_after])
         axes[3].imshow(xz_combined, cmap="gray", aspect="auto")
         axes[3].set_title("XZ View: Before | Interp | After")
@@ -394,18 +317,97 @@ def generate_preview(
         axes[3].axhline(y=xz_before.shape[0] + xz_interp.shape[0], color="cyan", linestyle="--", linewidth=0.5)
         axes[3].axis("off")
 
-    fig.suptitle(f"Slice Interpolation Preview (z={preview_slice})", fontsize=14)
+    title = (
+        f"Slice Interpolation Preview (z={preview_slice}) — FAILED"
+        if interpolated is None
+        else f"Slice Interpolation Preview (z={preview_slice})"
+    )
+    fig.suptitle(title, fontsize=14)
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"Preview saved to: {output_path}")
 
 
+_FRAGMENT_COLUMN_MAP = {
+    "method_used": "interpolation_method_used",
+    "fallback_reason": "interpolation_fallback_reason",
+}
+
+
+def _finalise(args) -> None:
+    """Merge per-slice manifest fragments into a single slice_config.csv.
+
+    Each fragment represents one attempt, successful or not:
+
+    * ``interpolation_failed != true`` → slice was reconstructed. Stamps
+      ``interpolated=true`` plus method / fallback_reason.
+    * ``interpolation_failed == true`` → slice was hard-skipped. Stamps
+      ``interpolated=false``, ``interpolation_failed=true``, and
+      ``interpolation_fallback_reason=<reason>`` so the final report can
+      surface it.
+    """
+    if args.slice_config_in is None or args.slice_config_out is None or args.fragments is None:
+        raise SystemExit("--finalise requires --slice_config_in, --slice_config_out, and --fragments")
+
+    fragments_dir = Path(args.fragments)
+    fragment_paths: list[Path] = []
+    if fragments_dir.is_dir():
+        fragment_paths = sorted(fragments_dir.glob("*.csv"))
+    elif fragments_dir.exists():
+        fragment_paths = [fragments_dir]
+    else:
+        print(f"  Fragments path does not exist: {fragments_dir} — copying slice_config unchanged.")
+
+    updates: dict[str, dict[str, object]] = {}
+    interpolated_ids: set[str] = set()
+    failed_ids: set[str] = set()
+    import csv
+
+    for frag_path in fragment_paths:
+        with frag_path.open() as fh:
+            reader = csv.DictReader(fh)
+            for raw in reader:
+                sid = slice_config_io.normalize_slice_id(raw.get("slice_id", ""))
+                if not sid:
+                    continue
+                failed_raw = (raw.get("interpolation_failed") or "").strip().lower()
+                failed = failed_raw in ("true", "1", "yes", "y", "t")
+                entry: dict[str, object] = {
+                    "interpolated": not failed,
+                    "interpolation_failed": failed,
+                }
+                for col, val in raw.items():
+                    if col in ("slice_id", "interpolation_failed", None) or val is None:
+                        continue
+                    target = _FRAGMENT_COLUMN_MAP.get(col)
+                    if target:
+                        entry[target] = val
+                if failed:
+                    failed_ids.add(sid)
+                    entry["interpolation_method_used"] = ""
+                else:
+                    interpolated_ids.add(sid)
+                updates[sid] = entry
+
+    slice_config_io.stamp_many(args.slice_config_in, args.slice_config_out, updates)
+    print(
+        f"Finalise: merged {len(fragment_paths)} fragment(s), "
+        f"{len(interpolated_ids)} interpolated, {len(failed_ids)} failed → {args.slice_config_out}"
+    )
+
+
 def main():
     p = _build_arg_parser()
     args = p.parse_args()
 
-    # Validate inputs
+    if args.finalise:
+        _finalise(args)
+        return
+
+    if not (args.slice_before and args.slice_after and args.output):
+        p.error("slice_before, slice_after, and output are required unless --finalise is set")
+
     slice_before_path = Path(args.slice_before)
     slice_after_path = Path(args.slice_after)
     output_path = Path(args.output)
@@ -460,96 +462,48 @@ def main():
     if res_before != res_after:
         print(f"Warning: Resolution mismatch: {res_before} vs {res_after}")
 
-    # Load degraded slice if provided
-    vol_degraded = None
-    if args.degraded_slice is not None:
-        degraded_path = Path(args.degraded_slice)
-        if degraded_path.exists():
-            print(f"Loading degraded slice: {degraded_path}")
-            vol_degraded, _res_degraded = read_omezarr(degraded_path)
-            vol_degraded = np.array(vol_degraded)
-
-            if vol_degraded.shape != vol_before.shape:
-                print(f"Degraded slice shape mismatch: {vol_degraded.shape} vs {vol_before.shape}")
-                # Try to adjust degraded slice to match
-                target_shape = vol_before.shape
-                try:
-                    # Truncate z if needed
-                    if vol_degraded.shape[0] > target_shape[0]:
-                        vol_degraded = vol_degraded[: target_shape[0]]
-                    elif vol_degraded.shape[0] < target_shape[0]:
-                        # Pad z with zeros
-                        padded = np.zeros(target_shape, dtype=vol_degraded.dtype)
-                        padded[: vol_degraded.shape[0]] = vol_degraded
-                        vol_degraded = padded
-
-                    # Handle X/Y mismatch
-                    if vol_degraded.shape[1:] != target_shape[1:]:
-                        padded = np.zeros(target_shape, dtype=vol_degraded.dtype)
-                        min_x = min(vol_degraded.shape[1], target_shape[1])
-                        min_y = min(vol_degraded.shape[2], target_shape[2])
-                        padded[:, :min_x, :min_y] = vol_degraded[:, :min_x, :min_y]
-                        vol_degraded = padded
-
-                    print(f"  Adjusted degraded slice shape to: {vol_degraded.shape}")
-                except Exception as e:
-                    print(f"  Could not adjust degraded slice shape, ignoring: {e}")
-                    vol_degraded = None
-        else:
-            print(f"Warning: Degraded slice not found, proceeding without it: {degraded_path}")
-
     print(f"Volume shape: {vol_before.shape}")
     print(f"Resolution: {res_before}")
     print(f"Method: {args.method}")
 
-    # Perform interpolation
-    if args.method == "registration":
-        print("Performing registration-based interpolation...")
-        interpolated = interpolate_registration_based(
+    diagnostics: dict = {}
+
+    if args.method == "zmorph":
+        print("Performing z-morph interpolation...")
+        interpolated, diagnostics = interpolate_z_morph(
             vol_before,
             vol_after,
             metric=args.registration_metric,
             max_iterations=args.max_iterations,
-            reference_slice=args.reference_slice,
             blend_method=args.blend_method,
             overlap_search_window=args.overlap_search_window,
             min_overlap_correlation=args.min_overlap_correlation,
+            reference_slab_size=args.reference_slab_size,
+            min_foreground_fraction=args.min_foreground_fraction,
+            min_ncc_improvement=args.min_ncc_improvement,
         )
     elif args.method == "average":
         print("Performing simple average interpolation...")
         interpolated = interpolate_average(vol_before, vol_after)
+        diagnostics = {"method": "average", "method_used": "average", "fallback_reason": None}
     elif args.method == "weighted":
         print("Performing weighted average interpolation...")
         interpolated = interpolate_weighted(vol_before, vol_after)
+        diagnostics = {"method": "weighted", "method_used": "weighted", "fallback_reason": None}
     else:
         p.error(f"Unknown method: {args.method}")
 
-    # Blend with degraded slice if available
-    final_result = interpolated
-    quality_weight = None
-    used_degraded = False
-    if vol_degraded is not None:
-        # Determine quality weight
-        if args.degraded_weight is not None:
-            # Manual override
-            quality_weight = args.degraded_weight
-            print(f"Using manual degraded weight: {quality_weight:.3f}")
-        else:
-            # Automatic quality assessment
-            quality_weight, _metrics = assess_degraded_slice_quality(vol_degraded, vol_before, vol_after)
+    failed = interpolated is None or diagnostics.get("interpolation_failed") is True
 
-        # Check if quality is above threshold
-        if quality_weight >= args.min_quality_threshold:
-            print(f"Blending with degraded slice (weight={quality_weight:.3f})")
-            final_result = blend_with_degraded(interpolated, vol_degraded, quality_weight)
-            used_degraded = True
-        else:
-            print(
-                f"Degraded slice quality ({quality_weight:.3f}) below threshold "
-                f"({args.min_quality_threshold}), using pure interpolation"
-            )
+    if failed:
+        print(
+            f"  [interpolation] zmorph could not produce a reliable output "
+            f"(reason={diagnostics.get('fallback_reason')}); emitting no zarr, "
+            f"the slice will be treated as a gap downstream."
+        )
 
-    # Generate preview if requested
+    # Preview is still useful on failure (shows the before/after pair and the
+    # skipped middle slab), so emit it regardless.
     if args.preview is not None:
         print("Generating preview...")
         generate_preview(
@@ -557,25 +511,75 @@ def main():
             vol_after,
             interpolated,
             output_path=args.preview,
-            vol_degraded=vol_degraded,
-            final_result=final_result if used_degraded else None,
             preview_slice=args.preview_slice,
             dpi=args.preview_dpi,
-            degraded_weight=quality_weight,
-            quality_threshold=args.min_quality_threshold,
+            failure_reason=diagnostics.get("fallback_reason") if failed else None,
         )
 
-    # Convert to original dtype if needed
-    original_dtype = vol_before.dtype
-    if np.issubdtype(original_dtype, np.integer):
-        final_result = np.clip(final_result, 0, np.iinfo(original_dtype).max)
-        final_result = final_result.astype(original_dtype)
+    if not failed:
+        final_result = interpolated
+        original_dtype = vol_before.dtype
+        if np.issubdtype(original_dtype, np.integer):
+            final_result = np.clip(final_result, 0, np.iinfo(original_dtype).max)
+            final_result = final_result.astype(original_dtype)
 
-    # Save result
-    print(f"Saving interpolated slice to: {output_path}")
-    save_omezarr(da.from_array(final_result), str(output_path), res_before)
+        print(f"Saving interpolated slice to: {output_path}")
+        save_omezarr(da.from_array(final_result), str(output_path), res_before)
+    else:
+        print("Skipping zarr output — no fabricated data will enter the reconstruction.")
+
+    if args.diagnostics is not None:
+        diagnostics["slice_id"] = args.slice_id
+        diagnostics["slice_before_path"] = str(slice_before_path)
+        diagnostics["slice_after_path"] = str(slice_after_path)
+        diagnostics["output_path"] = None if failed else str(output_path)
+        diagnostics["interpolation_failed"] = bool(failed)
+        diagnostics_path = Path(args.diagnostics)
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        with diagnostics_path.open("w") as fh:
+            json.dump(diagnostics, fh, indent=2, default=_json_default)
+        print(f"Diagnostics saved to: {diagnostics_path}")
+
+    # Manifest records pipeline-relevant flags only — raw metrics live in the
+    # per-slice diagnostics JSON. The `interpolation_failed` column is what
+    # finalise_interpolation uses to decide whether to stamp the slice as
+    # successfully interpolated or as a hard-skip.
+    if args.manifest_entry is not None:
+        manifest_path = Path(args.manifest_entry)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "slice_id": args.slice_id or "",
+            "method": diagnostics.get("method", args.method),
+            "method_used": "" if failed else (diagnostics.get("method_used") or args.method),
+            "fallback_reason": diagnostics.get("fallback_reason") or "",
+            "interpolation_failed": "true" if failed else "false",
+            "output_path": "" if failed else str(output_path),
+        }
+        header = ",".join(row.keys())
+        values = ",".join(_csv_escape(v) for v in row.values())
+        with manifest_path.open("w") as fh:
+            fh.write(header + "\n")
+            fh.write(values + "\n")
+        print(f"Manifest entry saved to: {manifest_path}")
 
     print("Done!")
+
+
+def _json_default(obj):
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return str(obj)
+
+
+def _csv_escape(value) -> str:
+    s = "" if value is None else str(value)
+    if "," in s or '"' in s or "\n" in s:
+        s = '"' + s.replace('"', '""') + '"'
+    return s
 
 
 if __name__ == "__main__":

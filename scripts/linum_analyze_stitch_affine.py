@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import read_omezarr
 from linumpy.stitching.motor import compute_registration_refinements, estimate_affine_from_pairs
 
@@ -109,16 +110,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _extract_slice_id(path: Path) -> str:
     match = _SLICE_RE.search(path.name)
     return match.group(1) if match else "unknown"
-
-
-def _load_slice_config(slice_config_path: Path) -> set[str]:
-    used: set[str] = set()
-    with slice_config_path.open() as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            if str(row.get("use", "")).strip().lower() in {"true", "1", "yes"}:
-                used.add(row["slice_id"].strip().zfill(2))
-    return used
 
 
 def _serialize_pairs(pairs: list[dict]) -> list[dict]:
@@ -246,7 +237,7 @@ def main() -> int:
         slice_config_path = Path(args.slice_config)
         if not slice_config_path.exists():
             parser.error(f"slice_config.csv not found: {slice_config_path}")
-        used_slices = _load_slice_config(slice_config_path)
+        used_slices = slice_config_io.filter_slices_to_use(slice_config_path)
         logger.info("slice_config: %d slices marked as use=true", len(used_slices))
 
     json_dir = Path(args.json_dir) if args.json_dir else None

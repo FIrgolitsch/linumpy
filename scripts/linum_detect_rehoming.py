@@ -50,6 +50,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.shifts.utils import correct_tile_offset_shifts, filter_outlier_shifts
 from linumpy.utils.io import add_overwrite_arg, assert_output_exists
 
@@ -106,6 +107,20 @@ def _build_arg_parser():
         metavar="DIR",
         default=None,
         help="If provided, write a JSON report and PNG plot of corrected spikes to this directory.",
+    )
+    p.add_argument(
+        "--slice_config_in",
+        metavar="SLICE_CONFIG_CSV",
+        default=None,
+        help="Optional slice_config.csv to stamp with rehoming flags.",
+    )
+    p.add_argument(
+        "--slice_config_out",
+        metavar="SLICE_CONFIG_CSV",
+        default=None,
+        help="Output slice_config.csv path (requires --slice_config_in). "
+        "Each transition's moving_id slice is stamped with "
+        "rehomed=true/false and rehoming_reliable=0/1.",
     )
     add_overwrite_arg(p)
     return p
@@ -234,6 +249,33 @@ def _save_diagnostics(
         print("  matplotlib not available — skipping plot.")
 
 
+def _stamp_slice_config(
+    path_in: Path,
+    path_out: Path,
+    shifts_after: pd.DataFrame,
+    spike_indices: list,
+    tile_indices: list,
+) -> None:
+    """Stamp per-slice rehoming flags into ``slice_config.csv``.
+
+    A slice is ``rehomed`` when its arriving transition (``moving_id == slice``)
+    was corrected by either pass (spike or tile-offset); it is
+    ``rehoming_reliable=1`` when that transition's corrected motor step is
+    small enough (``reliable=1`` in the shifts file), else 0.
+    """
+    corrected = set(spike_indices) | set(tile_indices)
+    updates: dict[str, dict[str, object]] = {}
+    for idx, row in shifts_after.iterrows():
+        sid = slice_config_io.normalize_slice_id(int(row["moving_id"]))
+        reliable = int(row["reliable"]) if "reliable" in row else 1
+        updates[sid] = {
+            "rehomed": idx in corrected,
+            "rehoming_reliable": reliable,
+        }
+    slice_config_io.stamp_many(path_in, path_out, updates)
+    print(f"Slice-config updates written to {path_out}")
+
+
 def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -323,6 +365,17 @@ def main():
 
     shifts_after.to_csv(args.out_shifts, index=False)
     print(f"Corrected shifts written to {args.out_shifts}")
+
+    if args.slice_config_out:
+        if not args.slice_config_in:
+            parser.error("--slice_config_out requires --slice_config_in")
+        _stamp_slice_config(
+            Path(args.slice_config_in),
+            Path(args.slice_config_out),
+            shifts_after=shifts_after,
+            spike_indices=corrected_indices,
+            tile_indices=tile_corrected_indices,
+        )
 
     if args.diagnostics:
         _save_diagnostics(

@@ -1,3 +1,4 @@
+from . import slice_config as slice_config
 from .allen import *  # noqa: F403
 from .data_io import *  # noqa: F403
 from .npz import (

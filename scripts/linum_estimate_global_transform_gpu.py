@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
+from linumpy.io import slice_config as slice_config_io
 from linumpy.stitching.motor import pool_pairs_and_fit_global_affine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -38,18 +39,6 @@ def _extract_slice_id(path: Path) -> str:
     return match.group(1) if match else path.stem
 
 
-def _load_slice_config(slice_config_path: Path) -> set[str]:
-    import csv
-
-    used: set[str] = set()
-    with slice_config_path.open() as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            if str(row.get("use", "")).strip().lower() in {"true", "1", "yes"}:
-                used.add(row["slice_id"].strip().zfill(2))
-    return used
-
-
 def _discover_volumes(
     input_dir: Path,
     pattern: str,
@@ -59,7 +48,7 @@ def _discover_volumes(
     zarr_paths = sorted(input_dir.glob(pattern))
     allowed: set[str] | None = None
     if slice_config_path is not None:
-        allowed = _load_slice_config(slice_config_path)
+        allowed = slice_config_io.filter_slices_to_use(slice_config_path)
         logger.info("slice_config: %d slices marked use=true", len(allowed))
     if explicit_ids is not None:
         explicit_set = {sid.strip().zfill(2) for sid in explicit_ids}

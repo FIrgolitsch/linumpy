@@ -218,6 +218,23 @@ def main():
     # Save offsets
     np.savetxt(str(out_dir / args.out_offsets), np.array([best_z, args.moving_z_index]), fmt="%d")
 
+    # Detect interpolated neighbours. Registrations where either volume is a
+    # synthetic (interpolated) slice produce unreliable rotation/translation
+    # because one side of the pair is a blend of non-overlapping tissue. We
+    # still run the registration (so a .tfm exists), but force the metrics
+    # into the "error" status so the downstream stacking gate
+    # (skip_error_status in linum_stack_slices_motor.py) discards the
+    # transform and falls back to motor-only positioning for that slice.
+    fixed_is_interpolated = "_interpolated" in Path(args.in_fixed).name
+    moving_is_interpolated = "_interpolated" in Path(args.in_moving).name
+    touches_interpolated = fixed_is_interpolated or moving_is_interpolated
+    if touches_interpolated:
+        logger.warning(
+            "Registration involves an interpolated slice "
+            f"(fixed={fixed_is_interpolated}, moving={moving_is_interpolated}); "
+            "marking transform as unreliable."
+        )
+
     # Collect metrics using standard collector
     collect_pairwise_registration_metrics(
         registration_error=float(metric) if metric != float("inf") else 0.0,
@@ -238,8 +255,27 @@ def main():
             "max_translation_px": args.max_translation_px,
             "z_correlation": float(z_correlation),
             "z_deviation": int(z_deviation),
+            "fixed_is_interpolated": bool(fixed_is_interpolated),
+            "moving_is_interpolated": bool(moving_is_interpolated),
         },
     )
+
+    if touches_interpolated:
+        # Re-save the metrics JSON with a forced error status so
+        # stack_slices_motor discards this transform via skip_error_status.
+        import json
+
+        metrics_file = out_dir / "pairwise_registration_metrics.json"
+        if metrics_file.exists():
+            with metrics_file.open() as f:
+                data = json.load(f)
+            data["overall_status"] = "error"
+            data.setdefault("errors", []).append("One or both inputs are an interpolated slice; transform is synthetic.")
+            if "registration_confidence" in data.get("metrics", {}):
+                data["metrics"]["registration_confidence"]["value"] = 0.0
+                data["metrics"]["registration_confidence"]["status"] = "error"
+            with metrics_file.open("w") as f:
+                json.dump(data, f, indent=2)
 
     logger.info(f"Results saved to {out_dir}")
 

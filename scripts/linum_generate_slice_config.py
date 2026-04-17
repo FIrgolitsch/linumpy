@@ -40,6 +40,7 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.microscope.oct import OCT
 from linumpy.preproc.xyzcorr import detect_galvo_for_slice
 from linumpy.reconstruction import get_tiles_ids
@@ -188,38 +189,32 @@ def write_slice_config(
     if first_slice_excludes is None:
         first_slice_excludes = []
 
-    with Path(output_file).open("w", newline="") as f:
-        writer = csv.writer(f)
+    rows: list[dict[str, object]] = []
+    for slice_id in slice_ids:
+        use = "false" if slice_id in exclude_ids else "true"
+        note = "calibration_slice" if slice_id in first_slice_excludes else ""
 
-        # Header depends on whether galvo detection was run
-        if galvo_results:
-            writer.writerow(["slice_id", "use", "galvo_confidence", "galvo_fix", "notes"])
-        else:
-            writer.writerow(["slice_id", "use", "notes"])
-
-        for slice_id in slice_ids:
-            use = "false" if slice_id in exclude_ids else "true"
-
-            # Determine exclusion reason
-            note = ""
-            if slice_id in first_slice_excludes:
-                note = "calibration_slice"
-
-            if galvo_results and slice_id in galvo_results:
-                galvo = galvo_results[slice_id]
-                confidence = f"{galvo['confidence']:.3f}"
-                would_fix = "true" if galvo.get("would_fix", False) else "false"
-                # Combine notes
+        row: dict[str, object] = {"slice_id": f"{slice_id:02d}", "use": use}
+        if galvo_results is not None:
+            galvo = galvo_results.get(slice_id)
+            if galvo is not None:
+                row["galvo_confidence"] = f"{galvo['confidence']:.3f}"
+                row["galvo_fix"] = "true" if galvo.get("would_fix", False) else "false"
                 galvo_note = galvo.get("error", "")
                 if galvo_note and note:
                     note = f"{note}; {galvo_note}"
                 elif galvo_note:
                     note = galvo_note
-                writer.writerow([f"{slice_id:02d}", use, confidence, would_fix, note])
-            elif galvo_results:
-                writer.writerow([f"{slice_id:02d}", use, "0.000", "false", note or "not_analyzed"])
             else:
-                writer.writerow([f"{slice_id:02d}", use, note])
+                row["galvo_confidence"] = "0.000"
+                row["galvo_fix"] = "false"
+                if not note:
+                    note = "not_analyzed"
+        if note:
+            row["notes"] = note
+        rows.append(row)
+
+    slice_config_io.write(output_file, rows)
 
 
 def main():

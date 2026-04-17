@@ -388,15 +388,22 @@ best_overlap, best_corr = find_z_overlap(
 
 ### interpolation.py - Missing Slice Interpolation
 
-Compute the affine transform halfway between two images for morphing-based slice interpolation.
+Z-aware morphing interpolation for missing serial sections. The primary entry
+point is `interpolate_z_morph(vol_before, vol_after)`, which warps the two
+boundary planes via fractional affine transforms (`T**alpha`) and cross-fades
+them. Falls back to `interpolate_weighted` when quality gates fail.
 
 ```python
-from linumpy.stitching.interpolation import compute_half_affine_transform
+from linumpy.stitching.interpolation import interpolate_z_morph
 
-half_transform = compute_half_affine_transform(full_transform)
-# full_transform: sitk.Transform from image A to image B
-# Returns: sitk.AffineTransform representing half the transformation
+volume, diagnostics = interpolate_z_morph(vol_before, vol_after)
+# vol_before, vol_after: 3D neighbours on either side of a gap, shape (Z, Y, X)
+# Returns: interpolated volume (shape matching min(nz_before, nz_after), H, W)
+#          and a JSON-serialisable diagnostics dict (method_used, pre/post
+#          NCC, affine_determinant, fallback_reason, ...).
 ```
+
+See `docs/SLICE_INTERPOLATION_FEATURE.md` for the physical model.
 
 ### manual_registration.py - Manual Registration
 

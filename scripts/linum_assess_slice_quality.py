@@ -33,7 +33,6 @@ Example usage:
 import linumpy._thread_config  # noqa: F401
 
 import argparse
-import csv
 import re
 from pathlib import Path
 from typing import Any
@@ -41,6 +40,7 @@ from typing import Any
 import numpy as np
 from tqdm.auto import tqdm
 
+from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import read_omezarr
 from linumpy.utils.image_quality import (
     assess_slice_quality,
@@ -143,14 +143,9 @@ def get_mosaic_files(directory: Path) -> dict[int, Path]:
 
 
 def read_existing_config(config_path: Path) -> dict[int, dict[str, Any]]:
-    """Read an existing slice configuration file."""
-    config = {}
-    with Path(config_path).open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            slice_id = int(row["slice_id"])
-            config[slice_id] = dict(row)
-    return config
+    """Read an existing slice configuration file keyed by integer ``slice_id``."""
+    rows = slice_config_io.read(config_path)
+    return {int(sid): dict(row) for sid, row in rows.items()}
 
 
 def write_slice_config_with_quality(
@@ -160,68 +155,50 @@ def write_slice_config_with_quality(
     exclude_ids: list[int],
     existing_config: dict[int, dict[str, Any]] | None = None,
 ):
-    """Write the slice configuration file with quality metrics."""
-    with Path(output_file).open("w", newline="") as f:
-        writer = csv.writer(f)
+    """Write ``slice_config.csv`` with the decision columns set from the quality
+    assessment. Raw per-metric scores (ssim_mean / edge_score / variance_score /
+    depth) intentionally stay out of the CSV — they live in the pipeline report
+    and per-stage diagnostics JSON, not in the per-slice decision trace.
+    """
+    out_rows: list[dict[str, object]] = []
+    for slice_id in slice_ids:
+        quality = quality_results.get(slice_id, {})
+        use = "true"
+        reason = ""
+        if slice_id in exclude_ids:
+            use = "false"
+            if quality.get("is_calibration", False):
+                reason = "calibration_slice"
+            elif quality.get("overall", 1.0) < quality.get("min_threshold", 0):
+                reason = "low_quality"
+            elif quality.get("exclude_first", False):
+                reason = "first_slice_excluded"
+            else:
+                reason = "manually_excluded"
 
-        header = ["slice_id", "use", "quality_score", "ssim_mean", "edge_score", "variance_score", "depth", "exclude_reason"]
+        existing = existing_config.get(slice_id, {}) if existing_config else {}
+        if existing.get("use", "true").lower() in ["false", "0", "no"]:
+            use = "false"
+            if not reason:
+                reason = existing.get("exclude_reason") or existing.get("notes") or "previously_excluded"
 
-        # Add galvo columns if present in existing config
-        has_galvo = False
-        if existing_config:
-            sample = next(iter(existing_config.values()), {})
-            if "galvo_confidence" in sample:
-                has_galvo = True
-                header.insert(3, "galvo_confidence")
-                header.insert(4, "galvo_fix")
+        row: dict[str, object] = {
+            "slice_id": f"{slice_id:02d}",
+            "use": use,
+            "quality_score": f"{float(quality.get('overall', 0.0)):.3f}",
+            "exclude_reason": reason,
+        }
+        if existing.get("galvo_confidence", ""):
+            row["galvo_confidence"] = existing["galvo_confidence"]
+        if existing.get("galvo_fix", ""):
+            row["galvo_fix"] = existing["galvo_fix"]
+        for carry in ("notes",):
+            val = existing.get(carry)
+            if val:
+                row[carry] = val
+        out_rows.append(row)
 
-        writer.writerow(header)
-
-        for slice_id in slice_ids:
-            quality = quality_results.get(slice_id, {})
-
-            use = "true"
-            reason = ""
-
-            if slice_id in exclude_ids:
-                use = "false"
-                if quality.get("is_calibration", False):
-                    reason = "calibration_slice"
-                elif quality.get("overall", 1.0) < quality.get("min_threshold", 0):
-                    reason = "low_quality"
-                elif quality.get("exclude_first", False):
-                    reason = "first_slice_excluded"
-                else:
-                    reason = "manually_excluded"
-
-            # Preserve existing use status if updating
-            if existing_config and slice_id in existing_config:
-                existing = existing_config[slice_id]
-                if existing.get("use", "true").lower() in ["false", "0", "no"]:
-                    use = "false"
-                    if not reason:
-                        reason = existing.get("notes", existing.get("exclude_reason", "previously_excluded"))
-
-            row = [
-                f"{slice_id:02d}",
-                use,
-                f"{quality.get('overall', 0.0):.3f}",
-                f"{quality.get('ssim_mean', 0.0):.3f}",
-                f"{quality.get('edge_score', 0.0):.3f}",
-                f"{quality.get('variance_score', 0.0):.3f}",
-                str(quality.get("depth", 0)),
-                reason,
-            ]
-
-            # Add galvo columns if present
-            if has_galvo:
-                existing = existing_config.get(slice_id, {}) if existing_config else {}
-                galvo_conf = existing.get("galvo_confidence", "0.000")
-                galvo_fix = existing.get("galvo_fix", "false")
-                row.insert(3, galvo_conf)
-                row.insert(4, galvo_fix)
-
-            writer.writerow(row)
+    slice_config_io.write(output_file, out_rows)
 
 
 def main():
