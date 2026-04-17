@@ -58,9 +58,19 @@ def _build_arg_parser():
     # Refinement
     ref_group = p.add_argument_group("Refinement")
     ref_group.add_argument(
-        "--enable_rotation", action="store_true", default=True, help="Enable rotation correction [%(default)s]"
+        "--enable_rotation",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Enable rotation correction. Use --no-enable_rotation to disable. [%(default)s]",
     )
-    ref_group.add_argument("--no_rotation", dest="enable_rotation", action="store_false")
+    # Legacy alias retained for backward-compatibility with the Nextflow pipeline
+    # (workflows/reconst_3d/soct_3d_reconst.nf still emits --no_rotation).
+    ref_group.add_argument(
+        "--no_rotation",
+        dest="enable_rotation",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
     ref_group.add_argument(
         "--max_rotation_deg", type=float, default=5.0, help="Maximum rotation correction in degrees [%(default)s]"
     )

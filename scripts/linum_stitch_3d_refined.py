@@ -187,14 +187,15 @@ def main():
 
     # Load volume
     logger.info(f"Loading mosaic grid: {input_file}")
-    volume, resolution = read_omezarr(str(input_file), level=0)
-    volume = np.array(volume[:])
-    tile_shape = volume.shape[0], volume.shape[1] // (volume.shape[1] // 75), volume.shape[2] // (volume.shape[2] // 75)
-
-    # Try to get tile shape from chunks
-    vol_dask, _ = read_omezarr(str(input_file), level=0)
-    if hasattr(vol_dask, "chunks"):
-        tile_shape = vol_dask.chunks
+    vol_dask, resolution = read_omezarr(str(input_file), level=0)
+    if not hasattr(vol_dask, "chunks") or vol_dask.chunks is None:
+        raise ValueError(
+            f"Input mosaic {input_file} has no chunk metadata; tile shape "
+            "cannot be determined. Regenerate the zarr with linumpy's OME-Zarr "
+            "writer or pass --tile_shape explicitly."
+        )
+    tile_shape = vol_dask.chunks
+    volume = np.array(vol_dask[:])
 
     logger.info(f"Volume shape: {volume.shape}")
     logger.info(f"Tile shape: {tile_shape}")
