@@ -453,9 +453,10 @@ def save_annotated_views(
         aspect1 = "equal"
         aspect2 = "equal"
 
-    allvals = np.concatenate([image_zy.flatten(), image_zx.flatten()])
-    vmin = float(np.min(allvals))
-    vmax = float(np.percentile(allvals, 99.9))
+    allvals = np.concatenate([image_zy.ravel(), image_zx.ravel()])
+    display_vals = allvals[np.isfinite(allvals) & (allvals > 0)]
+    vmin = 0.0
+    vmax = float(np.percentile(display_vals, 99.9)) if display_vals.size > 0 else 1.0
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 12), facecolor="black")
     for ax in [ax1, ax2]:

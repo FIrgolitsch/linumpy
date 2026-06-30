@@ -220,6 +220,7 @@ def crop_below_interface(
     from linumpy.geometry.interface import detect_interface_z
 
     vol_f = np.abs(vol_zxy) if np.iscomplexobj(vol_zxy) else np.asarray(vol_zxy, dtype=np.float32)
+    vol_f = np.nan_to_num(vol_f, nan=0.0, posinf=0.0, neginf=0.0)
 
     vol_xyz = np.transpose(vol_f, (1, 2, 0))
 
@@ -235,6 +236,6 @@ def crop_below_interface(
     end_idx = surface_idx + depth_px
 
     start_idx = surface_idx if crop_before_interface else 0
-    vol_crop = vol_zxy[start_idx:end_idx, :, :]
+    vol_crop = vol_f[start_idx:end_idx, :, :]
 
     return vol_crop, avg_iface
