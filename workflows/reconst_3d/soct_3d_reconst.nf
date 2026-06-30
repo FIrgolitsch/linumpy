@@ -649,6 +649,9 @@ process fix_illumination_basic {
         : Helpers.gpuPinBlock(params, "fix_illumination_basic slice=${slice_id}")
     """
     ${gpu_pin_block}
+    export TORCHINDUCTOR_CACHE_DIR="\${TORCHINDUCTOR_CACHE_DIR:-\$HOME/.cache/linum-basic/inductor}"
+    export TORCHINDUCTOR_FX_GRAPH_CACHE=1
+    mkdir -p "\$TORCHINDUCTOR_CACHE_DIR"
     linum-fix-illumination-basic ${mosaic_grid} "mosaic_grid_z${slice_id}_illum_fix.ome.zarr" \
         --n_processes ${params.processes} \
         --percentile_max ${params.clip_percentile_upper} ${gpu_flag} --n_levels 0 \

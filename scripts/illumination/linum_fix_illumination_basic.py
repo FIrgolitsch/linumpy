@@ -144,7 +144,19 @@ def main() -> None:
     """Fit and apply a linum-basic illumination correction to a mosaic grid."""
     from linumpy.config.threads import configure_all_libraries
 
+    import os
+
     configure_all_libraries()
+
+    def _noop_fx_graph_cache() -> None:
+        return
+
+    enable_fx_graph_cache_fn = _noop_fx_graph_cache
+    if os.environ.get("LINUM_BASIC_TORCH_CACHE", "1") != "0":
+        from linum_basic._torch_cache import configure_torch_inductor_cache, enable_fx_graph_cache
+
+        configure_torch_inductor_cache()
+        enable_fx_graph_cache_fn = enable_fx_graph_cache
 
     p = _build_arg_parser()
     args = p.parse_args()
@@ -206,6 +218,7 @@ def main() -> None:
         try:
             import torch as _torch
 
+            enable_fx_graph_cache_fn()
             if _torch.cuda.is_available():
                 backend = "torch"
                 device = "cuda"
