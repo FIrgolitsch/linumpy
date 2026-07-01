@@ -643,8 +643,8 @@ process fix_illumination_basic {
     def darkfield_flag = params.fix_illum_darkfield ? "--use_darkfield" : "--no-use_darkfield"
     def tile_fov_flag = params.tile_fov_mm != null ? "--tile_fov_mm ${params.tile_fov_mm}" : ""
     def per_z_fit_flag = params.fix_illum_per_z_fit ? "--per_z_fit" : "--no-per_z_fit"
-    def max_forks = params.use_gpu ? (params.gpu_count as int) : 0
-    def gpu_pin_block = (max_forks > 1)
+    // D-14: pin one GPU per fork when not in multi-GPU z-fan mode (compile-time params; avoids maxForks closure compare)
+    def gpu_pin_block = (params.use_gpu && !params.fix_illum_multi_gpu && ((params.gpu_count as int) > 1))
         ? Helpers.gpuPinBlock(params, "fix_illumination_basic slice=${slice_id}")
         : Helpers.gpuExposeAllBlock(params, "fix_illumination_basic slice=${slice_id}")
     """
