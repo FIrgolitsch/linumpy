@@ -186,16 +186,21 @@ def save_omezarr(
     """
     n_levels = validate_n_levels(n_levels, data.shape)
 
-    # axes and coordinate transformations (c, z, y, x order)
+    # axes and physical scale (c, z, y, x order)
     ndims = len(data.shape)
     axes = generate_axes_dict(ndims)
-    coordinate_transformations = create_transformation_dict(n_levels + 1, voxel_size=voxel_size, ndims=ndims)
 
     # ome-zarr's default ``scale_factors`` (e.g. ``(2, 4, 8, 16)``) applies
     # downsampling only to spatial axes *except z*. linumpy datasets are
     # acquired with isotropic-ish voxel sizes, so we want true 3D downsampling
     # at every level. Build the per-level dict explicitly.
     spatial_axes = [a["name"] for a in axes if a.get("type") == "space"]
+    voxel_size_seq = tuple(float(v) for v in voxel_size)
+    if len(voxel_size_seq) != len(spatial_axes):
+        raise ValueError(
+            f"voxel_size length ({len(voxel_size_seq)}) must match spatial axes ({len(spatial_axes)}): {spatial_axes}"
+        )
+    scale = dict(zip(spatial_axes, voxel_size_seq, strict=True))
     scale_factors: list[dict[str, int]] = [dict.fromkeys(spatial_axes, 2**i) for i in range(1, n_levels + 1)]
 
     # storage_options: one dict per dataset (level0 + n_levels). Each level
@@ -225,7 +230,7 @@ def save_omezarr(
         method=Methods.RESIZE,
         axes=axes,
         storage_options=storage_options,
-        coordinate_transformations=coordinate_transformations,
+        scale=scale,
         compute=True,
         metadata=metadata,
     )
