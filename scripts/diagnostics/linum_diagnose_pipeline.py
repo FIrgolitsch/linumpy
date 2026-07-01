@@ -18,6 +18,9 @@ Usage:
     linum_diagnose_pipeline.py --output report.txt  # Save results to file
 """
 
+# Configure thread limits before numpy/scipy imports
+import linumpy.config.threads  # noqa: F401
+
 import argparse
 import glob
 import json

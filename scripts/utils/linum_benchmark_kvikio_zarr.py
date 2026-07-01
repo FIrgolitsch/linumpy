@@ -30,6 +30,9 @@ Generate a 16 GiB random uncompressed zarr v3 on /scratch_nvme and bench::
         --runs 3
 """
 
+# Configure thread limits before numpy/scipy imports
+import linumpy.config.threads  # noqa: F401
+
 import argparse
 import contextlib
 import sys
