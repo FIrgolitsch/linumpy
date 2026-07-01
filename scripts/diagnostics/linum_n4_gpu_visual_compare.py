@@ -6,6 +6,9 @@ N4, and writes a side-by-side PNG (input | CPU corrected | GPU corrected |
 |CPU - GPU|) for documentation.
 """
 
+# Configure thread limits before numpy/scipy imports
+import linumpy.config.threads  # noqa: F401
+
 import argparse
 from pathlib import Path
 

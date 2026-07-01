@@ -16,6 +16,9 @@ Usage on the lab server::
         --live-zarr /scratch/workspace/sub-22/output/01/fix_illumination/mosaic_grid_z01_illum_fix.ome.zarr
 """
 
+# Configure thread limits before numpy/scipy imports
+import linumpy.config.threads  # noqa: F401
+
 import argparse
 import json
 import time
