@@ -6,15 +6,13 @@ host-device round trips when the caller already holds GPU data or when
 the volume is large enough that the transfer cost is amortised.
 """
 
-from typing import Any
-
 import numpy as np
 
 from . import to_cpu
 
 
 def find_tissue_interface_gpu(
-    vol: Any,
+    vol: np.ndarray,
     s_xy: int = 15,
     s_z: int = 2,
     use_log: bool = True,

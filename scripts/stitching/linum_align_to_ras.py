@@ -10,6 +10,7 @@ directly to the zarr file (resampling) or stored in OME-Zarr metadata.
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import json
@@ -967,6 +968,7 @@ def create_orientation_preview(
 
 def main() -> None:
     """Run the script. parse arguments and run alignment workflow."""
+    configure_all_libraries()
     parser = _build_arg_parser()
     args = parser.parse_args()
 

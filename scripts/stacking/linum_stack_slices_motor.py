@@ -15,6 +15,7 @@ the bottom of one slice with the top of the next.
 """
 
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import logging
@@ -486,6 +487,7 @@ def compute_output_shape(_slice_files: Any, cumsum_px: Any, first_vol_shape: Any
 
 def main() -> None:
     """Run function."""
+    configure_all_libraries()
     p = _build_arg_parser()
     args = p.parse_args()
 
@@ -1006,10 +1008,11 @@ def main() -> None:
     # High-confidence registrations (confidence >= confidence_high) are protected.
     confidence_per_slice = {sid: tfm_tuple[3] for sid, tfm_tuple in registration_transforms.items() if tfm_tuple is not None}
     overlaps_before = [m["overlap_voxels"] for m in z_matches]
+    overlaps_arr = np.asarray(overlaps_before, dtype=float)
     logger.info(
         "Z-overlap consistency check: median=%.1f, std=%.1f voxels",
-        np.median(overlaps_before),
-        np.std(overlaps_before),
+        np.median(overlaps_arr),
+        np.std(overlaps_arr),
     )
     z_matches, z_corrections = enforce_z_consistency(
         z_matches,

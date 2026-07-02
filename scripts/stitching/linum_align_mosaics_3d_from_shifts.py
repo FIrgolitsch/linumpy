@@ -10,6 +10,7 @@ When slices are skipped, their shifts are accumulated to maintain proper alignme
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import re
@@ -317,6 +318,7 @@ def _estimate_shift_by_registration(fixed_path: Path, moving_path: Path) -> Any:
 
 def main() -> None:
     """Run function operation."""
+    configure_all_libraries()
     parser = _build_arg_parser()
     args = parser.parse_args()
 

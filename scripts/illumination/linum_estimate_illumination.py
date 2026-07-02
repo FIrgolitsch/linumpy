@@ -4,6 +4,7 @@
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import random
@@ -49,6 +50,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Run function."""
+    configure_all_libraries()
     # Parse arguments
     p = _build_arg_parser()
     args = p.parse_args()
