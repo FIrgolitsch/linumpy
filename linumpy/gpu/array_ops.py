@@ -4,14 +4,12 @@ Provides GPU versions of normalization, clipping, and thresholding.
 Note: Simple reductions (mean, max) should use numpy directly - GPU offers no benefit.
 """
 
-from typing import Any
-
 import numpy as np
 
 from . import GPU_AVAILABLE, to_cpu
 
 
-def normalize_percentile(image: Any, p_low: Any = 1, p_high: Any = 99, use_gpu: Any = True) -> Any:
+def normalize_percentile(image: np.ndarray, p_low: float = 1, p_high: float = 99, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated percentile-based normalization.
 
@@ -53,7 +51,7 @@ def normalize_percentile(image: Any, p_low: Any = 1, p_high: Any = 99, use_gpu: 
         return np.clip(normalized, 0, 1).astype(np.float32)
 
 
-def normalize_minmax(image: Any, use_gpu: Any = True) -> Any:
+def normalize_minmax(image: np.ndarray, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated min-max normalization.
 
@@ -89,7 +87,7 @@ def normalize_minmax(image: Any, use_gpu: Any = True) -> Any:
         return ((image - vmin) / (vmax - vmin)).astype(np.float32)
 
 
-def clip_percentile(image: Any, p_low: Any = 0.5, p_high: Any = 99.5, use_gpu: Any = True) -> Any:
+def clip_percentile(image: np.ndarray, p_low: float = 0.5, p_high: float = 99.5, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated percentile clipping.
 
@@ -124,8 +122,8 @@ def clip_percentile(image: Any, p_low: Any = 0.5, p_high: Any = 99.5, use_gpu: A
 
 
 def compute_percentiles_memory_efficient(
-    image: np.ndarray, percentiles: list, use_gpu: bool = True, max_samples: int = 10_000_000
-) -> list:
+    image: np.ndarray, percentiles: list[float], use_gpu: bool = True, max_samples: int = 10_000_000
+) -> list[float]:
     """
     Compute percentiles using subsampling to reduce memory usage.
 
@@ -228,7 +226,9 @@ def compute_nonzero_percentile_memory_efficient(
     return float(np.percentile(sample, percentile))
 
 
-def apply_flatfield_correction(image: Any, flatfield: Any, darkfield: Any = None, use_gpu: Any = True) -> Any:
+def apply_flatfield_correction(
+    image: np.ndarray, flatfield: np.ndarray, darkfield: np.ndarray | None = None, use_gpu: bool = True
+) -> np.ndarray:
     """
     GPU-accelerated flatfield correction.
 
@@ -281,7 +281,7 @@ def apply_flatfield_correction(image: Any, flatfield: Any, darkfield: Any = None
         return numerator / denominator
 
 
-def compute_std_projection(volume: Any, axis: Any = 0, use_gpu: Any = True) -> Any:
+def compute_std_projection(volume: np.ndarray, axis: int = 0, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated standard deviation projection.
 
@@ -309,7 +309,7 @@ def compute_std_projection(volume: Any, axis: Any = 0, use_gpu: Any = True) -> A
         return np.std(volume, axis=axis)
 
 
-def threshold_otsu(image: Any, use_gpu: Any = True) -> Any:
+def threshold_otsu(image: np.ndarray, use_gpu: bool = True) -> float:
     """
     GPU-accelerated Otsu thresholding.
 
@@ -363,7 +363,7 @@ def threshold_otsu(image: Any, use_gpu: Any = True) -> Any:
         return sk_otsu(image)
 
 
-def apply_xy_shift(image: Any, _reference: Any, dy: Any, dx: Any, use_gpu: Any = True) -> Any:
+def apply_xy_shift(image: np.ndarray, _reference: np.ndarray, dy: float, dx: float, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated XY shift application.
 

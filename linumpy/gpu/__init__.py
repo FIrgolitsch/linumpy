@@ -32,6 +32,9 @@ import os
 import warnings
 from typing import Any
 
+import numpy as np
+from numpy.typing import ArrayLike
+
 # Check for GPU availability
 GPU_AVAILABLE = False
 CUPY_AVAILABLE = False
@@ -142,7 +145,7 @@ def get_array_module(use_gpu: bool = True) -> Any:
         return np
 
 
-def to_gpu(array: Any) -> Any:
+def to_gpu(array: ArrayLike) -> Any:
     """
     Transfer array to GPU if available.
 
@@ -165,7 +168,7 @@ def to_gpu(array: Any) -> Any:
     return array
 
 
-def to_cpu(array: Any) -> Any:
+def to_cpu(array: ArrayLike) -> np.ndarray:
     """
     Transfer array to CPU (numpy).
 
@@ -184,10 +187,10 @@ def to_cpu(array: Any) -> Any:
 
         if isinstance(array, cp.ndarray):
             return cp.asnumpy(array)
-    return array
+    return np.asarray(array)
 
 
-def is_cupy_array(array: Any) -> bool:
+def is_cupy_array(array: ArrayLike) -> bool:
     """Return True iff ``array`` is a CuPy ``ndarray``.
 
     Importing CuPy is gated on availability so this stays cheap to call from
@@ -202,7 +205,7 @@ def is_cupy_array(array: Any) -> bool:
     return isinstance(array, cp.ndarray)
 
 
-def gpu_info() -> Any:
+def gpu_info() -> dict[str, Any]:
     """
     Get information about GPU availability and configuration.
 
@@ -235,7 +238,7 @@ def print_gpu_info() -> None:
     print("=" * 50)
 
 
-def list_gpus() -> Any:
+def list_gpus() -> list[dict[str, int | str | float]]:
     """
     List all available GPUs with memory information.
 
@@ -278,7 +281,7 @@ def list_gpus() -> Any:
     return gpus
 
 
-def select_best_gpu(verbose: bool = True) -> Any:
+def select_best_gpu(verbose: bool = True) -> int | None:
     """
     Select the GPU with the most free memory.
 
@@ -321,7 +324,7 @@ def select_best_gpu(verbose: bool = True) -> Any:
 
     # Find GPU with most free memory
     best_gpu = max(gpus, key=operator.itemgetter("free_gb"))
-    best_id = best_gpu["id"]
+    best_id = int(best_gpu["id"])
 
     # Switch to best GPU
     cp.cuda.Device(best_id).use()
@@ -343,7 +346,7 @@ def select_best_gpu(verbose: bool = True) -> Any:
     return best_id
 
 
-def select_gpu(device_id: int, verbose: bool = True) -> Any:
+def select_gpu(device_id: int, verbose: bool = True) -> int | None:
     """
     Select a specific GPU by device ID.
 

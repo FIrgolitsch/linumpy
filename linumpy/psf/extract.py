@@ -145,4 +145,4 @@ def extract_psf_parameters_from_mosaic(
     zf_final = zf_list[min_err]
     zr_final = zr_list[min_err]
 
-    return zf_final, zr_final
+    return float(zf_final), float(zr_final)

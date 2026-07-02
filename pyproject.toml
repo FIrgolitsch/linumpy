@@ -38,7 +38,7 @@ dependencies = [
     "tqdm",
     "pqdm",
     "hyperactive",
-    "basicpy",
+    "basicpy>=2.0.0,<2.1",
     "linum-basic[viz]",
     "zarr>=3.2.0",
     "ome-zarr>=0.16.0",
@@ -185,9 +185,15 @@ dev = [
 ]
 
 [tool.uv]
-# basicpy 2.0.0 (latest) pins scipy<1.13, which transitively forces numpy<2.
-# Override that ceiling so we can use modern numpy/scipy. basicpy still works
-# at runtime against newer scipy in our usage.
+# BaSiCPy dependency hardening (INFRA-04, D-57/D-60):
+# - basicpy>=2.0.0,<2.1 and torch>=2.12.0,<2.13 are CI-validated ranges (see uv.lock).
+# - basicpy 2.0.0 declares scipy<1.13, which transitively caps numpy at 1.x.
+# - override-dependencies lifts that ceiling so uv resolves modern numpy/scipy
+#   (currently numpy 2.5.x, scipy 1.18.x) that work at runtime in our bias/illumination paths.
+# - linum-basic is sourced from the modernisation git branch (D-59); uv.lock pins the rev.
+constraint-dependencies = [
+    "torch>=2.12.0,<2.13",
+]
 override-dependencies = [
     "scipy",
     "numpy",

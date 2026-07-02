@@ -12,7 +12,7 @@ import numpy as np
 from . import GPU_AVAILABLE, to_cpu
 
 
-def phase_correlation(vol1: Any, vol2: Any, n_peaks: Any = 8, use_gpu: Any = True) -> Any:
+def phase_correlation(vol1: np.ndarray, vol2: np.ndarray, n_peaks: int = 8, use_gpu: bool = True) -> tuple[list[int], float]:
     """
     GPU-accelerated phase correlation for finding translation between images.
 
@@ -213,7 +213,7 @@ def _phase_correlation_cpu(vol1: Any, vol2: Any, n_peaks: Any = 8) -> Any:
     return pair_wise_phase_correlation(vol1, vol2, n_peaks=n_peaks, return_cc=True)
 
 
-def fft2(image: Any, use_gpu: Any = True) -> Any:
+def fft2(image: np.ndarray, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated 2D FFT.
 
@@ -239,7 +239,7 @@ def fft2(image: Any, use_gpu: Any = True) -> Any:
         return np.fft.fft2(image)
 
 
-def ifft2(spectrum: Any, use_gpu: Any = True) -> Any:
+def ifft2(spectrum: np.ndarray, use_gpu: bool = True) -> np.ndarray:
     """
     GPU-accelerated 2D inverse FFT.
 

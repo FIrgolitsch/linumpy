@@ -14,6 +14,7 @@ mismatches in obliquely-cut samples (e.g., 45° between sagittal/coronal).
 """
 
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import json
@@ -406,6 +407,7 @@ def generate_plots(df: Any, output_dir: Path) -> Path:
 
 def main() -> None:
     """Run function."""
+    configure_all_libraries()
     p = _build_arg_parser()
     args = p.parse_args()
 

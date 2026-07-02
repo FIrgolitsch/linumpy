@@ -4,6 +4,7 @@
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 from pathlib import Path
@@ -26,6 +27,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Run the OME-Zarr-to-NIfTI conversion script."""
+    configure_all_libraries()
     # Parse arguments
     p = _build_arg_parser()
     args = p.parse_args()

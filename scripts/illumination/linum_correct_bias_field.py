@@ -16,6 +16,7 @@ fully-corrected result:
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import logging
@@ -201,6 +202,7 @@ def _save(arr: np.ndarray, path: str, res: list, args: argparse.Namespace) -> No
 
 def main() -> None:
     """Run function."""
+    configure_all_libraries()
     parser = _build_arg_parser()
     args = parser.parse_args()
 

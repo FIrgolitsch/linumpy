@@ -17,6 +17,7 @@ Outputs.
 """
 
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import logging
@@ -117,6 +118,7 @@ def normalize(image: Any) -> Any:
 
 def main() -> None:
     """Run the pairwise registration script."""
+    configure_all_libraries()
     p = _build_arg_parser()
     args = p.parse_args()
 

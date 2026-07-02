@@ -33,6 +33,7 @@ the tissue interface (i.e. the output of ``linum_crop_3d_mosaic_below_interface`
 
 # Configure thread limits before numpy/scipy imports
 import linumpy.config.threads  # noqa: F401
+from linumpy.config.threads import configure_all_libraries
 
 import argparse
 from pathlib import Path
@@ -125,6 +126,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Run the in-place attenuation compensation."""
+    configure_all_libraries()
     args = _build_arg_parser().parse_args()
 
     vol_zarr, res = read_omezarr(args.input, level=0)

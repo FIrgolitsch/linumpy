@@ -76,7 +76,6 @@ workflow {
     compress_stack(stack_mosaic.out)
 
     // Convert the stack to .ome_zarr format for visualization
-    // FIXME: this process is not working when running with a docker container
     convert_to_omezarr(stack_mosaic.out)
 
     // Resample the stack to 10 micron resolution
@@ -196,6 +195,10 @@ process stack_mosaic {
     stub:
     """
     mkdir -p stack.zarr
+    cat > stack.zarr/.zarray << 'EOF'
+{"zarr_format":2,"shape":[1,4,4],"chunks":[1,4,4],"dtype":"<f4","fill_value":0.0,"order":"C","filters":null,"dimension_separator":".","compressor":null}
+EOF
+    dd if=/dev/zero of=stack.zarr/0.0.0 bs=64 count=1 2>/dev/null
     """
 }
 
@@ -247,7 +250,9 @@ process convert_to_omezarr {
 
     script:
     """
-    linum-convert-zarr-to-omezarr ${stack} stack.ome_zarr -r ${params.spacing_z} ${params.spacing_xy} ${params.spacing_xy}
+    stack_dir=\$(cd '${stack}' && pwd)
+    converter=\$(command -v linum-convert-zarr-to-omezarr || echo /linumpy/.venv/bin/linum-convert-zarr-to-omezarr)
+    "\${converter}" "\${stack_dir}" stack.ome_zarr -r ${params.spacing_z} ${params.spacing_xy} ${params.spacing_xy}
     """
 
     stub:
