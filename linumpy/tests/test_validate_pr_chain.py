@@ -11,6 +11,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / ".planning" / "scripts" / "validate_pr_chain.py"
 GENERATOR = REPO_ROOT / ".planning" / "scripts" / "generate_pr_chain_inventory.py"
 
+pytestmark = pytest.mark.skipif(
+    not VALIDATOR.is_file(),
+    reason=".planning workspace is local-only (not in CI checkout)",
+)
+
 
 def _load_validator_module():
     spec = importlib.util.spec_from_file_location("validate_pr_chain", VALIDATOR)
