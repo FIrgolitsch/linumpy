@@ -11,6 +11,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / ".planning" / "scripts" / "validate_consistency.py"
 CATALOG_INDEX = REPO_ROOT / ".planning" / "consistency-index.csv"
 
+pytestmark = pytest.mark.skipif(
+    not VALIDATOR.is_file(),
+    reason=".planning workspace is local-only (not in CI checkout)",
+)
+
 requires_planning_catalog = pytest.mark.skipif(
     not CATALOG_INDEX.is_file(),
     reason="consistency-index.csv is local-only planning state (not in CI checkout)",

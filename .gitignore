@@ -221,10 +221,7 @@ docs/api/
 .windsurf/gsd-local-patches/
 .windsurf/gsd-pristine/
 # Planning workspace — everything GSD writes during discuss/plan/execute/verify/ship
-.planning/*
-# PR-chain and consistency validators are tested in CI (see linumpy/tests/test_validate_*.py)
-!.planning/scripts/
-!.planning/scripts/**
+.planning/
 # Generated agent instruction / rules files (repo root)
 /AGENTS.md
 /CLAUDE.md
