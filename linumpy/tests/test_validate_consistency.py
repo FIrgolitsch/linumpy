@@ -9,6 +9,12 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / ".planning" / "scripts" / "validate_consistency.py"
+CATALOG_INDEX = REPO_ROOT / ".planning" / "consistency-index.csv"
+
+requires_planning_catalog = pytest.mark.skipif(
+    not CATALOG_INDEX.is_file(),
+    reason="consistency-index.csv is local-only planning state (not in CI checkout)",
+)
 
 
 def _load_validator_module():
@@ -19,6 +25,7 @@ def _load_validator_module():
     return module
 
 
+@requires_planning_catalog
 @pytest.mark.parametrize("mode", ["structure", "catalog", "gate", "all"])
 def test_validate_consistency_mode_exits_zero(mode: str) -> None:
     """Each validator mode passes after INFRA-01 thread-config fixes."""
@@ -34,6 +41,7 @@ def test_validate_consistency_mode_exits_zero(mode: str) -> None:
     assert f"OK: {mode}" in result.stdout
 
 
+@requires_planning_catalog
 def test_check_gate_passes_when_high_target_phase_6_fixed() -> None:
     """Gate check passes once all HIGH target_phase=6 thread_config rows are fixed."""
     mod = _load_validator_module()
@@ -42,6 +50,7 @@ def test_check_gate_passes_when_high_target_phase_6_fixed() -> None:
     assert not high_phase6, high_phase6
 
 
+@requires_planning_catalog
 def test_validate_consistency_csv_header_matches_schema() -> None:
     """Canonical CSV header matches validator module constant (no schema drift)."""
     mod = _load_validator_module()

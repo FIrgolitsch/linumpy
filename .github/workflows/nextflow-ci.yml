@@ -57,7 +57,7 @@ jobs:
       - name: Run nf-test stub runs
         run: nf-test test --stop-on-first-failure workflows/preproc/tests/ workflows/reconst_3d/tests/ workflows/reconst_2.5d/tests/
 
-  docker-smoke-2.5d:
+  docker-smoke-2-5d:
     runs-on: ubuntu-latest
     permissions:
       contents: read
