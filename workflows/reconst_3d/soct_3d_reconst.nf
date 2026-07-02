@@ -605,6 +605,7 @@ process fix_illumination {
     def darkfield_flag = params.fix_illum_darkfield ? "--use_darkfield" : "--no-use_darkfield"
     def tile_fov_flag = params.tile_fov_mm != null ? "--tile_fov_mm ${params.tile_fov_mm}" : ""
     def per_z_fit_flag = params.fix_illum_per_z_fit ? "--per_z_fit" : "--no-per_z_fit"
+    def smoothness_flatfield_flag = params.fix_illum_smoothness_flatfield != null ? "--smoothness_flatfield ${params.fix_illum_smoothness_flatfield}" : ""
     """
     linum-fix-illumination-3d ${mosaic_grid} "mosaic_grid_z${slice_id}_illum_fix.ome.zarr" \
         --n_processes ${params.processes} \
@@ -612,7 +613,7 @@ process fix_illumination {
         --fit_max_samples ${params.fix_illum_fit_max_samples} \
         --max_iterations ${params.fix_illum_max_iterations} \
         --darkfield_percentile ${params.fix_illum_darkfield_percentile} \
-        --smoothness_flatfield ${params.fix_illum_smoothness_flatfield} \
+        ${smoothness_flatfield_flag} \
         ${tile_fov_flag} \
         ${darkfield_flag} \
         ${per_z_fit_flag}
@@ -643,6 +644,7 @@ process fix_illumination_basic {
     def darkfield_flag = params.fix_illum_darkfield ? "--use_darkfield" : "--no-use_darkfield"
     def tile_fov_flag = params.tile_fov_mm != null ? "--tile_fov_mm ${params.tile_fov_mm}" : ""
     def per_z_fit_flag = params.fix_illum_per_z_fit ? "--per_z_fit" : "--no-per_z_fit"
+    def smoothness_flatfield_flag = params.fix_illum_smoothness_flatfield != null ? "--smoothness_flatfield ${params.fix_illum_smoothness_flatfield}" : ""
     // D-14: pin one GPU per fork when not in multi-GPU z-fan mode (compile-time params; avoids maxForks closure compare)
     def gpu_pin_block = (params.use_gpu && !params.fix_illum_multi_gpu && ((params.gpu_count as int) > 1))
         ? Helpers.gpuPinBlock(params, "fix_illumination_basic slice=${slice_id}")
@@ -658,7 +660,7 @@ process fix_illumination_basic {
         --fit_max_samples ${params.fix_illum_fit_max_samples} \
         --max_iterations ${params.fix_illum_max_iterations} \
         --darkfield_percentile ${params.fix_illum_darkfield_percentile} \
-        --smoothness_flatfield ${params.fix_illum_smoothness_flatfield} \
+        ${smoothness_flatfield_flag} \
         ${tile_fov_flag} \
         ${darkfield_flag} \
         ${per_z_fit_flag} \
