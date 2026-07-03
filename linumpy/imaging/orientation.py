@@ -22,7 +22,11 @@ The RAS target orientation maps:
   - output dim 2  ←→  Right (R)
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
+import SimpleITK as sitk
 
 
 def parse_orientation_code(orientation: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -158,3 +162,143 @@ def reorder_resolution(resolution: tuple[float, ...], permutation: tuple[int, ..
         i.e. the resolution now corresponds to the target axis ordering.
     """
     return tuple(resolution[permutation[i]] for i in range(len(permutation)))
+
+
+def sitk_transform_to_affine_matrix(transform: sitk.Transform) -> np.ndarray:
+    """
+    Convert a SimpleITK transform to a 4x4 affine matrix.
+
+    Parameters
+    ----------
+    transform : sitk.Transform
+        SimpleITK Euler3DTransform or AffineTransform.
+
+    Returns
+    -------
+    np.ndarray
+        4x4 affine matrix in (Z, Y, X) coordinate ordering, matching the
+        OME-NGFF axis declaration used by the pipeline.
+    """
+    if isinstance(transform, sitk.Euler3DTransform):
+        center = np.array(transform.GetCenter())
+        params = transform.GetParameters()
+        rx, ry, rz = params[:3]
+        translation = np.array(params[3:6])
+
+        cx, cy, cz = np.cos([rx, ry, rz])
+        sx, sy, sz = np.sin([rx, ry, rz])
+
+        rotation = np.array(
+            [
+                [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+                [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+                [-sy, cy * sx, cy * cx],
+            ]
+        )
+
+        matrix = np.eye(4)
+        matrix[:3, :3] = rotation
+        matrix[:3, 3] = translation + center - rotation @ center
+    elif isinstance(transform, sitk.AffineTransform):
+        rotation = np.array(transform.GetMatrix()).reshape(3, 3)
+        translation = np.array(transform.GetTranslation())
+        center = np.array(transform.GetCenter())
+
+        matrix = np.eye(4)
+        matrix[:3, :3] = rotation
+        matrix[:3, 3] = translation + center - rotation @ center
+    else:
+        raise ValueError(f"Unsupported transform type: {type(transform)}")
+
+    permute = np.array([[0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1]])
+    return permute @ matrix @ permute.T
+
+
+def store_transform_in_metadata(zarr_path: Path, transform: sitk.Transform) -> None:
+    """Store a transform in OME-Zarr metadata as an affine transform."""
+    affine_matrix = sitk_transform_to_affine_matrix(transform)
+    zattrs_path = Path(zarr_path) / ".zattrs"
+
+    if not zattrs_path.exists():
+        raise FileNotFoundError(f".zattrs not found: {zarr_path}")
+
+    with Path(zattrs_path).open(encoding="utf-8") as handle:
+        metadata = json.load(handle)
+
+    affine_transform = {"type": "affine", "affine": affine_matrix.flatten().tolist()}
+
+    multiscales = metadata.get("multiscales", [])
+    if not multiscales:
+        raise ValueError("No multiscales entry found in metadata")
+
+    for dataset in multiscales[0].get("datasets", []):
+        existing = dataset.get("coordinateTransformations", [])
+        dataset["coordinateTransformations"] = [affine_transform, *existing]
+
+    with Path(zattrs_path).open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2)
+
+
+def compute_centered_reference_and_transform(
+    moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: tuple[float, float, float] | None = None
+) -> tuple[sitk.Image, sitk.Transform]:
+    """
+    Compute a centered reference image and the composite transform for resampling.
+
+    Parameters
+    ----------
+    moving_sitk : sitk.Image
+        The input moving image.
+    transform : sitk.Transform
+        Transform to apply (moving -> fixed/RAS space).
+    output_spacing : tuple of float, optional
+        Output voxel spacing. If None, uses the moving image spacing.
+
+    Returns
+    -------
+    tuple[sitk.Image, sitk.Transform]
+        Reference image with origin at 0 and the composite transform that maps
+        output coordinates back into the moving image.
+    """
+    if output_spacing is None:
+        output_spacing = moving_sitk.GetSpacing()
+
+    size = moving_sitk.GetSize()
+    corners = [
+        (0, 0, 0),
+        (size[0] - 1, 0, 0),
+        (0, size[1] - 1, 0),
+        (0, 0, size[2] - 1),
+        (size[0] - 1, size[1] - 1, 0),
+        (size[0] - 1, 0, size[2] - 1),
+        (0, size[1] - 1, size[2] - 1),
+        (size[0] - 1, size[1] - 1, size[2] - 1),
+    ]
+
+    inverse_transform = transform.GetInverse()
+    transformed_points = []
+    for idx in corners:
+        point = moving_sitk.TransformContinuousIndexToPhysicalPoint(idx)
+        transformed_points.append(inverse_transform.TransformPoint(point))
+
+    points = np.array(transformed_points)
+    points_min = points.min(axis=0)
+    points_max = points.max(axis=0)
+
+    spacing = np.array(output_spacing)
+    extent = points_max - points_min
+    new_size = np.ceil(extent / spacing).astype(int)
+
+    reference = sitk.Image([int(axis_size) for axis_size in new_size], moving_sitk.GetPixelIDValue())
+    reference.SetSpacing(tuple(spacing))
+    reference.SetOrigin((0.0, 0.0, 0.0))
+    reference.SetDirection((1, 0, 0, 0, 1, 0, 0, 0, 1))
+
+    shift_transform = sitk.TranslationTransform(3)
+    shift_transform.SetOffset(tuple(points_min))
+
+    composite = sitk.CompositeTransform(3)
+    composite.AddTransform(transform)
+    composite.AddTransform(shift_transform)
+
+    return reference, composite

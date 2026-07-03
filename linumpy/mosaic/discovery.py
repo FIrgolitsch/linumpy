@@ -92,7 +92,7 @@ def get_mosaic_info(directory: Path, z: int, overlap_fraction: float = 0.2, use_
             x_mm = oct_tile.dimension[0] * (1 - overlap_fraction) * mx
             y_mm = oct_tile.dimension[1] * (1 - overlap_fraction) * my
 
-        x_px = int(np.floor(x_mm / oct_tile.resolution[0]))
+        x_px = int(np.floor(x_mm / oct_tile.resolution[2]))
         y_px = int(np.floor(y_mm / oct_tile.resolution[1]))
 
         mosaic_tile_pos.append((mx, my))
