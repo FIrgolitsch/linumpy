@@ -4,6 +4,11 @@ Cheat sheet for tuning the 3D reconstruction pipeline. Assumes you know what
 the stages do. For background and recipes, see the full {doc}`Reconstruction
 Parameter Tuning Guide <RECONSTRUCTION_TUNING>`.
 
+Setting up a new subject from scratch? Start with
+{doc}`Subject-Specific Reconstruction Tuning <SUBJECT_TUNING>` — the
+step-by-step workflow (template → `linum-suggest-params` → upstream gates
+1-5 → downstream tuning) this cheat sheet supports.
+
 ---
 
 ## Profiles first

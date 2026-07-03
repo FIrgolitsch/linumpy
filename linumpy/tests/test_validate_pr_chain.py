@@ -36,7 +36,7 @@ def _load_generator_module():
 
 def _header_order_body(order: tuple[int, ...]) -> str:
     order_str = " → ".join(f"#{n}" for n in order)
-    return f"> **Stacked PR 1/24 — review order:** {order_str}\n\n---\n"
+    return f"> **Stacked PR 1/25 — review order:** {order_str}\n\n---\n"
 
 
 def _consistent_open_prs() -> list[dict[str, str | int]]:
@@ -441,12 +441,12 @@ def test_header_consensus_blocks_on_wrong_open_pr_count() -> None:
     gen = _load_generator_module()
     open_prs = [pr for pr in _consistent_open_prs() if pr["number"] not in gen.PASS_THROUGH_PRS]
     open_prs.append(dict(open_prs[0]))
-    with pytest.raises(SystemExit, match="BLOCKING: expected 20 open PRs, got 21"):
+    with pytest.raises(SystemExit, match="BLOCKING: expected 21 open PRs, got 22"):
         gen.validate_header_consensus(open_prs)
 
 
 def test_header_consensus_accepts_pass_through_closed_slots() -> None:
-    """validate_header_consensus allows 20 open PRs when 4 pass-through slots are CLOSED on GitHub."""
+    """validate_header_consensus allows 21 open PRs when 4 pass-through slots are CLOSED on GitHub."""
     gen = _load_generator_module()
     open_prs = [pr for pr in _consistent_open_prs() if pr["number"] not in gen.PASS_THROUGH_PRS]
     assert len(open_prs) == len(gen.CANONICAL_OPEN_PR_ORDER) - len(gen.PASS_THROUGH_PRS)
