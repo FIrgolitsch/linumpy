@@ -116,6 +116,7 @@ def find_tissue_interface(
     mask: np.ndarray | None = None,
     order: int = 1,
     detect_cutting_errors: bool = False,
+    use_gpu: bool = False,
 ) -> np.ndarray:
     """Detect the tissue interface.
 
@@ -135,6 +136,9 @@ def find_tissue_interface(
         Gaussian filter order.
     detect_cutting_errors : bool
         If True, detect and correct cutting artefacts.
+    use_gpu : bool
+        If True, use the GPU implementation when CuPy is available.
+        Ignored when ``mask`` is provided (the mask path stays on CPU).
 
     Returns
     -------
@@ -142,6 +146,21 @@ def find_tissue_interface(
         Tissue interface depth
 
     """
+    if use_gpu and mask is None:
+        from linumpy.gpu import GPU_AVAILABLE
+
+        if GPU_AVAILABLE:
+            from linumpy.gpu.interface import find_tissue_interface_gpu
+
+            return find_tissue_interface_gpu(
+                vol,
+                s_xy=s_xy,
+                s_z=s_z,
+                use_log=use_log,
+                order=order,
+                detect_cutting_errors=detect_cutting_errors,
+            )
+
     if use_log:
         vol_p = np.copy(vol)
         vol_p[vol > 0] = np.log(vol[vol > 0])
@@ -475,7 +494,13 @@ def estimate_lh_profile_parameters(
     return z0, dz, I0, Ib, sigma
 
 
-def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 2.0, use_log: bool = False) -> int:
+def detect_interface_z(
+    vol: np.ndarray,
+    sigma_xy: float = 3.0,
+    sigma_z: float = 2.0,
+    use_log: bool = False,
+    max_depth_fraction: float = 0.5,
+) -> int:
     """Detect water/tissue interface along Z using gradient-based method.
 
     Applies Gaussian smoothing then finds the peak of the first-order
@@ -484,13 +509,19 @@ def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 
     Parameters
     ----------
     vol : np.ndarray
-        Volume with shape (X, Y, Z) — already transposed from OME-Zarr (Z, X, Y).
+        Volume with shape (X, Y, Z) -- already transposed from OME-Zarr (Z, X, Y).
     sigma_xy : float
         Gaussian smoothing sigma in XY before Z-gradient.
     sigma_z : float
         Gaussian smoothing sigma for Z-gradient computation.
     use_log : bool
         Apply log transform before gradient detection.
+    max_depth_fraction : float
+        Restrict the argmax search to the first ``max_depth_fraction`` of the
+        Z axis (0 < value <= 1.0).  In OCT the tissue/water interface is always
+        near the top of the A-scan; this prevents spurious detections near the
+        bottom caused by imaging artifacts or processing side-effects.
+        Default 0.5 (first half of the volume).
 
     Returns
     -------
@@ -513,5 +544,12 @@ def detect_interface_z(vol: np.ndarray, sigma_xy: float = 3.0, sigma_z: float = 
     else:
         avg_dz = np.sum(dz, axis=(0, 1))
 
-    avg_iface = max(int(np.argmax(avg_dz)) - pad_width, 0)
+    # Restrict search to the first max_depth_fraction of the original volume
+    # depth.  avg_dz has length (vol_depth + pad_width); the first pad_width
+    # samples correspond to the left-edge padding region.
+    vol_depth = vol.shape[2]
+    search_end = pad_width + max(1, int(vol_depth * max_depth_fraction))
+    search_end = min(search_end, len(avg_dz))
+
+    avg_iface = max(int(np.argmax(avg_dz[:search_end])) - pad_width, 0)
     return avg_iface
