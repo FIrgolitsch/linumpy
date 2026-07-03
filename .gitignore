@@ -3,7 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-AGENTS.md
 
 # C extensions
 *.so
@@ -216,7 +215,6 @@ docs/api/
 # === OpenGSD (gsd-core) — keep GSD-produced files out of git ===
 # Copilot local install (under .github/ — do NOT ignore .github/workflows/)
 .github/skills/
-.github/agents/
 .github/gsd-core/
 .github/copilot-instructions.md
 .github/gsd-file-manifest.json
@@ -235,7 +233,6 @@ docs/api/
 .planning/
 .planning/tmp/
 # Generated agent instruction / rules files (repo root)
-/AGENTS.md
 /CLAUDE.md
 /GEMINI.md
 # Graphify working copy (canonical graph lives under .planning/graphs/)
