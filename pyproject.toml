@@ -176,6 +176,17 @@ filterwarnings = [
     "ignore:linum_stack_slices_3d.py is deprecated:DeprecationWarning",
 ]
 
+# --- Coverage (D-101) ---
+# Coverage scope decision (Plan 07.1-07 Task 0, option include-gpu-cpu-fallback):
+# linumpy/gpu/ is INCLUDED in the 70% target. CPU-fallback/mock-CuPy tests are
+# written for GPU modules where feasible (extending the bspline.py/n4.py pattern);
+# actual CUDA execution is verified manually on the GPU server, not via CI.
+# Plan 12 (pr-ci-guardrails) carries this same section to origin/main so local
+# runs and CI agree on the measurement scope (T-07.1-23 mitigation).
+[tool.coverage.run]
+source = ["linumpy"]
+omit = ["linumpy/tests/*"]
+
 [tool.setuptools.packages.find]
 include = ["linumpy*", "scripts*"]
 
