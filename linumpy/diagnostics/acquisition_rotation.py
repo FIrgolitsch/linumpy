@@ -1,7 +1,7 @@
 """Core logic for analyzing acquisition rotation patterns from shifts_xy.csv.
 
 Extracted from ``scripts/diagnostics/linum_analyze_acquisition_rotation.py``
-(D-83/D-84/D-86). See that script's module docstring for the acquisition
+. See that script's module docstring for the acquisition
 rotation background (systematic drift, oscillation, sudden jumps).
 """
 
