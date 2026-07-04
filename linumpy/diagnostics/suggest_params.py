@@ -1,6 +1,6 @@
 """Core logic for suggesting reconstruction pipeline parameters from raw acquisition files.
 
-Extracted from ``scripts/diagnostics/linum_suggest_params.py`` (D-83/D-84/D-86).
+Extracted from ``scripts/diagnostics/linum_suggest_params.py`` .
 See that script's module docstring for the full parameter-estimation reference
 (estimable parameters, raw/cleaned data directory layouts).
 """
