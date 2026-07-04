@@ -5,13 +5,13 @@ from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
-import scipy.ndimage.morphology as morpho
 import scipy.optimize
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, binary_erosion, gaussian_filter
 from skimage.morphology import ball, disk
 from tqdm import tqdm
 
 from linumpy.geometry.resample import resample_itk
+from linumpy.metrics.image_quality import compute_normalized_cross_correlation
 
 # TODO: Add an algorithm to estimate the affine transform parameters
 
@@ -27,7 +27,7 @@ class MosaicGrid:
 
     .. note::
         This class can only deal with 2D mosaic grids for now. To generate a 2D mosaic grid from a collection of volumetric
-        tiles for a given slice, you can use the :ref:`script-linum-create-mosaic-grid` script.
+        tiles for a given slice, you can use the ``linum_create_mosaic_grid_3d`` script.
 
     """
 
@@ -327,6 +327,8 @@ class MosaicGrid:
         """
         xlim_mut = list(xlim)
         ylim_mut = list(ylim)
+        old_tile_shape = np.asarray(self.tile_shape[:2], dtype=np.float64)
+        old_overlap_fraction = self.overlap_fraction
         if xlim_mut[1] < 0:
             xlim_mut[1] = self.tile_shape[0] + xlim_mut[1] + 1
         if ylim_mut[1] < 0:
@@ -352,7 +354,12 @@ class MosaicGrid:
         self.tile_size_x = nx
         self.tile_size_y = ny
 
-        self.set_affine(overlap_fraction=self.overlap_fraction)  # FIXME : Overlap fraction need to be adjusted after cropping
+        # Preserve the average absolute overlap in pixels after tile cropping.
+        old_overlap_pixels = old_tile_shape * old_overlap_fraction
+        new_tile_shape = np.asarray(self.tile_shape[:2], dtype=np.float64)
+        adjusted_overlap = float(np.mean(old_overlap_pixels / new_tile_shape))
+        adjusted_overlap = min(adjusted_overlap, np.nextafter(1.0, 0.0))
+        self.set_affine(overlap_fraction=adjusted_overlap)
 
     def get_stitched_image(self, blending_method: str = "none") -> np.ndarray:
         """Perform a 2D reconstruction of the mosaic grid.
@@ -411,15 +418,19 @@ class MosaicGrid:
         """Compute a global overlap similarity error across all tile pairs."""
         neighbors = self.get_neighbors_list(neighborhood_type="N4")
         n_neighbors = len(neighbors)
+        if n_neighbors == 0:
+            return 0.0
+
         neighbors_ids = list(range(n_neighbors))
         np.random.shuffle(neighbors_ids)
 
-        error = 0.0
-        n_samples = 0
+        costs = []
 
-        i = 0
-        while (i < n_neighbors) and (n_samples / float(n_neighbors) < random_fraction):
-            o1, o2, _p1, _p2 = self.get_neighbor_overlap(neighbors_ids[i])
+        for neighbor_id in neighbors_ids:
+            if len(costs) / float(n_neighbors) >= random_fraction:
+                break
+
+            o1, o2, _p1, _p2 = self.get_neighbor_overlap(neighbor_id)
 
             if threshold is None:
                 if np.all(o1 == 0) or np.all(o2 == 0):  # Ignore empty overlaps
@@ -427,16 +438,25 @@ class MosaicGrid:
             else:
                 m1 = o1 < threshold
                 m2 = o2 < threshold
-                if np.all(not m1) or np.all(not m2):
+                if not np.any(m1) or not np.any(m2):
                     continue
 
-            # TODO: Test other error metrics, this one doesn't work well when there is illumination inhomogeneity
-            error += np.sqrt(((o1 - o2) ** 2).mean())
-            n_samples += 1
-            i += 1
-        if n_samples > 0:
-            error = error / float(n_samples)
-        return error
+            ncc = compute_normalized_cross_correlation(o1, o2)
+            if np.isnan(ncc):
+                continue
+
+            costs.append(1.0 - ncc)
+
+        if not costs:
+            return 0.0
+
+        costs_array = np.asarray(costs, dtype=np.float32)
+        median = float(np.median(costs_array))
+        mad = float(np.median(np.abs(costs_array - median)))
+        sigma_equiv = 1.4826 * mad if mad > 0 else 1e-9
+        inlier_mask = np.abs(costs_array - median) <= 3.0 * sigma_equiv
+        inlier_costs = costs_array[inlier_mask] if np.any(inlier_mask) else costs_array
+        return float(np.mean(inlier_costs))
 
     def optimize_overlap(
         self,
@@ -753,14 +773,14 @@ def get_diffusion_blending_weights(
         strel = ball(k)
 
     small_mask = np.logical_and(small_fixed_mask, small_moving_mask)
-    eroded_mask = morpho.binary_erosion(small_mask, structure=strel)
-    boundary = np.logical_xor(small_mask, morpho.binary_erosion(small_mask, structure=strel))
+    eroded_mask = binary_erosion(small_mask, structure=strel)
+    boundary = np.logical_xor(small_mask, binary_erosion(small_mask, structure=strel))
 
     # Getting the boundary conditions
     bc = boundary.copy()
-    bc = bc * morpho.binary_erosion(small_fixed_mask, strel)
+    bc = bc * binary_erosion(small_fixed_mask, strel)
 
-    dilated_mask = morpho.binary_dilation(~np.logical_or(small_fixed_mask, small_mask), structure=strel)
+    dilated_mask = binary_dilation(~np.logical_or(small_fixed_mask, small_mask), structure=strel)
     bc = np.zeros(new_shape)
     bc[boundary] = (~dilated_mask[boundary]) * 1.0
 
@@ -787,7 +807,7 @@ def get_diffusion_blending_weights(
         i_step += 1
 
     # Resampling the blending weigths to the original resolution
-    alpha[~morpho.binary_dilation(small_mask, strel)] = 1
+    alpha[~binary_dilation(small_mask, strel)] = 1
     alpha[np.logical_xor(small_moving_mask, small_mask)] = 0.0
     alpha[np.logical_xor(small_fixed_mask, small_mask)] = 1.0
     alpha = 1.0 - alpha

@@ -101,7 +101,7 @@ def get_mosaic_info(directory: Path, z: int, overlap_fraction: float = 0.2, use_
             x_mm = oct_tile.dimension[0] * (1 - overlap_fraction) * mx
             y_mm = oct_tile.dimension[1] * (1 - overlap_fraction) * my
 
-        x_px = int(np.floor(x_mm / oct_tile.resolution[0]))
+        x_px = int(np.floor(x_mm / oct_tile.resolution[2]))
         y_px = int(np.floor(y_mm / oct_tile.resolution[1]))
 
         mosaic_tile_pos.append((mx, my))
@@ -110,10 +110,10 @@ def get_mosaic_info(directory: Path, z: int, overlap_fraction: float = 0.2, use_
 
     # Compute the mosaic shape
     assert oct_tile is not None
-    x_min = min([x for x, _ in tiles_positions_px])
-    y_min = min([y for _, y in tiles_positions_px])
-    x_max = max([x for x, _ in tiles_positions_px]) + oct_tile.shape[0]
-    y_max = max([y for _, y in tiles_positions_px]) + oct_tile.shape[1]
+    x_min = min(x for x, _ in tiles_positions_px)
+    y_min = min(y for _, y in tiles_positions_px)
+    x_max = max(x for x, _ in tiles_positions_px) + oct_tile.shape[0]
+    y_max = max(y for _, y in tiles_positions_px) + oct_tile.shape[1]
     mosaic_nrows = x_max - x_min
     mosaic_ncols = y_max - y_min
 
@@ -198,7 +198,7 @@ def quick_stitch(
             x_mm = oct_tile.dimension[0] * (1 - overlap_fraction) * mx
             y_mm = oct_tile.dimension[1] * (1 - overlap_fraction) * my
 
-        x_px = int(np.floor(x_mm / oct_tile.resolution[0]))
+        x_px = int(np.floor(x_mm / oct_tile.resolution[2]))
         y_px = int(np.floor(y_mm / oct_tile.resolution[1]))
 
         tiles_positions_mm.append((x_mm, y_mm))
@@ -206,13 +206,14 @@ def quick_stitch(
 
     # Compute the mosaic shape
     assert oct_tile is not None
-    x_min = min([x for x, _ in tiles_positions_px])
-    y_min = min([y for _, y in tiles_positions_px])
-    x_max = max([x for x, _ in tiles_positions_px]) + oct_tile.shape[0]
-    y_max = max([y for _, y in tiles_positions_px]) + oct_tile.shape[1]
+    x_min = min(x for x, _ in tiles_positions_px)
+    y_min = min(y for _, y in tiles_positions_px)
+    x_max = max(x for x, _ in tiles_positions_px) + oct_tile.shape[0]
+    y_max = max(y for _, y in tiles_positions_px) + oct_tile.shape[1]
     mosaic_nrows = x_max - x_min
     mosaic_ncols = y_max - y_min
-    mosaic = np.zeros((mosaic_nrows, mosaic_ncols), dtype=np.float32)
+    mosaic_shape: tuple[int, int] = (int(mosaic_nrows), int(mosaic_ncols))
+    mosaic = np.zeros(mosaic_shape, dtype=np.float32)
 
     # Perform stitching
     for i in tqdm(range(len(tiles)), desc="Quick Stitch"):
@@ -242,7 +243,7 @@ def quick_stitch(
             img = np.log(img)
 
         # Compute an AIP
-        img = img[zmin:zmax, :, :].mean(axis=0)
+        img = img[zmin:zmax, :, :].mean(axis=0).T
 
         # BUG: there are sometimes missing bscans
         if img.shape != oct_tile.shape[0:2]:
