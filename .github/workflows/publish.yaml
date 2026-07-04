@@ -13,10 +13,37 @@ jobs:
   build_and_publish:
     runs-on: ubuntu-latest
     steps:
+<<<<<<< HEAD
       - uses: actions/checkout@v6.0.2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
+||||||| 16a932c
+      - uses: actions/checkout@master
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Install pypa/build
+        run: >-
+          python -m
+          pip install
+          build
+          --user
+      - name: Build a binary wheel and a source tarball
+        run: >-
+          python -m
+          build
+          --sdist
+          --wheel
+          --outdir dist/
+          .
+=======
+      - uses: actions/checkout@v7.0.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+>>>>>>> pr-ci-guardrails
 
       - name: Set up Python 3.14
         run: uv python install 3.14

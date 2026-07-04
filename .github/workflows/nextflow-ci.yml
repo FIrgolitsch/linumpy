@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+<<<<<<< HEAD
       - uses: actions/checkout@v6.0.2
 
       - uses: actions/setup-java@v5.2.0
@@ -44,6 +45,33 @@ jobs:
         # Pass -project-dir so that nextflow lint (26.04+) can resolve Groovy
         # classes from lib/ (e.g. Helpers). Each workflow lives in its own
         # subdirectory, so lint is invoked once per workflow.
+||||||| 16a932c
+=======
+      - uses: actions/checkout@v7.0.0
+
+      - uses: actions/setup-java@v5.4.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Nextflow
+        run: |
+          wget -qO nextflow https://github.com/nextflow-io/nextflow/releases/latest/download/nextflow
+          chmod +x nextflow
+          sudo mv nextflow /usr/local/bin/
+
+      - name: Install nf-test
+        run: |
+          NF_TEST_VERSION=0.9.5
+          wget -qO nf-test.tar.gz "https://github.com/askimed/nf-test/releases/download/v${NF_TEST_VERSION}/nf-test-${NF_TEST_VERSION}.tar.gz"
+          tar -xzf nf-test.tar.gz
+          mkdir -p "$HOME/.nf-test"
+          mv nf-test.jar "$HOME/.nf-test/nf-test.jar"
+          sudo mv nf-test /usr/local/bin/nf-test
+          sudo chmod +x /usr/local/bin/nf-test
+
+      - name: Lint Nextflow files
+>>>>>>> pr-ci-guardrails
         run: |
           nextflow lint -project-dir workflows/preproc workflows/preproc/preproc_rawtiles.nf
           nextflow lint -project-dir workflows/reconst_3d workflows/reconst_3d/soct_3d_reconst.nf
