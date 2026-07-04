@@ -4,7 +4,7 @@
 The script is loaded via :mod:`importlib` so we can test its pure-Python
 helper functions (AIP save/load, discovery, offsets parsing) without relying
 on the console entry point. Locks behavior before extraction to
-``linumpy/registration/manual.py`` (D-85).
+``linumpy/registration/manual.py`` .
 """
 
 import importlib.util

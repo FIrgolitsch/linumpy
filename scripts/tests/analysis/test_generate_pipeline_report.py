@@ -7,7 +7,7 @@ point (see ``scripts/tests/stitching/test_align_to_ras.py`` for the
 established pattern).
 
 These tests lock the CURRENT behavior of the pure helpers before extraction
-into ``linumpy/diagnostics/pipeline_report.py`` (D-85).
+into ``linumpy/diagnostics/pipeline_report.py`` .
 """
 
 import importlib.util

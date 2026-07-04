@@ -4,7 +4,7 @@
 The script is loaded via :mod:`importlib` so we can test its pure-Python
 helper functions (no ``zarr``/matplotlib I/O) without relying on the console
 entry point. ``parse_float_none_list``/``parse_bool_list`` now live in
-``linumpy/intensity/sweep.py`` (D-85) and are re-exported into the script's
+``linumpy/intensity/sweep.py``  and are re-exported into the script's
 namespace via the thin-CLI import; ``linumpy/tests/test_intensity_sweep.py``
 exercises the library module directly.
 """

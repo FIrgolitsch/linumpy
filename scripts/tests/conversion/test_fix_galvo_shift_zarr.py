@@ -4,7 +4,7 @@
 The script is loaded via :mod:`importlib` so we can test its pure shift-
 detection/correction helpers on small synthetic OME-Zarr fixtures (no full
 acquisition mosaic) without relying on the console entry point. Locks
-behavior before extraction to ``linumpy/geometry/galvo.py`` (D-85).
+behavior before extraction to ``linumpy/geometry/galvo.py`` .
 """
 
 import importlib.util

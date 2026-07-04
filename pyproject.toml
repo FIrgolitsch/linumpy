@@ -185,12 +185,12 @@ dev = [
 ]
 
 [tool.uv]
-# BaSiCPy dependency hardening (INFRA-04, D-57/D-60):
+# BaSiCPy dependency hardening 
 # - basicpy>=2.0.0,<2.1 and torch>=2.12.0,<2.13 are CI-validated ranges (see uv.lock).
 # - basicpy 2.0.0 declares scipy<1.13, which transitively caps numpy at 1.x.
 # - override-dependencies lifts that ceiling so uv resolves modern numpy/scipy
 #   (currently numpy 2.5.x, scipy 1.18.x) that work at runtime in our bias/illumination paths.
-# - linum-basic is sourced from the modernisation git branch (D-59); uv.lock pins the rev.
+# - linum-basic is sourced from the modernisation git branch; uv.lock pins the rev.
 constraint-dependencies = [
     "torch>=2.12.0,<2.13",
 ]
