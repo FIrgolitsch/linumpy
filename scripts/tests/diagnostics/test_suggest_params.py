@@ -6,7 +6,7 @@ helper functions without relying on the console entry point (see
 ``scripts/tests/stitching/test_align_to_ras.py`` for the established pattern).
 
 These tests lock the CURRENT metadata-reading and config-snippet-emission
-behavior (D-79/D-82) before the 2.5D ``initial_overlap`` emission and the
+behavior  before the 2.5D ``initial_overlap`` emission and the
 malformed-metadata hardening are added. Tests for behavior that does not
 exist yet are marked ``xfail(strict=True)`` and are expected to flip to
 passing once that behavior is implemented.
@@ -59,7 +59,7 @@ def test_help(script_runner):
 
 
 # ---------------------------------------------------------------------------
-# detect_rehoming (MAD outlier rejection, D-85 precursor)
+# detect_rehoming (MAD outlier rejection, precursor)
 # ---------------------------------------------------------------------------
 
 
@@ -71,7 +71,7 @@ def test_detect_rehoming_mad_outlier(mod):
 
 
 # ---------------------------------------------------------------------------
-# analyze_metadata: overlap_fraction read from state.json (D-79)
+# analyze_metadata: overlap_fraction read from state.json 
 # ---------------------------------------------------------------------------
 
 
@@ -83,7 +83,7 @@ def test_analyze_metadata_overlap(mod, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# build_config_snippet: 3D stitch_overlap_fraction emission (D-82, existing)
+# build_config_snippet: 3D stitch_overlap_fraction emission 
 # ---------------------------------------------------------------------------
 
 
@@ -96,7 +96,7 @@ def test_build_config_snippet_overlap(mod, shift_stats):
 
 
 # ---------------------------------------------------------------------------
-# build_config_snippet: 2.5D initial_overlap emission (D-82)
+# build_config_snippet: 2.5D initial_overlap emission 
 # ---------------------------------------------------------------------------
 
 

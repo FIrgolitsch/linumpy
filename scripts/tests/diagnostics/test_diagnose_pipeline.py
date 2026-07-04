@@ -9,7 +9,7 @@ hardware (GPU, Nextflow, BaSiCPy) or subprocess calls (see
 These tests lock CURRENT behavior (terminal-width fallback, Nextflow
 parameter-suggestion formula, BaSiC-error classification messages, and
 summary aggregation) before the core logic is extracted into
-``linumpy.diagnostics.pipeline`` (D-85).
+``linumpy.diagnostics.pipeline`` .
 """
 
 import importlib.util

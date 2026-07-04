@@ -1,6 +1,6 @@
 """Core system diagnostics for the linumpy 3D reconstruction pipeline.
 
-Extracted from ``scripts/diagnostics/linum_diagnose_pipeline.py`` (D-83/D-84/D-86).
+Extracted from ``scripts/diagnostics/linum_diagnose_pipeline.py`` .
 See that script's module docstring for the full diagnostic reference (CPU/GPU/
 memory checks, Nextflow parameter suggestions, performance benchmarks).
 """

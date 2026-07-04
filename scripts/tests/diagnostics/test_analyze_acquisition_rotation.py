@@ -7,7 +7,7 @@ helper functions without relying on the console entry point (see
 
 These tests lock the CURRENT rotation-estimation math (shift angle,
 angular velocity, cumulative rotation, pattern detection) before the core
-logic is extracted into ``linumpy.diagnostics.acquisition_rotation`` (D-85).
+logic is extracted into ``linumpy.diagnostics.acquisition_rotation`` .
 """
 
 import importlib.util
