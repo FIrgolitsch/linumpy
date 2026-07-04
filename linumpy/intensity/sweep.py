@@ -1,7 +1,7 @@
 """Illumination-correction parameter sweep core logic.
 
-Extracted from ``scripts/illumination/linum_sweep_illumination.py`` (D-84 #6,
-D-86): pure fitting/scoring and parameter-grid helpers that drive the
+Extracted from ``scripts/illumination/linum_sweep_illumination.py`` (#6,
+): pure fitting/scoring and parameter-grid helpers that drive the
 sweep tool, kept independent of matplotlib visualization and zarr I/O so
 they can be exercised directly on small synthetic volumes.
 """
