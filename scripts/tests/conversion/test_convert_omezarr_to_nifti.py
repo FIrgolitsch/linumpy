@@ -2,5 +2,5 @@
 
 
 def test_help(script_runner):
-    ret = script_runner.run(["linum_axis_xyz_to_zyx.py", "--help"])
+    ret = script_runner.run(["linum-convert-omezarr-to-nifti", "--help"])
     assert ret.success
