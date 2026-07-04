@@ -9,6 +9,7 @@ from linumpy.intensity.normalization import (
     _robust_percentile,
     _smooth_weighted,
     apply_histogram_matching,
+    apply_zprofile_smoothing,
     compute_scale_factors,
     get_agarose_mask,
     normalize_volume,
@@ -68,12 +69,14 @@ def test_normalize_volume_output_shape():
 
 
 def test_normalize_volume_output_range():
-    """Normalized values should be in [0, 1]."""
+    """p90 of per-slice spans normalizes to <=1; outlier planes may exceed 1."""
     vol = _make_tissue_vol((6, 24, 24))
     mask, _ = get_agarose_mask(vol)
     result, _ = normalize_volume(vol.copy(), mask)
     assert float(result.min()) >= -1e-6
-    assert float(result.max()) <= 1.0 + 1e-6
+    # global_max is the p90 of per-slice spans, so the p90 of the result
+    # should be at most 1; a few high-intensity planes may slightly exceed 1.
+    assert float(np.percentile(result, 90)) <= 1.0 + 1e-6
 
 
 def test_normalize_volume_background_thresholds_length():
@@ -81,6 +84,50 @@ def test_normalize_volume_background_thresholds_length():
     mask, _ = get_agarose_mask(vol)
     _, thresholds = normalize_volume(vol.copy(), mask)
     assert len(thresholds) == vol.shape[0]
+
+
+def test_normalize_volume_agarose_floor_at_zero():
+    """Volume minimum should be exactly 0 -- the per-slice agarose-median floor
+    is subtracted so background voxels at or below the median go to 0.
+
+    This keeps background dark in manual-align overlays and downstream
+    visualizations.
+    """
+    rng = np.random.default_rng(0)
+    vol = rng.random((4, 24, 24)).astype(np.float32) * 0.1  # low = agarose
+    vol[:, 8:16, 8:16] += 0.5  # bright tissue block
+    mask, _ = get_agarose_mask(vol)
+    result, _ = normalize_volume(vol.copy(), mask)
+    assert float(result.min()) == 0.0
+
+
+def test_normalize_volume_preserves_relative_brightness():
+    """Global divisor must preserve a 2:1 inter-section brightness ratio.
+
+    Construct two sections that are identical in structure but one has 2x the
+    overall signal level.  After normalize_volume the bright section's mean
+    should remain ~2x the dim section's mean.
+    """
+    rng = np.random.default_rng(42)
+    n_y, n_x = 32, 32
+    # Dim section: tissue in center, low intensity
+    section_dim = rng.random((n_y, n_x)).astype(np.float32) * 0.1
+    section_dim[8:24, 8:24] += 0.4  # tissue above agarose
+
+    # Bright section: same structure, 2x signal
+    section_bright = section_dim * 2.0
+
+    vol = np.stack([section_dim, section_bright], axis=0)  # (2, 32, 32)
+    agarose_mask = vol.mean(axis=0) < 0.15  # low-intensity pixels = agarose
+
+    result, _ = normalize_volume(vol.copy(), agarose_mask)
+
+    # The bright section's tissue median should be ~2x the dim section's
+    tissue_mask_2d = ~agarose_mask
+    mean_dim = float(np.mean(result[0][tissue_mask_2d]))
+    mean_bright = float(np.mean(result[1][tissue_mask_2d]))
+    ratio = mean_bright / mean_dim
+    assert 1.8 <= ratio <= 2.2, f"Expected brightness ratio ~2, got {ratio:.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -224,3 +271,55 @@ def test_apply_histogram_matching_identity_on_flat_volume():
     result = apply_histogram_matching(vol, n_serial_slices=1, n_bins=256)
     # Single section => reference == source => identity up to binning resolution.
     assert float(np.mean(np.abs(result - vol))) < 2e-2
+
+
+# ---------------------------------------------------------------------------
+# apply_zprofile_smoothing
+# ---------------------------------------------------------------------------
+
+
+def test_apply_zprofile_smoothing_shape_and_dtype():
+    rng = np.random.default_rng(11)
+    vol = rng.random((12, 16, 16)).astype(np.float32) + 0.5
+    mask = np.ones_like(vol, dtype=bool)
+    result = apply_zprofile_smoothing(vol, mask, sigma=2.0)
+    assert result.shape == vol.shape
+    assert result.dtype == np.float32
+
+
+def test_apply_zprofile_smoothing_disabled_when_sigma_zero():
+    rng = np.random.default_rng(12)
+    vol = rng.random((8, 16, 16)).astype(np.float32)
+    mask = np.ones_like(vol, dtype=bool)
+    result = apply_zprofile_smoothing(vol, mask, sigma=0.0)
+    np.testing.assert_array_equal(result, vol)
+
+
+def test_apply_zprofile_smoothing_preserves_background():
+    """Background voxels (outside mask) must be left unchanged."""
+    rng = np.random.default_rng(13)
+    vol = rng.random((6, 12, 12)).astype(np.float32) + 0.5
+    mask = np.zeros_like(vol, dtype=bool)
+    mask[:, 2:10, 2:10] = True
+    result = apply_zprofile_smoothing(vol, mask, sigma=2.0)
+    np.testing.assert_array_equal(result[~mask], vol[~mask])
+
+
+def test_apply_zprofile_smoothing_reduces_z_jitter():
+    """Z-planes with injected per-Z gain noise should be aligned to the smooth trend."""
+    rng = np.random.default_rng(14)
+    n_z = 30
+    base = rng.random((n_z, 16, 16)).astype(np.float32) * 0.1 + 0.5
+    # Inject per-Z multiplicative jitter
+    jitter = 1.0 + 0.1 * rng.standard_normal(n_z).astype(np.float32)
+    vol = base * jitter[:, None, None]
+    mask = np.ones_like(vol, dtype=bool)
+
+    def step(v):
+        means = np.array([v[z][mask[z]].mean() for z in range(n_z)])
+        return float(np.mean(np.abs(np.diff(means)) / (0.5 * (means[:-1] + means[1:]))))
+
+    s_before = step(vol)
+    result = apply_zprofile_smoothing(vol, mask, sigma=2.0)
+    s_after = step(result)
+    assert s_after < 0.3 * s_before

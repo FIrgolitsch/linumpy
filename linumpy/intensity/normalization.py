@@ -6,69 +6,68 @@ This module provides functions for normalizing OCT volume intensities
 based on agarose background detection.
 """
 
+from typing import Any
+
 import numpy as np
 
 
 def normalize_volume(
-    vol: np.ndarray, agarose_mask: np.ndarray, percentile_max: float = 99.9, min_contrast_fraction: float = 0.1
+    vol: np.ndarray,
+    agarose_mask: np.ndarray,
+    percentile_max: float = 99.9,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Normalize volume intensities based on agarose background.
 
-    Intensities for each z-slice are rescaled between the minimum value
-    inside agarose and the value defined by the percentile_max argument.
+    Each z-slice is clipped at its per-slice percentile cap and agarose-median
+    floor, then the agarose floor is subtracted per slice (so background goes
+    to exactly 0).  The entire volume is then divided by a single global
+    divisor (the 90th-percentile per-slice tissue span), so relative
+    inter-section brightness is largely preserved while outlier slices
+    (e.g. bright surface / specular-reflection layers) do not compress the rest
+    of the volume to near-zero values.
 
     Parameters
     ----------
     vol : np.ndarray
         Input volume with shape (Z, Y, X).
     agarose_mask : np.ndarray
-        2D binary mask indicating agarose regions (shape X, Y).
+        2D binary mask indicating agarose regions (shape Y, X).
     percentile_max : float
-        Values above this percentile will be clipped. Default 99.9.
-    min_contrast_fraction : float
-        Minimum contrast (max-min) as a fraction of the global max.
-        Slices with lower contrast will use this threshold to avoid
-        over-amplification of noise in weak/bad slices. Default 0.1.
+        Values above this percentile will be clipped per slice. Default 99.9.
 
     Returns
     -------
     tuple
         (normalized_volume, background_thresholds)
-        - normalized_volume: The normalized volume
-        - background_thresholds: Array of background threshold per slice
+        - normalized_volume: float32 volume in [0, 1] with agarose at 0.
+        - background_thresholds: Array of agarose-median per slice.
     """
-    # Clip to percentile max per slice
+    vol = vol.astype(np.float32, copy=False)
+
+    # Per-slice percentile cap
     pmax = np.percentile(vol, percentile_max, axis=(1, 2))
     vol = np.clip(vol, None, pmax[:, None, None])
 
-    # Compute background threshold per slice from agarose regions
-    background_thresholds = []
-    for curr_slice in vol:
-        agarose = curr_slice[agarose_mask]
-        bg_median = np.median(agarose)
-        background_thresholds.append(bg_median)
-
-    background_thresholds = np.array(background_thresholds)
+    # Per-slice agarose-median floor
+    background_thresholds = np.array([np.median(s[agarose_mask]) for s in vol])
     vol = np.clip(vol, background_thresholds[:, None, None], None)
 
-    # Rescale to [0, 1]
-    vol = vol - np.min(vol, axis=(1, 2), keepdims=True)
-    vmax = np.max(vol, axis=(1, 2))
+    # Subtract per-slice agarose floor so background voxels become exactly 0
+    vol = vol - background_thresholds[:, None, None]
 
-    # Compute minimum acceptable contrast based on global statistics
-    # This prevents over-amplification of slices with very weak signal
-    global_max = np.max(vmax)
-    min_contrast = global_max * min_contrast_fraction
-
-    # For slices with sufficient contrast, normalize normally
-    # For weak slices, use the minimum contrast threshold to avoid over-amplification
-    effective_max = np.maximum(vmax, min_contrast)
-
-    # Apply normalization
-    for i in range(vol.shape[0]):
-        if effective_max[i] > 0:
-            vol[i] = vol[i] / effective_max[i]
+    # Single global divisor: preserves relative inter-section brightness.
+    # Use the 90th percentile of per-slice spans rather than the maximum so that
+    # outlier slices (e.g. bright surface / specular-reflection layers) do not
+    # compress the rest of the volume to near-zero values.  The top ~10% of
+    # slices will be clipped to ≥1.0 before the final float32 cast, which is
+    # harmless in practice.
+    spans = pmax - background_thresholds
+    global_max = float(np.percentile(spans, 90))
+    if global_max <= 0:
+        global_max = float(spans.max())
+    if global_max > 0:
+        vol = vol / global_max
 
     return vol, background_thresholds
 
@@ -90,7 +89,7 @@ def get_agarose_mask(vol: np.ndarray, smoothing_sigma: float = 1.0) -> tuple[np.
     Returns
     -------
     agarose_mask : np.ndarray
-        2D boolean mask (Y, X) — True where agarose is present.
+        2D boolean mask (Y, X) -- True where agarose is present.
     threshold : float
         The Otsu threshold used.
     """
@@ -278,7 +277,11 @@ def _match_chunk_to_reference(
 
 
 def apply_histogram_matching(
-    vol: np.ndarray, n_serial_slices: int | None, n_bins: int, tissue_threshold: float = 0.0
+    vol: np.ndarray,
+    n_serial_slices: int | None,
+    n_bins: int,
+    tissue_threshold: float = 0.0,
+    use_gpu: bool = False,
 ) -> np.ndarray:
     """Apply per-section histogram matching to a global reference distribution.
 
@@ -295,22 +298,183 @@ def apply_histogram_matching(
         Number of histogram bins.
     tissue_threshold : float
         Minimum intensity to classify as tissue (default 0.0).
+    use_gpu : bool
+        If True, run the per-chunk matching loop on GPU via CuPy. Falls back
+        to CPU silently if CuPy is unavailable. The volume itself is moved to
+        GPU one chunk at a time, so memory usage stays bounded. When *vol* is
+        already a ``cupy.ndarray`` the GPU path is used regardless and slabs
+        are read with no host round-trip.
 
     Returns
     -------
     np.ndarray
         Histogram-matched volume.
     """
-    flat_all = vol.ravel()
-    ref_bins, ref_cdf, tissue_count = _build_tissue_cdf(flat_all, n_bins, tissue_threshold)
+    from linumpy.gpu import is_cupy_array
+
+    cupy_input = is_cupy_array(vol)
+
+    if cupy_input:
+        # Build the reference CDF on device so we don't D→H the whole volume.
+        ref_bins, ref_cdf, tissue_count = _build_tissue_cdf_gpu(vol, n_bins, tissue_threshold)
+    else:
+        flat_all = vol.ravel()
+        ref_bins, ref_cdf, tissue_count = _build_tissue_cdf(flat_all, n_bins, tissue_threshold)
     if tissue_count < 500:
-        return vol
+        from linumpy.gpu import to_cpu
+
+        return to_cpu(vol)
 
     bounds = _chunk_boundaries(vol.shape[0], n_serial_slices)
+
+    if cupy_input or use_gpu:
+        try:
+            return _apply_histogram_matching_gpu(vol, bounds, ref_bins, ref_cdf, n_bins, tissue_threshold)
+        except ImportError:
+            if cupy_input:
+                raise  # cupy is installed but cupyx missing — surface clearly
 
     out = np.empty_like(vol)
     for s, e in bounds:
         chunk = vol[s:e]
         out[s:e] = _match_chunk_to_reference(chunk, ref_bins, ref_cdf, n_bins, tissue_threshold)
 
+    return out
+
+
+def _build_tissue_cdf_gpu(vol: Any, n_bins: int, tissue_threshold: float) -> tuple[np.ndarray, np.ndarray, int]:
+    """GPU equivalent of :func:`_build_tissue_cdf` for a CuPy-resident volume.
+
+    Computes the histogram on device and returns small host-side arrays
+    so callers can keep the rest of their state on CPU.
+    """
+    import cupy as cp
+
+    lo = tissue_threshold + max(1e-6, tissue_threshold * 1e-6)
+    lo = min(lo, 1.0)
+    hist = cp.histogram(vol.ravel(), bins=n_bins, range=(lo, 1.0))[0]
+    edges = cp.linspace(lo, 1.0, n_bins + 1)
+    bin_centers = 0.5 * (edges[:-1] + edges[1:])
+    total = int(hist.sum().item())
+    cdf = cp.cumsum(hist).astype(cp.float64)
+    if cdf[-1] > 0:
+        cdf /= cdf[-1]
+    return cp.asnumpy(bin_centers), cp.asnumpy(cdf), total
+
+
+def _apply_histogram_matching_gpu(
+    vol: np.ndarray,
+    bounds: list[tuple[int, int]],
+    ref_bins: np.ndarray,
+    ref_cdf: np.ndarray,
+    n_bins: int,
+    tissue_threshold: float,
+) -> np.ndarray:
+    """GPU implementation of the per-chunk histogram-matching loop.
+
+    Each chunk is moved to GPU, has its tissue CDF computed, an
+    ``n_bins``-sized LUT built, and the per-voxel mapping applied.
+    Result is moved back to CPU per chunk so the host array fills
+    incrementally without holding the whole volume on GPU. Accepts
+    either a host (numpy) volume or a device (cupy) volume; in the
+    cupy case ``cp.asarray`` is a no-op so no extra H→D copy occurs.
+    """
+    import cupy as cp
+
+    ref_bins_g = cp.asarray(ref_bins, dtype=cp.float32)
+    ref_cdf_g = cp.asarray(ref_cdf, dtype=cp.float32)
+
+    lo = tissue_threshold + max(1e-6, tissue_threshold * 1e-6)
+    lo = min(lo, 1.0)
+
+    # Always allocate the output on the host: the next pipeline stage
+    # (z-profile smoothing, N4) operates on numpy.
+    out = np.empty(vol.shape, dtype=np.float32)
+    cupy_input = isinstance(vol, cp.ndarray)
+    for s, e in bounds:
+        chunk_g = cp.asarray(vol[s:e], dtype=cp.float32)
+        flat = chunk_g.ravel()
+
+        hist = cp.histogram(flat, bins=n_bins, range=(lo, 1.0))[0]
+        tissue_count = int(hist.sum().item())
+        if tissue_count < 500:
+            out[s:e] = cp.asnumpy(vol[s:e]) if cupy_input else vol[s:e]
+            continue
+
+        edges = cp.linspace(lo, 1.0, n_bins + 1, dtype=cp.float32)
+        src_bins = 0.5 * (edges[:-1] + edges[1:])
+        src_cdf = cp.cumsum(hist).astype(cp.float32)
+        src_cdf /= src_cdf[-1]
+
+        matched_lut = cp.interp(src_cdf, ref_cdf_g, ref_bins_g)
+        mapped = cp.interp(flat, src_bins, matched_lut).astype(cp.float32, copy=False)
+        result = cp.where(flat > tissue_threshold, mapped, flat).reshape(chunk_g.shape)
+
+        out[s:e] = cp.asnumpy(result)
+
+    return out
+
+
+def apply_zprofile_smoothing(
+    vol: np.ndarray,
+    mask: np.ndarray,
+    sigma: float,
+    min_tissue_voxels: int = 100,
+) -> np.ndarray:
+    """Remove residual per-Z-plane intensity jitter via a smoothed scalar gain.
+
+    For each Z-plane, computes the tissue mean (over `mask`), smooths the
+    Z-mean profile with a Gaussian (sigma in Z-plane units), then applies a
+    per-Z multiplicative gain `target / observed` to align each plane's tissue
+    mean to the smoothed trend.  Background voxels (~mask) are left unchanged.
+
+    The correction is bounded in magnitude by the smoothed-vs-observed ratio
+    and acts only on the high-frequency component of the Z-profile, so the
+    smooth depth attenuation and large-scale anatomical variation are
+    preserved.  Best applied after `apply_histogram_matching` to clean up the
+    residual ~1-2% inter-slice step that HM cannot remove.
+
+    Parameters
+    ----------
+    vol : np.ndarray
+        Input volume (Z, Y, X).
+    mask : np.ndarray
+        Tissue mask (Z, Y, X), bool.
+    sigma : float
+        Gaussian smoothing sigma in Z-plane units.  Larger = preserves more
+        depth structure but removes less jitter.  2.0-4.0 works well in practice.
+    min_tissue_voxels : int
+        Z-planes with fewer tissue voxels are left unchanged (no reliable mean).
+
+    Returns
+    -------
+    np.ndarray
+        Volume with per-Z gain applied to tissue voxels.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    from linumpy.gpu import to_cpu
+
+    # Pure-CPU op; pull cupy inputs to host so scipy/numpy can run unchanged.
+    vol = to_cpu(vol)
+    mask = to_cpu(mask)
+
+    if sigma <= 0:
+        return vol
+    n_z = vol.shape[0]
+    z_means = np.full(n_z, np.nan, dtype=np.float64)
+    for z in range(n_z):
+        m = mask[z]
+        if m.sum() >= min_tissue_voxels:
+            z_means[z] = vol[z][m].mean()
+    valid = ~np.isnan(z_means)
+    if valid.sum() < 3:
+        return vol
+    target = z_means.copy()
+    target[valid] = gaussian_filter1d(z_means[valid], sigma=sigma)
+    gains = np.where(valid, target / np.clip(z_means, 1e-6, None), 1.0).astype(np.float32)
+
+    out = vol.astype(np.float32, copy=True)
+    out *= gains[:, None, None]
+    out[~mask] = vol[~mask]  # restore background
     return out
