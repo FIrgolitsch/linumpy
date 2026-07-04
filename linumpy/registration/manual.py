@@ -449,8 +449,8 @@ def transform_and_rescale_slice(slice: np.ndarray, ty: float, tx: float, theta: 
 #
 # Reads common-space slices (OME-Zarr) and pairwise registration outputs and
 # produces the AIPs / cross-sections / transforms consumed by the
-# ``linumpy-manual-align`` Napari plugin. Extracted from the script per D-84
-# (#8) / D-86 -- the script remains a thin CLI wrapper around these helpers.
+# ``linumpy-manual-align`` Napari plugin. Extracted from the script per
+# (#8) / -- the script remains a thin CLI wrapper around these helpers.
 # ---------------------------------------------------------------------------
 
 
