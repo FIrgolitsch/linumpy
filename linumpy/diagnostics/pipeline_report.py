@@ -1,7 +1,7 @@
 """Core report aggregation/formatting logic for the pipeline quality report.
 
 Extracted from ``scripts/analysis/linum_generate_pipeline_report.py``
-(D-83/D-84 #1/D-86). See that script's module docstring for the CLI usage
+. See that script's module docstring for the CLI usage
 reference. Extracted LAST among the RECON-04 candidates because it aggregates
 diagnostic outputs produced by the other pipeline steps (Pitfall 6 — avoid
 circular imports with the other ``linumpy.diagnostics`` submodules).
