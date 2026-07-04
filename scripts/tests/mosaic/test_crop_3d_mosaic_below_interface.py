@@ -5,7 +5,7 @@ from linumpy.geometry.resampling import resolution_is_mm
 
 
 def test_help(script_runner):
-    ret = script_runner.run(["linum_crop_3d_mosaic_below_interface.py", "--help"])
+    ret = script_runner.run(["linum-crop-3d-mosaic-below-interface", "--help"])
     assert ret.success
 
 
@@ -28,7 +28,7 @@ def test_crop_depth_voxels_respects_um_resolution():
 
     The script historically assumed ``res[0]`` was in mm, which inflated
     ``resolution_um`` by 1000x for legacy mosaics that still stored µm in
-    their NGFF metadata — effectively asking for ``depth_um/1000`` voxels
+    their NGFF metadata -- effectively asking for ``depth_um/1000`` voxels
     and returning a single-voxel crop regardless of the requested depth.
     """
     depth_um = 400.0
