@@ -8,7 +8,7 @@ from linumpy.microscope.oct import OCT
 
 
 def test_load_image_axis_order(tmp_path):
-    """D-75: load_image returns (Z, Y, X) with distinct nx != ny != nz."""
+    """load_image returns (Z, Y, X) with distinct nx != ny != nz."""
     nx, ny, nz = 16, 8, 8
     tile_dir = write_synthetic_oct_tile(tmp_path, nx=nx, ny=ny, nz=nz)
 
@@ -19,7 +19,7 @@ def test_load_image_axis_order(tmp_path):
 
 
 def test_n_repeat_averaging(tmp_path):
-    """D-76: repeated frames are averaged before crop; shape matches n_repeat=1."""
+    """repeated frames are averaged before crop; shape matches n_repeat=1."""
     nx, ny, nz, n_repeat = 4, 2, 4, 2
     n_alines_per_bscan = nx
     n_frames = ny * n_repeat
@@ -48,7 +48,7 @@ def test_n_repeat_averaging(tmp_path):
 
 
 def test_axial_res_from_info(tmp_path):
-    """D-77: axial resolution from info.txt; fallback to constructor default."""
+    """axial resolution from info.txt; fallback to constructor default."""
     custom_res = 4.2
     tile_with = write_synthetic_oct_tile(tmp_path / "with_key", axial_res=custom_res)
     oct_with = OCT(tile_with)

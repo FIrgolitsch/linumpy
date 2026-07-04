@@ -153,7 +153,7 @@ class OCT:
         if crop:
             vol = vol[:, 0:n_alines, 0:n_bscans]
 
-        # (Z, X, Y) from reshape/crop -> (Z, Y, X) lab convention (D-75)
+        # (Z, X, Y) from reshape/crop -> (Z, Y, X) lab convention 
         return vol.transpose(0, 2, 1)
 
     @property
