@@ -52,7 +52,6 @@ If you only need specific diagnostics, keep `diagnostic_mode=false` and enable i
 params {
     // Enable specific diagnostics
     analyze_rotation_drift = true   // Analyze cumulative rotation between slices
-    analyze_tile_dilation = true    // Compare motor vs registration positions
     motor_only_stitch = true        // Create slices using only motor positions
     
     // Configure diagnostics
@@ -63,7 +62,7 @@ params {
 
 ## Diagnostic Scripts
 
-### 1. Acquisition Rotation Analysis (`linum_analyze_acquisition_rotation.py`)
+### 1. Acquisition Rotation Analysis (`linum-analyze-acquisition-rotation`)
 
 **NEW**: Analyzes rotation patterns from raw acquisition shift data (before registration).
 
@@ -73,7 +72,7 @@ This examines the direction of shift vectors between consecutive slices to detec
 - Sudden direction changes (sample movement)
 
 ```bash
-linum_analyze_acquisition_rotation.py \
+linum-analyze-acquisition-rotation \
     shifts_xy.csv \
     output_dir \
     --registration_dir /path/to/register_pairwise  # optional: for comparison
@@ -90,12 +89,12 @@ linum_analyze_acquisition_rotation.py \
 - **Systematic angular drift**: Stage rotating during acquisition
 - Compare with registration rotation to see if registration is compensating
 
-### 2. Registration Rotation Drift Analysis (`linum_analyze_registration_transforms.py`)
+### 2. Registration Rotation Drift Analysis (`linum-analyze-registration-transforms`)
 
 Analyzes cumulative rotation between consecutive slices from pairwise registration outputs.
 
 ```bash
-linum_analyze_registration_transforms.py \
+linum-analyze-registration-transforms \
     /path/to/register_pairwise \
     output_dir \
     --rotation_threshold 2.0
@@ -111,12 +110,12 @@ linum_analyze_registration_transforms.py \
 - **High cumulative drift**: Edges will diverge in 3D; consider `registration_transform='euler'`
 - **Sudden large rotations**: Check slice quality, may need exclusion
 
-### 3. Tile Dilation Analysis (`linum_analyze_tile_dilation.py`)
+### 3. Tile Dilation Analysis (`linum-analyze-tile-dilation`)
 
 Compares expected motor positions to registration-derived positions.
 
 ```bash
-linum_analyze_tile_dilation.py \
+linum-analyze-tile-dilation \
     mosaic_grid_z10.ome.zarr \
     transform_xy.npy \
     output_dir \
@@ -133,12 +132,12 @@ linum_analyze_tile_dilation.py \
 - **Scale factor < 1**: Tiles spread less than expected (stage calibration issue)
 - **Anisotropic scaling**: Different X/Y scales cause shearing in 3D
 
-### 4. Motor-Only Stitching (`linum_stitch_motor_only.py`)
+### 4. Motor-Only Stitching (`linum-stitch-motor-only`)
 
 Creates stitched mosaic using ONLY motor positions (bypassing image registration).
 
 ```bash
-linum_stitch_motor_only.py \
+linum-stitch-motor-only \
     mosaic_grid_z10.ome.zarr \
     slice_z10_motor_only.ome.zarr \
     --overlap_fraction 0.1
@@ -150,12 +149,12 @@ By comparing motor-only vs fully-registered stitches:
 - **Systematic offsets**: Stage calibration issue
 - **Random scatter**: Normal registration refinement
 
-### 5. Aggregated Dilation Analysis (`linum_aggregate_dilation_analysis.py`)
+### 5. Aggregated Dilation Analysis (`linum-aggregate-dilation-analysis`)
 
 **NEW**: Aggregates dilation analysis from multiple slices to compute recommended scale correction factors.
 
 ```bash
-linum_aggregate_dilation_analysis.py \
+linum-aggregate-dilation-analysis \
     /path/to/dilation_analysis \
     output_dir
 ```
@@ -171,12 +170,12 @@ linum_aggregate_dilation_analysis.py \
 - **Deviation from unity**: How much mosaics contract/expand vs expected
 - **Anisotropy**: If X/Y differ, use separate correction factors
 
-### 6. Comprehensive Diagnostics (`linum_diagnose_reconstruction.py`)
+### 6. Comprehensive Diagnostics (`linum-diagnose-reconstruction`)
 
 Runs all analyses and generates a unified report.
 
 ```bash
-linum_diagnose_reconstruction.py \
+linum-diagnose-reconstruction \
     /path/to/pipeline_output \
     output_dir \
     --rotation_threshold 2.0 \
@@ -190,10 +189,31 @@ linum_diagnose_reconstruction.py \
 
 ## Troubleshooting Workflow
 
+```mermaid
+flowchart TD
+    A[Reconstruction artifact:<br/>edge mismatch / overhang] --> B[linum-diagnose-reconstruction<br/>diagnostic_report.txt]
+    B --> C{Symptom?}
+    C -->|cumulative rotation drift| D[Rotation drift]
+    C -->|individual slice quality| E[Bad slice]
+    C -->|large inter-slice XY jumps| F[Motor / encoder issue]
+    C -->|tile-level mismatch| G[Tile dilation]
+    D --> D1[Set registration_transform=euler<br/>raise registration_max_rotation]
+    E --> E1[auto_assess_quality=true<br/>auto_exclude_enabled=true]
+    F --> F1[detect_rehoming=true<br/>tile_fov_mm=0.875<br/>common_space_refine_unreliable=true]
+    G --> G1[linum-analyze-tile-dilation<br/>then per-tile correction]
+    D1 --> R[Re-run with --debug_slices subset]
+    E1 --> R
+    F1 --> R
+    G1 --> R
+    R --> V[Re-run diagnostics<br/>verify improvement]
+    V -->|still bad| C
+    V -->|fixed| DONE([Done])
+```
+
 ### Step 1: Quick Assessment
 ```bash
 # Run diagnostics on existing output
-linum_diagnose_reconstruction.py /path/to/sub-18 diagnostics
+linum-diagnose-reconstruction /path/to/sub-18 diagnostics
 ```
 
 Review `diagnostic_report.txt` for issues flagged.
@@ -207,85 +227,25 @@ registration_transform = 'euler'
 registration_max_rotation = 35.0  // Increase if needed for oblique cuts
 ```
 
-**If dilation is detected**:
-
-The most common cause of edge misalignment ("overhangs") is systematic tile dilation/contraction.
-The diagnostic analysis reveals that motor positions don't match the actual image positions.
-
-**Solution**: Apply scale correction during 3D assembly:
-
-#### Using Nextflow Pipeline (Recommended)
-
-**Option A: Auto-aggregate and apply** (fully automated):
-```bash
-nextflow run soct_3d_reconst.nf \
-    --input /path/to/data \
-    --scale_correction_enabled true \
-    --aggregate_dilation true
-```
-This will:
-1. Run dilation analysis on all slices
-2. Aggregate results to compute optimal correction factors
-3. Apply scale correction during common space alignment
-
-**Option B: Use pre-computed correction factors**:
-```bash
-# First run diagnostic mode to generate analysis
-nextflow run soct_3d_reconst.nf \
-    --input /path/to/data \
-    --diagnostic_mode true \
-    --debug_slices "30-40"  # Test subset first
-
-# Then re-run with scale correction using the generated JSON
-nextflow run soct_3d_reconst.nf \
-    --input /path/to/data \
-    --scale_correction_enabled true \
-    --dilation_json /path/to/output/diagnostics/aggregated_dilation/aggregated_dilation_analysis.json
-```
-
-**Option C: Manual scale factors**:
-```bash
-nextflow run soct_3d_reconst.nf \
-    --input /path/to/data \
-    --scale_correction_enabled true \
-    --scale_correction_y 1.031 \
-    --scale_correction_x 1.009
-```
-
-#### Using Command Line (Manual)
-
-```bash
-# Step 1: Aggregate dilation analysis from multiple slices
-linum_aggregate_dilation_analysis.py \
-    sub-18/diagnostics/dilation_analysis \
-    sub-18/diagnostics/aggregated_dilation
-
-# Step 2: Apply correction during 3D alignment
-linum_align_mosaics_3d_from_shifts.py \
-    mosaics_dir \
-    shifts_xy.csv \
-    aligned_output \
-    --dilation_json sub-18/diagnostics/aggregated_dilation/aggregated_dilation_analysis.json
-
-# Or use manual values:
-linum_align_mosaics_3d_from_shifts.py \
-    mosaics_dir \
-    shifts_xy.csv \
-    aligned_output \
-    --scale_y 1.031 \
-    --scale_x 1.009
-```
-
-**Understanding scale factors**:
-- `scale < 1` measured → mosaic is smaller than expected → use correction `> 1` to expand
-- `scale > 1` measured → mosaic is larger than expected → use correction `< 1` to shrink
-- The aggregation script outputs the **correction** factors directly (inverse of measured)
-
 **If specific slices are problematic**:
 ```groovy
 // Exclude degraded slices via slice_config.csv
-// Or limit analysis:
-debug_slices = "20-40"  // Focus on problem region
+// Or enable automatic quality assessment and exclusion:
+auto_assess_quality = true
+auto_assess_min_quality = 0.3
+auto_exclude_enabled = true
+```
+
+**If large inter-slice shifts are causing misalignment**:
+```groovy
+// Enable rehoming detection to correct encoder glitch spikes:
+detect_rehoming = true
+rehoming_max_shift_mm = 0.5
+// For tile-column expansion events (legacy data):
+tile_fov_mm = 0.875
+// Enable image-based refinement for transitions flagged reliable=0:
+common_space_refine_unreliable = true
+common_space_refine_max_discrepancy_px = 0
 ```
 
 ### Step 3: Reprocess with Fixes
@@ -301,7 +261,7 @@ nextflow run soct_3d_reconst.nf \
 ### Step 4: Validate Fix
 ```bash
 # Re-run diagnostics to confirm improvement
-linum_diagnose_reconstruction.py /path/to/new_output diagnostics_after_fix
+linum-diagnose-reconstruction /path/to/new_output diagnostics_after_fix
 ```
 
 ## Example: Troubleshooting sub-18 Oblique Brain
@@ -310,16 +270,13 @@ Based on a 45° oblique-cut mouse brain with edge matching issues:
 
 1. **Run initial diagnostics**:
 ```bash
-linum_diagnose_reconstruction.py sub-18 sub-18/diagnostics
+linum-diagnose-reconstruction sub-18 sub-18/diagnostics
 ```
 
 2. **Check rotation analysis** (`diagnostics/rotation_analysis.txt`):
    - If cumulative rotation > 5°, edges will misalign
    
-3. **Check dilation analysis** (`diagnostics/dilation_analysis/*/dilation_analysis.txt`):
-   - Scale factor deviation from 1.0 indicates motor vs registration mismatch
-
-4. **Compare motor-only stitches** with registered stitches:
+3. **Compare motor-only stitches** with registered stitches:
    - Visual inspection of differences reveals registration contribution
 
 ## Parameters Reference
@@ -330,7 +287,6 @@ linum_diagnose_reconstruction.py sub-18 sub-18/diagnostics
 |-----------|---------|-------------|
 | `diagnostic_mode` | false | **Master switch**: enables ALL diagnostics when true |
 | `analyze_rotation_drift` | false | Analyze inter-slice rotation (mosaic-level) |
-| `analyze_tile_dilation` | false | Compare motor vs registration positions (tile-level) |
 | `motor_only_stitch` | false | Create motor-position-only stitches |
 | `motor_only_stack` | false | Create 3D stack using motor positions only |
 | `diagnostic_rotation_threshold` | 2.0 | Flag rotations above this (degrees) |
@@ -366,15 +322,13 @@ output/
 │   │   ├── rotation_data.csv
 │   │   ├── rotation_analysis.png
 │   │   └── rotation_analysis.txt
-│   ├── dilation_analysis/
-│   │   ├── 02/
-│   │   │   ├── dilation_analysis.json
-│   │   │   └── dilation_analysis.png
-│   │   ├── 03/
+│   ├── acquisition_rotation/
+│   ├── motor_only_stitch/
+│   │   ├── slice_z02_motor_only.ome.zarr
+│   │   ├── slice_z03_motor_only.ome.zarr
 │   │   └── ...
-│   └── motor_only_stitch/
-│       ├── slice_z02_motor_only.ome.zarr
-│       ├── slice_z03_motor_only.ome.zarr
-│       └── ...
+│   ├── refined_stitch/
+│   ├── motor_only_stack/
+│   └── stitch_comparison/
 └── ...
 ```

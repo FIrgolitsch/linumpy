@@ -1,7 +1,5 @@
 # Slice Interpolation Feature
 
----
-
 ## Overview
 
 The slice interpolation feature reconstructs missing slices in Serial OCT
@@ -27,10 +25,10 @@ survives to the final quality report.
   therefore fabricated slice.
 - Per-slice JSON diagnostics and per-slice manifest fragments are merged
   directly into `slice_config.csv` — the single source of truth for per-slice
-  decisions, see [`SLICE_CONFIG_FEATURE.md`](SLICE_CONFIG_FEATURE.md).
+  decisions, see {doc}`SLICE_CONFIG_FEATURE`.
   Successful interpolations stamp `interpolated=true`; failures stamp
   `interpolation_failed=true` plus the specific `fallback_reason`.
-- Downstream propagation: `linum_register_pairwise.py` automatically marks
+- Downstream propagation: `linum-register-pairwise` automatically marks
   any transform touching an interpolated slice as `reliable=0` so stacking
   can down-weight it. For hard-skipped slices there is no zarr at all, so
   pairwise simply bridges the two surviving neighbours directly.
@@ -62,7 +60,7 @@ constraints.
 ### Driving the interpolator from `slice_config.csv`
 
 The preprocessing pipeline generates an initial `slice_config.csv`
-(see [`SLICE_CONFIG_FEATURE.md`](SLICE_CONFIG_FEATURE.md)). The user
+(see {doc}`SLICE_CONFIG_FEATURE`). The user
 (or the automated quality assessment) may mark additional slices with
 `use=false`. In the reconstruction pipeline those slices are filtered out
 *before* common-space alignment, which leaves a gap in the numeric slice ID
@@ -82,6 +80,26 @@ in `slice_config.csv`. No separate flag is needed.
 The only scientifically motivated reconstruction method is `zmorph`.
 `average` and `weighted` are simpler baselines kept for comparison and as
 fallbacks; they do not use any 2D registration.
+
+### Decision flow at a glance
+
+```mermaid
+flowchart TD
+    START([Missing slice between<br/>vol_before and vol_after]) --> PLANES[find_best_overlap_planes<br/>foreground filter + NCC search]
+    PLANES -->|no foreground planes| F1[fallback_reason:<br/>no_foreground_planes]
+    PLANES -->|best NCC < min_overlap_correlation| F2[fallback_reason:<br/>low_overlap_ncc]
+    PLANES -->|good pair| REG[2D ITK registration<br/>boundary plane → reference]
+    REG -->|optimiser raised| F3[fallback_reason:<br/>registration_exception]
+    REG -->|det T ≤ 0| F4[fallback_reason:<br/>affine_determinant_non_positive]
+    REG -->|post-reg NCC ↑ < threshold| F5[fallback_reason:<br/>reg_did_not_improve]
+    REG -->|gates pass| WARP[For each output plane at α = z / (nz_out-1):<br/>warp vol_before by T^α<br/>warp vol_after by T^(α-1)<br/>gaussian-feathered cross-fade]
+    WARP --> OUT([Interpolated zarr<br/>+ manifest + diagnostics])
+    F1 --> SKIP([Hard skip:<br/>no zarr written,<br/>genuine gap in stack])
+    F2 --> SKIP
+    F3 --> SKIP
+    F4 --> SKIP
+    F5 --> SKIP
+```
 
 ### `zmorph` — z-aware morphing (default)
 
@@ -148,8 +166,8 @@ The cost is that *micro-structure that was truly unique to the missing
 block* cannot be recovered — it is physically unobservable from the
 neighbours alone. This is a limitation shared by any interpolation method,
 and is why interpolated slices stay flagged in `slice_config_final.csv` and
-propagate `reliable=0` through `linum_register_pairwise.py` →
-`linum_stack_slices_motor.py`.
+propagate `reliable=0` through `linum-register-pairwise` →
+`linum-stack-slices-motor`.
 
 ### `weighted` and `average` — simple baselines (user-requested only)
 
@@ -230,7 +248,7 @@ interpolate_missing_slice  ──►  zarr + preview + diagnostics.json + manife
         │
         ▼  (one fragment per interpolated slice, collected)
         │
-finalise_interpolation (linum_interpolate_missing_slice.py --finalise)
+finalise_interpolation (linum-interpolate-missing-slice --finalise)
         │
         ├── input: current slice_config.csv (flowing from earlier steps)
         ├── input: per-slice manifest fragments
@@ -273,10 +291,10 @@ the row left blank.
 
 ### Downstream reliability propagation
 
-`linum_register_pairwise.py` detects `_interpolated.ome.zarr` inputs and
+`linum-register-pairwise` detects `_interpolated.ome.zarr` inputs and
 forces the resulting `pairwise_registration_metrics.json` to
 `overall_status="error"` and `registration_confidence=0.0`.
-`linum_stack_slices_motor.py` reads that flag via the `reliable` column and
+`linum-stack-slices-motor` reads that flag via the `reliable` column and
 down-weights those transforms during accumulation. Interpolated slices
 therefore never masquerade as measured data in the stacked volume.
 
@@ -288,7 +306,7 @@ Each interpolation run also emits a human-readable JSON file at
 `${output}/interpolate_missing_slice/slice_z{NN}_interpolated_diagnostics.json`
 with the full trace:
 
-```jsonc
+```json
 {
   "method": "zmorph",
   "method_used": "zmorph",
@@ -340,7 +358,7 @@ when reviewing the whole subject.
 
 ```bash
 # Recommended: z-morph method with diagnostics + manifest entry
-linum_interpolate_missing_slice.py slice_z05.ome.zarr slice_z07.ome.zarr \
+linum-interpolate-missing-slice slice_z05.ome.zarr slice_z07.ome.zarr \
     slice_z06_interpolated.ome.zarr \
     --method zmorph \
     --blend_method gaussian \
@@ -349,7 +367,7 @@ linum_interpolate_missing_slice.py slice_z05.ome.zarr slice_z07.ome.zarr \
     --manifest_entry slice_z06_manifest.csv
 
 # Simple baselines (no 2D registration)
-linum_interpolate_missing_slice.py slice_z05.ome.zarr slice_z07.ome.zarr \
+linum-interpolate-missing-slice slice_z05.ome.zarr slice_z07.ome.zarr \
     slice_z06_interpolated.ome.zarr --method weighted
 ```
 
@@ -357,7 +375,7 @@ linum_interpolate_missing_slice.py slice_z05.ome.zarr slice_z07.ome.zarr \
 
 ```bash
 # Merge a directory of per-slice manifest fragments into slice_config.csv.
-linum_interpolate_missing_slice.py --finalise \
+linum-interpolate-missing-slice --finalise \
     --slice_config_in  slice_config.csv \
     --slice_config_out slice_config_final.csv \
     --fragments        interpolate_missing_slice
@@ -466,9 +484,9 @@ consider masking interpolated slices when computing volumetric statistics.
 | File | Description |
 |------|-------------|
 | `linumpy/stitching/interpolation.py` | Interpolation algorithms (`interpolate_z_morph`, `interpolate_weighted`, `interpolate_average`, helpers) |
-| `scripts/linum_interpolate_missing_slice.py` | Standalone CLI (also provides `--finalise` for merging manifest fragments) |
-| `scripts/linum_register_pairwise.py` | Automatically flags registrations touching interpolated slices |
-| `scripts/linum_stack_slices_motor.py` | Uses `reliable=0` to down-weight interpolated-slice transforms |
+| `scripts/stacking/linum_interpolate_missing_slice.py` | Standalone CLI (also provides `--finalise` for merging manifest fragments) |
+| `scripts/stitching/linum_register_pairwise.py` | Automatically flags registrations touching interpolated slices |
+| `scripts/stacking/linum_stack_slices_motor.py` | Uses `reliable=0` to down-weight interpolated-slice transforms |
 | `workflows/reconst_3d/soct_3d_reconst.nf` | `interpolate_missing_slice` + `finalise_interpolation` processes |
 | `workflows/reconst_3d/nextflow.config` | Interpolation parameters |
 | `linumpy/tests/test_stitching_interpolation.py` | Unit tests and synthetic ground-truth benchmarks |
