@@ -213,38 +213,5 @@ sub-*
 # Sphinx auto-generated API docs (autoapi)
 docs/api/
 
-# === OpenGSD (gsd-core) — keep GSD-produced files out of git ===
-# Copilot local install (under .github/ — do NOT ignore .github/workflows/)
-.github/skills/
-.github/agents/
-.github/gsd-core/
-.github/copilot-instructions.md
-.github/gsd-file-manifest.json
-.github/gsd-install-state.json
-.github/gsd-local-patches/
-.github/gsd-pristine/
-.github/.gsd-surface.json
-.github/.gsd-profile
-.github/hooks/
-.github/scripts/
-# Other runtime installs (if present)
-.cursor/
-.claude/
-.windsurf/
-# Planning workspace — everything GSD writes during discuss/plan/execute/verify/ship
-.planning/
-.planning/tmp/
-# Generated agent instruction / rules files (repo root)
-/AGENTS.md
-/CLAUDE.md
-/GEMINI.md
-# Graphify working copy (canonical graph lives under .planning/graphs/)
-graphify-out/
-# GSD handoffs, repo memories, context intel, specs
-handoffs/
-memories/
-context/
-specs/
-# GSD meta / surface state
+# === GSD (pi) — keep GSD-produced state out of git ===
 .gsd/
-.gsd-profile
