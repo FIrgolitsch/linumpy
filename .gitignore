@@ -215,3 +215,8 @@ docs/api/
 
 # === GSD (pi) — keep GSD-produced state out of git ===
 .gsd/
+
+# === Agent tooling state (pi skills, background shells) ===
+.agents/
+.bg-shell/
+skills-lock.json
