@@ -6,7 +6,7 @@
 - **Repo**: github.com/linum-uqam/linumpy — default branch `main`, development on `dev`
 - **Python**: 3.14+ (`.venv/bin/python` at repo root)
 - **Key deps**: numpy 2.5+, scipy 1.18+ (via `[tool.uv] override-dependencies` — basicpy pins scipy<1.13 but we lift that ceiling for modern numpy/scipy), scikit-image, SimpleITK, BaSiCPy/basicpy>=2.0.0,<2.1 (PyTorch backend, torch constrained to >=2.12.0,<2.13), Zarr 3.0+, OME-Zarr 0.9+, napari
-- **linum-basic**: git branch `modernisation` on Linum-BaSiC (not a PyPI release yet; uv.lock pins the resolved rev — switch to a tag when a proper release exists)
+- **linum-basic**: git branch `upstream-staging` on Linum-BaSiC (not a PyPI release yet; uv.lock pins the resolved rev — switch to a tag when a proper release exists)
 
 ## Repository Layout
 

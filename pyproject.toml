@@ -190,7 +190,7 @@ dev = [
 # - basicpy 2.0.0 declares scipy<1.13, which transitively caps numpy at 1.x.
 # - override-dependencies lifts that ceiling so uv resolves modern numpy/scipy
 #   (currently numpy 2.5.x, scipy 1.18.x) that work at runtime in our bias/illumination paths.
-# - linum-basic is sourced from the modernisation git branch ; uv.lock pins the rev.
+# - linum-basic is sourced from the upstream-staging branch of Frans's fork ; uv.lock pins the rev.
 constraint-dependencies = [
     "torch>=2.12.0,<2.13",
 ]
@@ -200,8 +200,9 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-# linum-basic is not published on PyPI; resolve it from the lab repository.
-linum-basic = { git = "https://github.com/linum-uqam/Linum-BaSiC.git", branch = "modernisation" }
+# linum-basic is not published on PyPI; resolve it from Frans's fork (in-step with
+# this linumpy fork) so the most recent upstream-staging work is available here.
+linum-basic = { git = "https://github.com/FIrgolitsch/Linum-BaSiC.git", branch = "upstream-staging" }
 
 [tool.pytest.ini_options]
 filterwarnings = [
