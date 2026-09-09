@@ -9,6 +9,7 @@ from linumpy.intensity.bias_field import (
     compute_tissue_mask,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_silhouette_xy,
 )
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,41 @@ def test_compute_tissue_mask_oblique_section():
     bot_xs = np.argwhere(mask[-1])[:, 1]
     assert top_xs.size > 0 and bot_xs.size > 0
     assert bot_xs.mean() > top_xs.mean() + 5  # large oblique displacement
+
+
+def test_tissue_mask_silhouette_keeps_overlap_drops_agarose():
+    """OR-Z silhouette fills empty overlap planes inside the tissue footprint."""
+    mask = np.zeros((8, 24, 24), dtype=bool)
+    mask[:3, 6:18, 6:18] = True
+    sil = tissue_mask_silhouette_xy(mask)
+    assert sil.shape == (24, 24)
+    assert sil[6:18, 6:18].all()
+    assert not sil[0, 0]
+    extruded = np.broadcast_to(sil[None], mask.shape)
+    assert extruded[5, 12, 12]  # overlap plane inside XY footprint
+    assert not extruded[5, 0, 0]  # agarose
+
+
+def test_tissue_mask_silhouette_fills_xy_holes():
+    mask = np.zeros((4, 20, 20), dtype=bool)
+    mask[:, 4:16, 4:16] = True
+    mask[:, 8:12, 8:12] = False
+    sil = tissue_mask_silhouette_xy(mask)
+    assert sil[10, 10]
+
+
+def test_tissue_mask_silhouette_dilate_expands():
+    mask = np.zeros((4, 20, 20), dtype=bool)
+    mask[:, 8:12, 8:12] = True
+    sil0 = tissue_mask_silhouette_xy(mask, dilate_px=0)
+    sil2 = tissue_mask_silhouette_xy(mask, dilate_px=2)
+    assert sil2.sum() > sil0.sum()
+    assert sil2[6, 10] and not sil0[6, 10]
+
+
+def test_tissue_mask_silhouette_rejects_bad_rank():
+    with pytest.raises(ValueError, match="3-D"):
+        tissue_mask_silhouette_xy(np.ones((8, 8), dtype=bool))
 
 
 # ---------------------------------------------------------------------------

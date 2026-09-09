@@ -29,6 +29,7 @@ from linumpy.intensity.bias_field import (
     compute_tissue_mask,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_silhouette_xy,
 )
 from linumpy.intensity.normalization import apply_histogram_matching, apply_zprofile_smoothing
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr_array
@@ -142,7 +143,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--zero_outside_mask",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Zero out voxels outside the tissue mask in the final output\n(removes agarose halo). [%(default)s]",
+        help="Zero out voxels outside the output mask in the final volume\n"
+        "(removes agarose halo).  N4 still fits on the per-section Otsu mask.\n"
+        "[%(default)s]",
+    )
+    p.add_argument(
+        "--zero_mask_mode",
+        choices=("section", "silhouette"),
+        default="section",
+        help="Which mask is applied when --zero_outside_mask is on.\n"
+        "'section' uses the per-section Otsu mask (can punch dim overlap).\n"
+        "'silhouette' ORs that mask along Z, hole-fills, and extrudes the\n"
+        "XY footprint so overlap inside the brain is kept. [%(default)s]",
+    )
+    p.add_argument(
+        "--zero_mask_dilate_px",
+        type=int,
+        default=0,
+        help="Extra XY dilation (pixels) applied to the silhouette after\n"
+        "hole-filling.  Ignored in 'section' mode. [%(default)s]",
     )
 
     # Output options
@@ -387,8 +406,18 @@ def main() -> None:
     # by the boolean mask (broadcast-cast to 0.0/1.0) avoids the ~36 GB
     # temporary that ``np.where(mask, corrected, 0)`` allocates.
     if args.zero_outside_mask:
-        logger.info("Zeroing voxels outside tissue mask\u2026")
-        corrected *= mask
+        if args.zero_mask_mode == "silhouette":
+            sil_xy = tissue_mask_silhouette_xy(mask, dilate_px=args.zero_mask_dilate_px)
+            logger.info(
+                "Zeroing outside Z-OR silhouette (%d/%d XY pixels, dilate=%d)\u2026",
+                int(sil_xy.sum()),
+                sil_xy.size,
+                args.zero_mask_dilate_px,
+            )
+            corrected *= sil_xy
+        else:
+            logger.info("Zeroing voxels outside per-section tissue mask\u2026")
+            corrected *= mask
     del mask
 
     # Save output

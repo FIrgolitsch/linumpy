@@ -37,7 +37,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Slow XY drift across many slices | Raise `stack_translation_smooth_sigma` (3→5); set `stack_max_cumulative_drift_px=0` |
 | Optimizer-boundary translation hits | Keep `skip_warning_transforms=true`; **don't** zero them via `stack_max_pairwise_translation` unless they're clearly worse than zero |
 | Visible inter-slice intensity steps | `correct_bias_field=true`, `bias_histogram_match_per_zplane=true`, `bias_zprofile_smooth_sigma=2.0` (raise to 4 if persists) |
-| N4 punching black stripes in overlap / orthogonal views | `bias_zero_outside_mask=false` (Otsu mask still used for the N4 fit) |
+| N4 punching black stripes in overlap / orthogonal views | `bias_zero_mask_mode='silhouette'` (keep `bias_zero_outside_mask=true`) |
 | Bias correction over-flattening tissue | Lower `bias_strength` (1.0 → 0.7) |
 | Atlas overlay rotated 90° / flipped | `ras_orientation_preview=true`, then tune `ras_input_orientation` and `ras_initial_rotation` |
 
@@ -96,7 +96,9 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | `bias_histogram_match_per_zplane` | `true` | Keep on. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Range 2–4. |
 | `bias_tissue_threshold` | `0.005` | Lower if tissue mistaken for bg. |
-| `bias_zero_outside_mask` | `true` | `false` keeps dim overlap; N4 still fits on the mask. |
+| `bias_zero_outside_mask` | `true` | Master switch for agarose zeroing. Keep on. |
+| `bias_zero_mask_mode` | `'section'` | `'silhouette'` keeps dim overlap inside the brain XY footprint. |
+| `bias_zero_mask_dilate_px` | `0` | Extra XY margin on the silhouette (e.g. 8). |
 
 ### Atlas registration
 | Param | Default | Lever |

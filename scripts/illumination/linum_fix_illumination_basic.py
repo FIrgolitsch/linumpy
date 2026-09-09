@@ -404,8 +404,8 @@ def _write_diagnostics(
     corr_tile = corrected_tiles[center_tile_idx]
 
     # Full mosaic planes for the representative z
-    raw_mosaic_plane = mosaic.array[z_mid]
-    corr_mosaic_plane = corrected_crop[z_mid]
+    raw_mosaic_plane = np.asarray(mosaic.array[z_mid])
+    corr_mosaic_plane = np.asarray(corrected_crop[z_mid])
 
     try:
         fig_diag = viz.figure_apply_correction(

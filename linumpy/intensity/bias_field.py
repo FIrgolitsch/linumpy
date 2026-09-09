@@ -242,6 +242,49 @@ def compute_tissue_mask(
     return mask
 
 
+def tissue_mask_silhouette_xy(mask: np.ndarray, dilate_px: int = 0) -> np.ndarray:
+    """Return a 2-D XY tissue silhouette from a 3-D per-section mask.
+
+    OR-reduces *mask* along Z, hole-fills the union, and optionally dilates
+    with a disk of radius *dilate_px*.  Broadcast this against Z to keep dim
+    overlap inside the brain footprint while still dropping agarose that was
+    never classified as tissue on any plane.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean tissue mask ``(Z, Y, X)`` from :func:`compute_tissue_mask`.
+    dilate_px : int
+        Extra XY margin in pixels after hole-filling.  ``0`` disables dilation.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array of shape ``(Y, X)``.
+    """
+    from scipy.ndimage import binary_dilation, binary_fill_holes
+    from skimage.morphology import disk
+
+    from linumpy.gpu import is_cupy_array
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
+    if dilate_px < 0:
+        raise ValueError(f"dilate_px must be >= 0; got {dilate_px}")
+
+    if is_cupy_array(mask):
+        import cupy as cp
+
+        mask_host = cp.asnumpy(mask)
+    else:
+        mask_host = mask
+    mask_np = np.asarray(mask_host, dtype=bool)
+    silhouette = binary_fill_holes(mask_np.any(axis=0))
+    if dilate_px > 0:
+        silhouette = binary_dilation(silhouette, structure=disk(dilate_px))
+    return silhouette
+
+
 # ---------------------------------------------------------------------------
 # N4 core
 # ---------------------------------------------------------------------------

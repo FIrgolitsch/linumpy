@@ -390,7 +390,9 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 | `correct_bias_field` | `false` | Enable post-stacking N4 bias field correction |
 | `bias_mode` | `'two_pass'` | Correction mode: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global) |
 | `bias_strength` | `1.0` | Correction mixing strength (0 = passthrough, 1 = full correction) |
-| `bias_zero_outside_mask` | `true` | Zero voxels outside the Otsu tissue mask. Set `false` to keep dim overlap (N4 still fits on the mask). |
+| `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask. Keep `true` to drop agarose. |
+| `bias_zero_mask_mode` | `'section'` | `'silhouette'` keeps dim overlap inside the brain XY footprint (N4 still fits on the per-section Otsu mask). |
+| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette. Ignored in `'section'` mode. |
 
 #### Atlas Registration (RAS Alignment)
 

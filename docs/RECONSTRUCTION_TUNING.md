@@ -303,7 +303,9 @@ and slow inter-slice intensity drift.
 | `bias_histogram_match_per_zplane` | `true` | Match each Z-plane to the global tissue distribution before N4. **Strongly reduces inter-slice intensity steps.** Roughly an order of magnitude better than chunked HM in tested cases. |
 | `bias_tissue_threshold` | `0.005` | Voxels at or below this intensity are considered background and excluded from histogram matching. Lower if tissue is being treated as background. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Gaussian smoothing (sigma in Z-planes) of a residual scalar gain after HM. Eliminates the small inter-slice steps HM cannot remove. `0` = disabled. Typical range 2–4. |
-| `bias_zero_outside_mask` | `true` | Zero voxels outside the Otsu tissue mask (agarose suppression). On heavily overlapped serial-OCT stacks the mask treats dim overlap as background and punches black stripes in orthogonal views. `false` keeps overlap; N4 still fits on the mask. |
+| `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask (agarose suppression). N4 still fits on the per-section Otsu mask. Keep `true`. |
+| `bias_zero_mask_mode` | `'section'` | `'section'` applies the per-section Otsu mask (can punch dim overlap). `'silhouette'` ORs that mask along Z, hole-fills, and extrudes the XY footprint so overlap inside the brain is kept. |
+| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette after hole-fill. Ignored in `'section'` mode. |
 
 **Recipe — visible intensity steps between slices:**
 
@@ -313,7 +315,7 @@ and slow inter-slice intensity drift.
 3. If steps remain, raise sigma (2 → 4).
 4. If tissue features are getting flattened, lower `bias_strength` (1.0 → 0.7).
 5. If orthogonal views show black stripes through overlap, set
-   `bias_zero_outside_mask = false`.
+   `bias_zero_mask_mode = 'silhouette'` (keep `bias_zero_outside_mask = true`).
 
 ---
 

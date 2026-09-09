@@ -75,7 +75,9 @@ params {
     correct_bias_field = false
     bias_mode = 'two_pass'
     bias_strength = 1.0
-    bias_zero_outside_mask = true   // false keeps dim overlap; N4 still fits on the tissue mask
+    bias_zero_outside_mask = true
+    bias_zero_mask_mode = 'section'     // 'silhouette' keeps dim overlap; N4 still fits on the Otsu mask
+    bias_zero_mask_dilate_px = 0
 
     // =========================================================================
     // ATLAS REGISTRATION — DOWNSTREAM.
