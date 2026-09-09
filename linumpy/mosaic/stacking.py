@@ -471,3 +471,134 @@ def refine_z_blend_overlap(
 
     refined = ndi_shift(moving_overlap.astype(np.float32), [0, dy, dx], order=0, mode="nearest")
     return refined, magnitude
+
+
+def extract_overlap_rois(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    overlap: int,
+    moving_z_start: int = 0,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Z-end overlap of ``fixed`` vs Z-start of ``moving`` (after ``moving_z_start``).
+
+    Serial OCT slabs overlap only at the extremities — the bottom of the
+    previous slab and the top of the next — not through the full slice depth.
+    """
+    mz = max(0, int(moving_z_start))
+    ov = min(int(overlap), fixed.shape[0], max(0, moving.shape[0] - mz))
+    if ov < 1:
+        return None
+    f = fixed[-ov:]
+    m = moving[mz : mz + ov]
+    ny = min(f.shape[1], m.shape[1])
+    nx = min(f.shape[2], m.shape[2])
+    return f[:, :ny, :nx], m[:, :ny, :nx]
+
+
+def overlap_z_profiles(
+    fixed_ov: np.ndarray,
+    moving_ov: np.ndarray,
+    tissue_threshold: float = 0.01,
+    min_voxels: int = 200,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-plane median intensity in the overlap, both-tissue voxels only.
+
+    XY coverage is partial: a voxel contributes only when both slabs exceed
+    ``tissue_threshold``. Planes with fewer than ``min_voxels`` are NaN.
+    """
+    both = (fixed_ov > tissue_threshold) & (moving_ov > tissue_threshold)
+    n_z = fixed_ov.shape[0]
+    pf = np.full(n_z, np.nan, dtype=np.float64)
+    pm = np.full(n_z, np.nan, dtype=np.float64)
+    n = np.zeros(n_z, dtype=np.int64)
+    for z in range(n_z):
+        mask = both[z]
+        n[z] = int(mask.sum())
+        if n[z] < min_voxels:
+            continue
+        pf[z] = float(np.median(fixed_ov[z][mask]))
+        pm[z] = float(np.median(moving_ov[z][mask]))
+    return pf, pm, n
+
+
+def fit_overlap_log_ratio(
+    profile_fixed: np.ndarray,
+    profile_moving: np.ndarray,
+    min_planes: int = 4,
+) -> tuple[float, float] | None:
+    """Fit ``log(I_next / I_prev) = a + b * i`` on valid overlap planes.
+
+    ``i = 0`` is the first overlap plane (still toward the unique part of the
+    previous slab). Returns ``(a, b)`` or ``None`` if too few planes.
+    """
+    valid = np.isfinite(profile_fixed) & np.isfinite(profile_moving) & (profile_fixed > 1e-8) & (profile_moving > 1e-8)
+    if int(valid.sum()) < min_planes:
+        return None
+    z = np.arange(len(profile_fixed), dtype=np.float64)[valid]
+    y = np.log(profile_moving[valid] / profile_fixed[valid])
+    b, a = np.polyfit(z, y, 1)
+    return float(a), float(b)
+
+
+def overlap_z_gain_curve(
+    nz: int,
+    overlap: int,
+    a: float,
+    b: float,
+    clamp: tuple[float, float] = (0.25, 4.0),
+) -> np.ndarray:
+    """1-D gain for the previous (fixed) slab.
+
+    Overlap planes get ``g = exp(a + b i)``. The unique (non-overlap) region
+    ramps from 1 at the surface to the overlap-start gain so deep tissue is
+    boosted toward the next slice's top without flattening the surface.
+    """
+    gain = np.ones(int(nz), dtype=np.float64)
+    ov = min(max(0, int(overlap)), int(nz))
+    if ov < 1:
+        return gain.astype(np.float32)
+    i_ov = np.arange(ov, dtype=np.float64)
+    lo, hi = clamp
+    g_ov = np.clip(np.exp(a + b * i_ov), lo, hi)
+    gain[-ov:] = g_ov
+    n_pre = int(nz) - ov
+    if n_pre > 0:
+        gain[:n_pre] = np.linspace(1.0, float(g_ov[0]), n_pre, dtype=np.float64)
+    return np.clip(gain, lo, hi).astype(np.float32)
+
+
+def apply_overlap_z_gain(vol: np.ndarray, gain: np.ndarray) -> np.ndarray:
+    """Apply a per-Z multiplicative gain. ``gain`` length must match ``vol.shape[0]``."""
+    if gain.shape[0] != vol.shape[0]:
+        msg = f"gain length {gain.shape[0]} != volume Z {vol.shape[0]}"
+        raise ValueError(msg)
+    return vol * gain.astype(vol.dtype, copy=False)[:, None, None]
+
+
+def estimate_overlap_z_gain_fit(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    overlap: int,
+    moving_z_start: int = 0,
+    tissue_threshold: float = 0.01,
+    min_voxels: int = 200,
+    min_planes: int = 4,
+) -> tuple[float, float, float, int] | None:
+    """Fit overlap z-gain from Z-end / Z-start extremities only.
+
+    Returns ``(a, b, xy_fraction, n_planes)`` or ``None``. ``xy_fraction`` is
+    the mean fraction of overlap-plane voxels where both slabs have tissue.
+    """
+    rois = extract_overlap_rois(fixed, moving, overlap, moving_z_start)
+    if rois is None:
+        return None
+    fixed_ov, moving_ov = rois
+    pf, pm, n = overlap_z_profiles(fixed_ov, moving_ov, tissue_threshold=tissue_threshold, min_voxels=min_voxels)
+    fit = fit_overlap_log_ratio(pf, pm, min_planes=min_planes)
+    if fit is None:
+        return None
+    a, b = fit
+    plane_area = float(fixed_ov.shape[1] * fixed_ov.shape[2])
+    xy_fraction = float(np.mean(n / plane_area)) if plane_area > 0 else 0.0
+    n_planes = int(np.isfinite(pf).sum())
+    return a, b, xy_fraction, n_planes

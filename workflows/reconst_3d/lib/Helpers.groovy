@@ -239,6 +239,10 @@ class Helpers {
         if (params.blend_refinement_px > 0) opts += " --blend_refinement_px ${params.blend_refinement_px}"
         if (params.stack_blend_z_refine_vox > 0) opts += " --blend_z_refine_vox ${params.stack_blend_z_refine_vox}"
         if (params.blend_z_refine_min_confidence > 0) opts += " --blend_z_refine_min_confidence ${params.blend_z_refine_min_confidence}"
+        if (params.stack_overlap_z_gain) {
+            opts += ' --overlap_z_gain'
+            opts += " --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold}"
+        }
         return opts
     }
 

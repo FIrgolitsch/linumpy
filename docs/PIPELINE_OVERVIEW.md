@@ -370,6 +370,7 @@ The final 3D volume is stored as an OME-Zarr with multiple resolution levels opt
 | `registration_max_translation` | `200.0` | Optimizer bound on translation (pixels) |
 | `registration_max_rotation` | `5.0` | Optimizer bound on rotation (degrees) |
 | `stack_blend_enabled` | `true` | Enable blending between slices |
+| `stack_overlap_z_gain` | `false` | Boost previous slice from Z-end overlap (both-tissue); skip scalar dimming |
 | `apply_rotation_only` | `false` | Apply only rotation from pairwise registration during stacking |
 | `stack_accumulate_translations` | `true` | Accumulate pairwise translations as cumulative canvas offsets |
 | `stack_confidence_weight_translations` | `true` | Weight translations by confidence before accumulating |
@@ -607,6 +608,7 @@ with $\mathcal{E}$ = Euler2D (rotation + translation) or pure translation, optim
    $$
    is used to cross-fade: $B = (1 - w) F + w M$ where both are valid, otherwise the single-valid side is kept. Zero slope at both endpoints avoids seams.
 4. **Sub-pixel refinement.** Before blending, a 2D phase correlation on the Z-projected overlap may shift the moving slice by $\le$ `max_blend_refinement_px`.
+5. **Overlap z-gain** (`stack_overlap_z_gain`). Fit $\log(I_{k+1}/I_k) = a + b i$ on the Z-end overlap (both-tissue voxels only — slabs do not overlap through their full depth or full XY). Boost slice $k$ with a 1-D curve (1 at the surface, $e^{a+bi}$ in the overlap). The incoming slice is not dimmed.
 
 ---
 

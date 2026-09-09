@@ -31,11 +31,14 @@ from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
+    apply_overlap_z_gain,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
     enforce_z_consistency,
+    estimate_overlap_z_gain_fit,
     find_z_overlap,
+    overlap_z_gain_curve,
     refine_z_blend_overlap,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
@@ -196,6 +199,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "plane and set the blend there. Z-spacing stays fixed at slicing_interval;\n"
         "only the blend zone moves. Useful when tissue overlap is smaller than\n"
         "the imaging depth implies (e.g. deeper cuts). 0 = disabled. [%(default)s]",
+    )
+    p.add_argument(
+        "--overlap_z_gain",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Boost the previous slice so its Z-end overlap matches the next\n"
+        "slice's top (1-D log-ratio fit on both-tissue voxels). Replaces the\n"
+        "scalar median scale that dims the incoming slice. Overlap is only the\n"
+        "Z extremities, not the full slab.",
+    )
+    p.add_argument(
+        "--overlap_z_gain_threshold",
+        type=float,
+        default=0.01,
+        help="Tissue threshold for both-slice overlap voxels when fitting\noverlap z-gain. [%(default)s]",
     )
 
     # Output options
@@ -675,6 +693,31 @@ def main() -> None:
             blend_overlap = overlap
             moving_z = args.moving_z_first_index  # Use default
 
+        gain_a = ""
+        gain_b = ""
+        gain_xy = ""
+        if args.overlap_z_gain and overlap > 0:
+            fit = estimate_overlap_z_gain_fit(
+                prev_vol,
+                vol,
+                overlap,
+                moving_z_start=moving_z or 0,
+                tissue_threshold=args.overlap_z_gain_threshold,
+            )
+            if fit is not None:
+                gain_a, gain_b, gain_xy, n_planes = fit
+                logger.info(
+                    "Slice %s→%s: overlap z-gain a=%.3f b=%.4f/vx  xy_frac=%.2f  planes=%s",
+                    prev_id,
+                    slice_id,
+                    gain_a,
+                    gain_b,
+                    gain_xy,
+                    n_planes,
+                )
+            else:
+                logger.info("Slice %s→%s: overlap z-gain skipped (not enough both-tissue overlap)", prev_id, slice_id)
+
         z_matches.append(
             {
                 "fixed_id": prev_id,
@@ -684,6 +727,9 @@ def main() -> None:
                 "moving_z_start": moving_z,  # Z-index in moving volume where to start
                 "correlation": corr,
                 "correlation_fallback_used": correlation_fallback_used,
+                "overlap_z_gain_a": gain_a,
+                "overlap_z_gain_b": gain_b,
+                "overlap_z_gain_xy_frac": gain_xy,
             }
         )
 
@@ -745,9 +791,32 @@ def main() -> None:
 
     output = AnalysisOmeZarrWriter(output_path, output_shape, chunk_shape=(100, 100, 100), dtype=np.float32)
 
+    overlap_as_fixed = {m["fixed_id"]: m["overlap_voxels"] for m in z_matches}
+    overlap_z_fits: dict[int, tuple[float, float]] = {}
+    if args.overlap_z_gain:
+        for m in z_matches:
+            a_val, b_val = m.get("overlap_z_gain_a"), m.get("overlap_z_gain_b")
+            if a_val != "" and b_val != "":
+                overlap_z_fits[m["fixed_id"]] = (float(a_val), float(b_val))
+
+    def _apply_overlap_z_gain_to_slice(vol: np.ndarray, slice_id: int) -> np.ndarray:
+        if slice_id not in overlap_z_fits:
+            return vol
+        a, b = overlap_z_fits[slice_id]
+        ov = overlap_as_fixed.get(slice_id, 0)
+        g = overlap_z_gain_curve(vol.shape[0], ov, a, b)
+        logger.info(
+            "Slice %s: applying overlap z-gain (median=%.3f, overlap=%s vx)",
+            slice_id,
+            float(np.median(g)),
+            ov,
+        )
+        return apply_overlap_z_gain(vol, g)
+
     # Place first slice
     first_dx, first_dy = cumsum_px[first_id]
     first_vol_f32 = first_vol.astype(np.float32)
+    first_vol_f32 = _apply_overlap_z_gain_to_slice(first_vol_f32, first_id)
     shifted_first, first_coords = apply_xy_shift(first_vol_f32, first_dx, first_dy, (out_ny, out_nx))
 
     if shifted_first is not None:
@@ -767,6 +836,7 @@ def main() -> None:
 
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         vol = np.array(vol[:]).astype(np.float32)
+        vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
 
         # Skip initial noisy z-slices in moving volume
         if moving_z_start > 0:
@@ -844,25 +914,28 @@ def main() -> None:
                 existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
-                # Intensity matching: adjust moving slice to match existing in overlap
-                # This reduces visible bands at slice transitions
-                existing_valid = existing > 0
-                moving_valid = moving_overlap > 0
-                both_valid = existing_valid & moving_valid
+                # Intensity matching. Default: scalar median scale on the incoming
+                # slice (clamped [0.5, 2]). That dims a brighter next-slice top to
+                # the previous slice's attenuated bottom. --overlap_z_gain instead
+                # boosts the previous slab from the Z-end overlap fit and skips this.
+                if not args.overlap_z_gain:
+                    existing_valid = existing > 0
+                    moving_valid = moving_overlap > 0
+                    both_valid = existing_valid & moving_valid
 
-                if np.sum(both_valid) > 1000:  # Need enough pixels for reliable statistics
-                    existing_median = np.median(existing[both_valid])
-                    moving_median = np.median(moving_overlap[both_valid])
+                    if np.sum(both_valid) > 1000:  # Need enough pixels for reliable statistics
+                        existing_median = np.median(existing[both_valid])
+                        moving_median = np.median(moving_overlap[both_valid])
 
-                    if moving_median > 1e-6 and existing_median > 1e-6:
-                        scale = existing_median / moving_median
-                        # Clamp scale to prevent extreme corrections
-                        scale = np.clip(scale, 0.5, 2.0)
-                        if abs(scale - 1.0) > 0.01:
-                            # Apply scaling to the entire shifted volume, not just overlap
-                            shifted = shifted * scale
-                            moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
-                            logger.debug("Slice %s: intensity scale=%.3f", slice_id, scale)
+                        if moving_median > 1e-6 and existing_median > 1e-6:
+                            scale = existing_median / moving_median
+                            # Clamp scale to prevent extreme corrections
+                            scale = np.clip(scale, 0.5, 2.0)
+                            if abs(scale - 1.0) > 0.01:
+                                # Apply scaling to the entire shifted volume, not just overlap
+                                shifted = shifted * scale
+                                moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
+                                logger.debug("Slice %s: intensity scale=%.3f", slice_id, scale)
 
                 # Z-blend refinement: correct residual XY misalignment in the overlap zone
                 if args.blend_refinement_px > 0:
