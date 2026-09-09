@@ -75,6 +75,7 @@ params {
     correct_bias_field = false
     bias_mode = 'two_pass'
     bias_strength = 1.0
+    bias_zero_outside_mask = true   // false keeps dim overlap; N4 still fits on the tissue mask
 
     // =========================================================================
     // ATLAS REGISTRATION — DOWNSTREAM.

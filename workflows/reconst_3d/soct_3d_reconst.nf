@@ -46,7 +46,7 @@ workflow {
     def rehomLabel = params.detect_rehoming
         ? (params.tile_fov_mm ? "enabled (tile_fov=${params.tile_fov_mm} mm)" : 'enabled')
         : 'disabled'
-    def biasLabel  = params.correct_bias_field ? "enabled (mode=${params.bias_mode})" : 'disabled'
+    def biasLabel  = params.correct_bias_field ? "enabled (mode=${params.bias_mode}, zero_outside_mask=${params.bias_zero_outside_mask})" : 'disabled'
     def manualLabel = (params.refine_manual_transforms && params.manual_transforms_dir)
         ? "${params.manual_transforms_dir}"
         : 'disabled'
@@ -1267,6 +1267,7 @@ process correct_bias_field {
     def hm_perz_flag = params.bias_histogram_match_per_zplane ? "--histogram_match_per_zplane" : ""
     def tissue_thresh_flag = params.bias_tissue_threshold != null ? "--tissue_threshold ${params.bias_tissue_threshold}" : ""
     def zprofile_flag = params.bias_zprofile_smooth_sigma != null ? "--zprofile_smooth_sigma ${params.bias_zprofile_smooth_sigma}" : ""
+    def zero_mask_flag = params.bias_zero_outside_mask ? "--zero_outside_mask" : "--no-zero_outside_mask"
     def gpu_pin_block = Helpers.gpuPinBlock(params, "correct_bias_field ${subject_name}")
     """
     ${gpu_pin_block}
@@ -1280,6 +1281,7 @@ process correct_bias_field {
         ${hm_perz_flag} \
         ${tissue_thresh_flag} \
         ${zprofile_flag} \
+        ${zero_mask_flag} \
         ${Helpers.pyramidArgs(params)}
 
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr

@@ -303,6 +303,7 @@ and slow inter-slice intensity drift.
 | `bias_histogram_match_per_zplane` | `true` | Match each Z-plane to the global tissue distribution before N4. **Strongly reduces inter-slice intensity steps.** Roughly an order of magnitude better than chunked HM in tested cases. |
 | `bias_tissue_threshold` | `0.005` | Voxels at or below this intensity are considered background and excluded from histogram matching. Lower if tissue is being treated as background. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Gaussian smoothing (sigma in Z-planes) of a residual scalar gain after HM. Eliminates the small inter-slice steps HM cannot remove. `0` = disabled. Typical range 2–4. |
+| `bias_zero_outside_mask` | `true` | Zero voxels outside the Otsu tissue mask (agarose suppression). On heavily overlapped serial-OCT stacks the mask treats dim overlap as background and punches black stripes in orthogonal views. `false` keeps overlap; N4 still fits on the mask. |
 
 **Recipe — visible intensity steps between slices:**
 
@@ -311,6 +312,8 @@ and slow inter-slice intensity drift.
    `bias_zprofile_smooth_sigma = 2.0`.
 3. If steps remain, raise sigma (2 → 4).
 4. If tissue features are getting flattened, lower `bias_strength` (1.0 → 0.7).
+5. If orthogonal views show black stripes through overlap, set
+   `bias_zero_outside_mask = false`.
 
 ---
 
