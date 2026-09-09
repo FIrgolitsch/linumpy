@@ -836,12 +836,15 @@ def main() -> None:
 
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         vol = np.array(vol[:]).astype(np.float32)
-        vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
 
         # Skip initial noisy z-slices in moving volume
         if moving_z_start > 0:
             vol = vol[moving_z_start:]
             logger.debug("Slice %s: skipped first %s z-slices", slice_id, moving_z_start)
+
+        # After crop, z=0 is the interface with the previous slab — keep gain=1
+        # there and boost toward the next slice's top in the Z-end overlap.
+        vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
 
         # Apply registration transform (rotation/small translation refinement) if available
         if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
