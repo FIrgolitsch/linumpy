@@ -200,8 +200,8 @@ nextflow run soct_3d_reconst.nf \
 |-----------|---------|-------------|
 | `resolution` | `10` | Target resolution (µm/pixel) |
 | `clip_percentile_upper` | `99.9` | Upper percentile for intensity clipping |
-| `fix_curvature_enabled` | `false` | Detect and compensate focal curvature artifacts |
-| `fix_illum_enabled` | `true` | Fix illumination inhomogeneity (BaSiCPy algorithm) |
+| `fix_illum_enabled` | `true` | Fix illumination inhomogeneity (BaSiC). Runs on resampled tiles **before** focal-curvature correction. |
+| `fix_curvature_enabled` | `false` | Detect and compensate focal curvature artifacts (after illumination correction) |
 | `fix_illum_fit_max_samples` | `2000` | Max tile samples for BaSiC flatfield estimation (higher = better fit, more memory) |
 | `fix_illum_max_iterations` | `500` | Max BaSiC optimizer iterations (higher = better convergence, slower) |
 | `fix_illum_darkfield` | `false` | Also fit a per-tile additive darkfield. Disabled by default: out-of-tile zero padding can make BaSiC fit a darkfield > signal and zero the volume. Enable when residual tile waffle pattern persists after flatfield correction. |

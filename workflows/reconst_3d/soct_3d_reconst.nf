@@ -172,17 +172,27 @@ workflow {
 
     // Stage 1: Preprocessing
     resampled = params.resolution > 0 ? resample_mosaic_grid(inputSlices) : inputSlices
-    focal_fixed = params.fix_curvature_enabled ? fix_focal_curvature(resampled) : resampled
+
+    // BaSiC illumination correction runs on the resample_mosaic_grid output
+    // (BEFORE fix_focal_curvature) so it sees the real per-camera-tile vignette.
+    // Running it post-focal-curvature collapses the flat-field to near-identity
+    // because focal-curvature correction removes the depth-dependent illumination
+    // component BaSiC is meant to model (validated sub-22/18/21, 2026-07-20).
+    // Tile geometry is the zarr chunk size (native camera tile downsampled);
+    // tile_fov_mm is intentionally NOT passed here (it misaligns BaSiC tiles).
+    illum_corrected = resampled
     if (params.fix_illum_enabled) {
         if (params.fix_illum_backend == 'linum-basic') {
-            fix_illumination_basic(focal_fixed)
-            illum_fixed = fix_illumination_basic.out.corrected
+            fix_illumination_basic(resampled)
+            illum_corrected = fix_illumination_basic.out.corrected
         } else {
-            illum_fixed = fix_illumination(focal_fixed)
+            illum_corrected = fix_illumination(resampled)
         }
-    } else {
-        illum_fixed = focal_fixed
     }
+
+    // Focal-curvature correction (Z-roll + internal BaSiC focal-plane fit) runs
+    // AFTER illumination correction, on the illumination-corrected grid.
+    illum_fixed = params.fix_curvature_enabled ? fix_focal_curvature(illum_corrected) : illum_corrected
 
     // Stage 2: XY Stitching (image-registration-based blend refinement)
     if (params.stitch_global_transform) {
@@ -655,7 +665,9 @@ process fix_illumination_basic {
     script:
     def gpu_flag = params.use_gpu ? "--use_gpu" : "--no-use_gpu"
     def darkfield_flag = params.fix_illum_darkfield ? "--use_darkfield" : "--no-use_darkfield"
-    def tile_fov_flag = params.tile_fov_mm != null ? "--tile_fov_mm ${params.tile_fov_mm}" : ""
+    // tile_fov_flag removed 2026-07-20: tile_fov_mm misaligns BaSiC tiles on the
+    // 10um resampled grid (88px instead of the 75px camera-tile chunks). BaSiC
+    // now uses vol.chunks as tile_shape (correct camera-tile geometry).
     def per_z_fit_flag = params.fix_illum_per_z_fit ? "--per_z_fit" : "--no-per_z_fit"
     def smoothness_flatfield_flag = params.fix_illum_smoothness_flatfield != null ? "--smoothness_flatfield ${params.fix_illum_smoothness_flatfield}" : ""
     // D-14: pin one GPU per fork when not in multi-GPU z-fan mode (compile-time params; avoids maxForks closure compare)
@@ -674,7 +686,6 @@ process fix_illumination_basic {
         --max_iterations ${params.fix_illum_max_iterations} \
         --darkfield_percentile ${params.fix_illum_darkfield_percentile} \
         ${smoothness_flatfield_flag} \
-        ${tile_fov_flag} \
         ${darkfield_flag} \
         ${per_z_fit_flag} \
         --slice_id z${slice_id} \

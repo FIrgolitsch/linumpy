@@ -31,7 +31,7 @@ flowchart TD
 
     subgraph RECONST["  3D RECONSTRUCTION  ·  soct_3d_reconst.nf  "]
         R00["[opt] Analyze shifts"]:::opt
-        R01["[opt] 1 · Resample mosaic grids"]:::opt --> R02["[opt] 2 · Fix focal curvature"]:::opt --> R03["[opt] 3 · Fix illumination"]:::opt --> R04["4 · Stitch tiles in 3D"] --> R05["5 · Beam profile correction"] --> R06["6 · Crop at interface"] --> R07["7 · Normalize intensities"] --> R08["[opt] 8 · Auto-assess quality"]:::opt --> R09["[opt] 9 · Detect re-homing"]:::opt --> R10["10 · Align to common space"] --> R11["[opt] 11 · Interpolate missing slices"]:::opt --> R12["12 · Pairwise registration"] --> R13["[opt] 13 · Auto-exclude clusters"]:::opt --> R14["14 · Stack into 3D volume"]
+        R01["[opt] 1 · Resample mosaic grids"]:::opt --> R02["[opt] 2 · Fix illumination"]:::opt --> R03["[opt] 3 · Fix focal curvature"]:::opt --> R04["4 · Stitch tiles in 3D"] --> R05["5 · Beam profile correction"] --> R06["6 · Crop at interface"] --> R07["7 · Normalize intensities"] --> R08["[opt] 8 · Auto-assess quality"]:::opt --> R09["[opt] 9 · Detect re-homing"]:::opt --> R10["10 · Align to common space"] --> R11["[opt] 11 · Interpolate missing slices"]:::opt --> R12["12 · Pairwise registration"] --> R13["[opt] 13 · Auto-exclude clusters"]:::opt --> R14["14 · Stack into 3D volume"]
         R03a["[opt] 3a · Estimate global transform"]:::opt -.-> R04
         R11 -.-> R11f["Finalise interpolation"]
         R12r["[opt] Refine manual transforms"]:::opt --> R13
@@ -166,22 +166,23 @@ resample_mosaic_grid
 - Resamples mosaic grids to target resolution
 - Skip if `resolution = -1`
 
-#### 2. Focal Curvature Correction (Optional)
-
-```
-fix_focal_curvature
-```
-- Detects and compensates for focal plane curvature
-- Enabled by `fix_curvature_enabled = true`
-
-#### 3. Illumination Correction (Optional)
+#### 2. Illumination Correction (Optional)
 
 ```
 fix_illumination
 ```
 - Compensates for XY illumination inhomogeneity
-- Uses BaSiC algorithm
+- Uses BaSiC on resampled camera tiles (before focal-curvature correction)
 - Enabled by `fix_illum_enabled = true`
+
+#### 3. Focal Curvature Correction (Optional)
+
+```
+fix_focal_curvature
+```
+- Detects and compensates for focal plane curvature
+- Runs after illumination correction so BaSiC still sees the tile vignette
+- Enabled by `fix_curvature_enabled = true`
 
 #### 4. 3D Stitching
 
@@ -826,8 +827,8 @@ output/
 │   └── readme.txt                    # Pipeline parameters
 ├── analyze_shifts/                   # Shifts analysis report and drift plots (when analyze_shifts = true)
 ├── resample_mosaic_grid/             # Resampled mosaics (if enabled)
-├── fix_focal_curvature/              # Curvature-corrected mosaics
 ├── fix_illumination/                 # Illumination-corrected mosaics
+├── fix_focal_curvature/              # Curvature-corrected mosaics
 ├── stitch_3d_with_refinement/        # Stitched 3D slices
 ├── previews/stitched_slices/         # Stitch previews (when stitch_preview = true)
 ├── beam_profile_correction/          # PSF-corrected slices
