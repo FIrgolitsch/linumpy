@@ -113,6 +113,7 @@ workflow {
      Attenuation comp. : ${params.compensate_attenuation_enabled ? 'enabled' : 'disabled'}
      Bias field corr.  : ${biasLabel}
      Manual transforms : ${manualLabel}
+     Overlap z-gain    : ${params.stack_overlap_z_gain ? 'enabled' : 'disabled'}
      Atlas alignment   : ${params.align_to_ras_enabled ? 'enabled' : 'disabled'}
     ============================================================
     """)
@@ -1223,7 +1224,13 @@ process stack {
 
     script:
     def gpu_flag = params.use_gpu ? " --use_gpu" : " --no-use_gpu"
-    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params)
+    // Keep overlap z-gain in this script block (not only Helpers.groovy) so
+    // the flag is part of the hashed command. A Helpers-only change does not
+    // bust the Nextflow task hash when soct_3d_reconst.nf is unchanged.
+    def overlap_z_gain_flag = params.stack_overlap_z_gain
+        ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold}"
+        : ""
+    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     """
@@ -1306,7 +1313,9 @@ process correct_bias_field {
 
 // Atlas registration to Allen Mouse Brain Atlas. Always the final step when enabled.
 process align_to_ras {
-    publishDir { "${params.output}/${task.process}" }, mode: 'move', saveAs: { fn ->
+    // symlink, not move: mode 'move' strips zip/preview/tfm from the workdir,
+    // so -resume can never cache-hit and always re-runs this "final" step.
+    publishDir { "${params.output}/${task.process}" }, mode: 'symlink', saveAs: { fn ->
         fn.endsWith('.ome.zarr') ? null : fn
     }
 
