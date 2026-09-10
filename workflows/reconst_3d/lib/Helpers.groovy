@@ -285,6 +285,33 @@ class Helpers {
             : ''
     }
 
+    /**
+     * Content stamp for the manual-transforms tree. Embedded in the stack
+     * script block so replacing transform.tfm files busts -resume even
+     * though --manual_transforms_dir is an absolute path string.
+     */
+    static String manualTransformsFingerprint(Map params) {
+        def dirPath = params.manual_transforms_dir?.toString()
+        if (!dirPath) {
+            return 'none'
+        }
+        def dir = new File(dirPath)
+        if (!dir.isDirectory()) {
+            return "missing:${dirPath}"
+        }
+        def parts = []
+        dir.eachFile { sub ->
+            if (!sub.isDirectory()) {
+                return
+            }
+            def tfm = new File(sub, 'transform.tfm')
+            if (tfm.exists()) {
+                parts << "${sub.name}:${tfm.length()}:${tfm.lastModified()}"
+            }
+        }
+        return parts.sort().join(',')
+    }
+
     static String stackCumulativeArgs(Map params) {
         if (!params.stack_accumulate_translations) return ''
         def opts = ' --accumulate_translations'

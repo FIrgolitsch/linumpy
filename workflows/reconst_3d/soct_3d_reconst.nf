@@ -363,10 +363,17 @@ workflow {
             .flatten()
             .filter { f -> !f.getName().endsWith('.ome.zarr') }
             .map { dir -> tuple(dir.getName(), dir) }
-        // Join pairs with their corresponding auto transform dir
+        // Join pairs with their corresponding auto transform dir.
+        // Stage the manual dir as a `path` input so Nextflow fingerprints
+        // transform.tfm contents. Passing only --manual_transforms_dir /abs/path
+        // hashes the string; replacing files in place never busts -resume.
+        manual_transforms_ch = Channel.value(file(params.manual_transforms_dir))
         refine_input = refine_pairs_keyed
             .join(auto_transforms_keyed)
-            .map { _id, fixed, moving, auto_tfm -> tuple(fixed, moving, auto_tfm) }
+            .combine(manual_transforms_ch)
+            .map { _id, fixed, moving, auto_tfm, manuals ->
+                tuple(fixed, moving, auto_tfm, manuals)
+            }
         refine_manual_transforms(refine_input)
         transforms_for_stack = refine_manual_transforms.out.collect()
     }
@@ -1129,19 +1136,20 @@ process register_pairwise {
 // Only runs when params.refine_manual_transforms = true.
 process refine_manual_transforms {
     input:
-    tuple path(fixed_vol), path(moving_vol), path("auto_transforms")
+    tuple path(fixed_vol), path(moving_vol), path("auto_transforms"), path(manual_transforms)
 
     output:
     path "*"
 
     script:
-    def manual_dir_opt = params.manual_transforms_dir ? "--manual_transforms_dir ${params.manual_transforms_dir}" : ""
     """
     dirname=\$(basename ${moving_vol} .ome.zarr)
     linum-refine-manual-transforms ${fixed_vol} ${moving_vol} auto_transforms \$dirname \
         --max_translation_px ${params.refine_max_translation_px} \
         --max_rotation_deg ${params.refine_max_rotation_deg} \
-        ${manual_dir_opt} -f
+        --manual_transforms_dir ${manual_transforms} \
+        --overlap_px 20 \
+        -f
     """
 
     stub:
@@ -1244,7 +1252,9 @@ process stack {
     def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_tissue_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
+    def manual_fp = Helpers.manualTransformsFingerprint(params)
     """
+    # manual_transforms_fingerprint ${manual_fp}
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
