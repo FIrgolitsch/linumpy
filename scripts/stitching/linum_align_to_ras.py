@@ -47,6 +47,28 @@ DEFAULT_MAX_ITERATIONS = 1000
 DEFAULT_METRIC = "MI"
 
 
+def _crop_plane_to_content(img: np.ndarray, margin: int = 8) -> np.ndarray:
+    """Trim a 2-D preview plane to its tissue bbox so the brain fills the panel."""
+    plane = np.asarray(img)
+    if plane.size == 0 or float(plane.max()) == 0.0:
+        return plane
+    floor = float(np.percentile(plane, 1))
+    mask = plane > floor + 1e-6
+    if not np.any(mask):
+        return plane
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    r0 = int(np.argmax(rows))
+    r1 = int(len(rows) - np.argmax(rows[::-1]))
+    c0 = int(np.argmax(cols))
+    c1 = int(len(cols) - np.argmax(cols[::-1]))
+    r0 = max(0, r0 - margin)
+    c0 = max(0, c0 - margin)
+    r1 = min(plane.shape[0], r1 + margin)
+    c1 = min(plane.shape[1], c1 + margin)
+    return plane[r0:r1, c0:c1]
+
+
 def _debug_log(message: str, **fields: Any) -> None:
     """Append an NDJSON line describing a slicing/labelling decision.
 
@@ -643,16 +665,22 @@ def create_alignment_preview(
         #   coronal  rows=S → Inferior at bottom,  Superior up
         #   sagittal rows=S → Inferior at bottom,  Superior up
         # No transpose or row reversal is needed.
-        axes[row, 0].imshow(orig_slices[row], cmap="gray", origin="lower", vmin=orig_vmin, vmax=orig_vmax)
+        axes[row, 0].imshow(
+            _crop_plane_to_content(orig_slices[row]), cmap="gray", origin="lower", vmin=orig_vmin, vmax=orig_vmax
+        )
         axes[row, 0].set_title(f"Original - {plane_name}")
         axes[row, 0].axis("off")
 
         # Aligned
-        axes[row, 1].imshow(aligned_slices[row], cmap="gray", origin="lower", vmin=align_vmin, vmax=align_vmax)
+        axes[row, 1].imshow(
+            _crop_plane_to_content(aligned_slices[row]), cmap="gray", origin="lower", vmin=align_vmin, vmax=align_vmax
+        )
         axes[row, 1].set_title(f"Aligned - {plane_name}")
         axes[row, 1].axis("off")
 
-        axes[row, 2].imshow(allen_slices[row], cmap="gray", origin="lower", vmin=allen_vmin, vmax=allen_vmax)
+        axes[row, 2].imshow(
+            _crop_plane_to_content(allen_slices[row]), cmap="gray", origin="lower", vmin=allen_vmin, vmax=allen_vmax
+        )
         axes[row, 2].set_title(f"Allen {allen_resolution}µm - {plane_name}")
         axes[row, 2].axis("off")
 
@@ -761,17 +789,17 @@ def create_orientation_preview(
     # for the axial panel this places Posterior at bottom (Anterior up), and
     # for coronal/sagittal it places Inferior at bottom (Superior up).  No
     # row reversal is needed -- it would invert this and flip S↔I.
-    axes[0].imshow(vol[z_mid, :, :], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[0].imshow(_crop_plane_to_content(vol[z_mid, :, :]), cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
     axes[0].set_title(f"Axial  (dim0=S={z_mid})")
     axes[0].set_xlabel("dim2=R  (← L    R →)")
     axes[0].set_ylabel("dim1=A  (← P    A →)")
 
-    axes[1].imshow(vol[:, y_mid, :], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[1].imshow(_crop_plane_to_content(vol[:, y_mid, :]), cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
     axes[1].set_title(f"Coronal  (dim1=A={y_mid})")
     axes[1].set_xlabel("dim2=R  (← L    R →)")
     axes[1].set_ylabel("dim0=S  (← I    S →)")
 
-    axes[2].imshow(vol[:, :, x_mid], cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
+    axes[2].imshow(_crop_plane_to_content(vol[:, :, x_mid]), cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
     axes[2].set_title(f"Sagittal  (dim2=R={x_mid})")
     axes[2].set_xlabel("dim1=A  (← P    A →)")
     axes[2].set_ylabel("dim0=S  (← I    S →)")

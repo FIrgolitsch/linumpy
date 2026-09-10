@@ -270,3 +270,17 @@ class TestStoreTransformInMetadata:
         np.testing.assert_allclose(mat[3], [0, 0, 0, 1], atol=1e-12)
         # Translation must be permuted to NGFF (Z, Y, X) ordering.
         np.testing.assert_allclose(mat[:3, 3], [2.5, 1.5, 0.5], atol=1e-12)
+
+
+def test_crop_plane_to_content_drops_padding(align_module):
+    img = np.zeros((80, 100), dtype=np.float32)
+    img[20:30, 40:55] = 1.0
+    cropped = align_module._crop_plane_to_content(img, margin=2)
+    assert cropped.shape == (10 + 4, 15 + 4)
+    assert float(cropped.max()) == 1.0
+
+
+def test_crop_plane_to_content_empty_is_noop(align_module):
+    img = np.zeros((8, 8), dtype=np.float32)
+    out = align_module._crop_plane_to_content(img)
+    assert out.shape == (8, 8)
