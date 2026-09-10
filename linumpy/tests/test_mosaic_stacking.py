@@ -7,7 +7,9 @@ from linumpy.mosaic.stacking import (
     apply_xy_shift,
     blend_overlap_xy,
     blend_overlap_z,
+    enforce_z_consistency,
     estimate_overlap_z_gain_fit,
+    expected_z_overlap,
     extract_overlap_rois,
     find_z_overlap,
     fit_overlap_log_ratio,
@@ -133,6 +135,30 @@ def test_blend_overlap_z_single_slice():
     moving = np.zeros((1, 8, 8), dtype=np.float32)
     result = blend_overlap_z(fixed, moving)
     assert result.shape == (1, 8, 8)
+
+
+def test_blend_overlap_z_does_not_mix_tissue_with_agarose():
+    """Dim agarose must not Hann-average with tissue."""
+    fixed = np.ones((6, 8, 8), dtype=np.float32)
+    moving = np.full((6, 8, 8), 0.005, dtype=np.float32)
+    result = blend_overlap_z(fixed, moving, tissue_threshold=0.01)
+    np.testing.assert_allclose(result, 1.0)
+
+
+def test_expected_z_overlap_consecutive_and_gap():
+    assert expected_z_overlap(43, 4, 20, id_step=1) == 19
+    assert expected_z_overlap(29, 4, 20, id_step=2) == -15
+
+
+def test_enforce_z_consistency_preserves_id_gap():
+    matches = [
+        {"fixed_id": 47, "moving_id": 48, "overlap_voxels": 21, "blend_overlap_voxels": 21},
+        {"fixed_id": 48, "moving_id": 49, "overlap_voxels": 21, "blend_overlap_voxels": 21},
+        {"fixed_id": 49, "moving_id": 51, "overlap_voxels": -15, "blend_overlap_voxels": 0},
+    ]
+    out, corrections = enforce_z_consistency(matches, confidence_per_slice={48: 0.0, 49: 0.0, 51: 0.0})
+    assert out[2]["overlap_voxels"] == -15
+    assert not any(c["moving_id"] == 51 for c in corrections)
 
 
 # ---------------------------------------------------------------------------

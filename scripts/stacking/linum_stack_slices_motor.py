@@ -37,6 +37,7 @@ from linumpy.mosaic.stacking import (
     blend_overlap_z,
     enforce_z_consistency,
     estimate_overlap_z_gain_fit,
+    expected_z_overlap,
     find_z_overlap,
     overlap_z_gain_curve,
     refine_z_blend_overlap,
@@ -221,6 +222,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=8,
         help="Skip overlap z-gain when the Z-end overlap is thinner than this\n"
         "(voxels). Catches interpolated/short terminal slabs. [%(default)s]",
+    )
+    p.add_argument(
+        "--blend_tissue_threshold",
+        type=float,
+        default=0.01,
+        help="Intensity at or below this is agarose/background in Z-blend.\n"
+        "Tissue is not Hann-averaged with below-threshold voxels. [%(default)s]",
     )
 
     # Output options
@@ -599,16 +607,25 @@ def main() -> None:
             # the user has explicitly requested physics-based expected overlap.
             moving_z = args.moving_z_first_index
             interval_voxels = int(args.slicing_interval_mm / res_z_mm)
-            overlap = vol.shape[0] - (moving_z or 0) - interval_voxels
-            overlap = max(0, overlap)
+            id_step = max(1, int(slice_id) - int(prev_id))
+            overlap = expected_z_overlap(vol.shape[0], moving_z or 0, interval_voxels, id_step)
             corr = 0.0
+            if id_step > 1:
+                logger.info(
+                    "Slice %s→%s: missing-slice gap (id_step=%s), expected overlap=%s vx (negative = empty Z, not glued)",
+                    prev_id,
+                    slice_id,
+                    id_step,
+                    overlap,
+                )
             logger.debug(
-                "Slice %s: expected overlap=%s voxels (vol_depth=%s, moving_z=%s [fixed], interval=%s)",
+                "Slice %s: expected overlap=%s voxels (vol_depth=%s, moving_z=%s [fixed], interval=%s, id_step=%s)",
                 slice_id,
                 overlap,
                 vol.shape[0],
                 moving_z,
                 interval_voxels,
+                id_step,
             )
             # Optionally search below expected_overlap for the best-correlated tissue
             # boundary to blend at, while keeping z-spacing fixed at slicing_interval.
@@ -616,7 +633,7 @@ def main() -> None:
             # imaging depth implies (i.e. the cut removed more tissue than expected).
             # Skip refinement for low-confidence slices -- spurious correlation matches
             # at degraded tissue boundaries cause Z-jumps.
-            blend_overlap = overlap
+            blend_overlap = max(0, overlap)
             slice_confidence = None
             if slice_id in registration_transforms:
                 if registration_transforms[slice_id] is not None:
@@ -975,12 +992,12 @@ def main() -> None:
                         logger.debug("Slice %s: z-blend XY refinement %.2f px", slice_id, ref_mag)
 
                 # Blend
-                blended = blend_overlap_z(existing, moving_overlap)
+                blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
                 output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1] = blended
 
                 # New contribution (always shifted[overlap:] to preserve z-spacing)
                 if z_end > z_cursor:
-                    output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = shifted[overlap:]
+                    output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = shifted[max(0, overlap) :]
         else:
             # No blending - just write to specific region
             output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = shifted

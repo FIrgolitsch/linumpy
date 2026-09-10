@@ -70,6 +70,12 @@ def enforce_z_consistency(
             if conf.get(slice_id, 0.5) >= confidence_protect_threshold:
                 continue
 
+            # Missing-slice gaps (e.g. 49→51) must keep the ID-step overlap,
+            # including a negative value that inserts empty Z.
+            fixed_id = match.get("fixed_id")
+            if fixed_id is not None and int(slice_id) - int(fixed_id) > 1:
+                continue
+
             deviation = abs(float(match[field]) - median_val)
             if deviation <= threshold:
                 continue
@@ -93,6 +99,17 @@ def enforce_z_consistency(
             )
 
     return z_matches, corrections
+
+
+def expected_z_overlap(vol_nz: int, moving_z: int, interval_voxels: int, id_step: int = 1) -> int:
+    """Return expected Z overlap from slicing interval, allowing a physical gap.
+
+    ``id_step`` is the slice-index delta (1 for consecutive IDs). When a
+    slice is missing, ``id_step=2`` uses two intervals so neighbors are not
+    glued together. Negative overlap means empty voxels between slabs.
+    """
+    step = max(1, int(id_step))
+    return int(vol_nz) - int(moving_z or 0) - int(interval_voxels) * step
 
 
 def find_z_overlap(
@@ -249,10 +266,9 @@ def apply_2d_transform(
     resampler.SetReferenceImage(sitk_img)
     resampler.SetTransform(tfm_2d)
     resampler.SetInterpolator(sitk.sitkLinear)
-
-    nonzero_vals = image_2d[image_2d > 0]
-    default_val = float(np.percentile(nonzero_vals, 1)) if len(nonzero_vals) > 0 else 0.0
-    resampler.SetDefaultPixelValue(default_val)
+    # Empty/rotated-in pixels must be 0 so blend_overlap_z treats them as
+    # background instead of Hann-mixing tissue with a dim agarose fill.
+    resampler.SetDefaultPixelValue(0.0)
 
     result = resampler.Execute(sitk_img)
     return sitk.GetArrayFromImage(result)
@@ -337,13 +353,14 @@ def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: tu
     return None, None
 
 
-def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray) -> np.ndarray:
+def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_threshold: float = 0.01) -> np.ndarray:
     """Blend overlapping Z-region using a cosine (Hann) ramp along Z-axis.
 
     The weight ramp has zero slope at both endpoints, so there is no abrupt
     intensity change at either boundary of the overlap zone.  At tissue
     boundaries where only one slice has data the full intensity of that slice
-    is used unchanged.
+    is used unchanged.  Voxels at or below ``tissue_threshold`` are treated as
+    agarose/background and are not Hann-averaged with tissue.
 
     Parameters
     ----------
@@ -351,6 +368,8 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray) -> np.n
         3D array (Z, Y, X) from the existing stack (bottom portion).
     moving_region : np.ndarray
         3D array (Z, Y, X) from the new slice (top portion).
+    tissue_threshold : float
+        Intensity at or below this is background. Default 0.01.
 
     Returns
     -------
@@ -358,17 +377,18 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray) -> np.n
         Blended region with smooth Z-transition.
     """
     nz = fixed_region.shape[0]
+    thr = float(tissue_threshold)
 
     if nz <= 1:
-        return moving_region if np.sum(moving_region > 0) >= np.sum(fixed_region > 0) else fixed_region
+        return moving_region if np.sum(moving_region > thr) >= np.sum(fixed_region > thr) else fixed_region
 
     # Cosine (Hann) ramp: 0 → 1 with zero slope at both ends
     t = np.linspace(0, np.pi, nz)
     z_weights = 0.5 * (1 - np.cos(t))
     alphas = np.broadcast_to(z_weights[:, np.newaxis, np.newaxis], fixed_region.shape).copy()
 
-    fixed_valid = fixed_region > 0
-    moving_valid = moving_region > 0
+    fixed_valid = fixed_region > thr
+    moving_valid = moving_region > thr
     both_valid = fixed_valid & moving_valid
     fixed_only = fixed_valid & ~moving_valid
     moving_only = moving_valid & ~fixed_valid
