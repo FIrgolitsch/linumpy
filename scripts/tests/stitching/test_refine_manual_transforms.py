@@ -116,7 +116,9 @@ def test_run_with_manual_transform(tmp_path, script_runner):
     assert ret.success, ret.stderr
     assert (out_dir / "transform.tfm").exists()
     metrics = json.loads((out_dir / "pairwise_registration_metrics.json").read_text())
-    assert metrics["source"] == "manual_refined"
+    assert metrics["source"] in ("manual_refined", "manual")
+    assert "reject_reason" in metrics["refinement"]
+    assert "ncc_before" in metrics["refinement"]
 
 
 def test_overwrite_guard(tmp_path, script_runner):
@@ -158,6 +160,26 @@ def _apply_rigid_2d(tx, ty, rot_deg, cx, cy, point):
     c = np.array([cx, cy])
     t = np.array([tx, ty])
     return r @ (np.asarray(point) - c) + c + t
+
+
+def test_accept_residual_requires_improvement():
+    module = _load_script_module()
+    assert module._accept_residual(0.50, 0.51, 1e-4)
+    assert not module._accept_residual(0.50, 0.50, 1e-4)
+    assert not module._accept_residual(0.50, 0.40, 1e-4)
+    assert not module._accept_residual(float("nan"), 0.9, 1e-4)
+
+
+def test_overlap_aips_uses_edge_slabs():
+    module = _load_script_module()
+    fixed = np.zeros((6, 4, 4), dtype=np.float32)
+    moving = np.zeros((6, 4, 4), dtype=np.float32)
+    fixed[-2:] = 3.0
+    moving[:2] = 5.0
+    fa, ma = module._overlap_aips(fixed, moving, overlap_px=2)
+    assert fa.shape == (4, 4)
+    assert float(fa.mean()) == 3.0
+    assert float(ma.mean()) == 5.0
 
 
 def test_compose_rigid_2d_matches_point_evaluation():

@@ -72,6 +72,52 @@ def find_best_z(fixed_vol: np.ndarray, moving_slice: np.ndarray, expected_z: int
     return max(0, min(nz - 1, best_z)), best_corr
 
 
+def tissue_ncc(fixed: np.ndarray, moving: np.ndarray, threshold: float = 0.01) -> float:
+    """Return NCC on voxels that are tissue in both images."""
+    mask = (fixed > threshold) & (moving > threshold)
+    if int(mask.sum()) < 100:
+        return float("nan")
+    av = fixed[mask].astype(np.float64)
+    bv = moving[mask].astype(np.float64)
+    av = av - av.mean()
+    bv = bv - bv.mean()
+    den = float(np.sqrt((av * av).sum() * (bv * bv).sum()))
+    if den == 0.0:
+        return float("nan")
+    return float((av * bv).sum() / den)
+
+
+def apply_refinement_bounds(
+    tx: float,
+    ty: float,
+    angle_deg: float,
+    max_translation_px: float,
+    max_rotation_deg: float,
+    bound_mode: str = "scale",
+) -> tuple[float, float, float, bool]:
+    """Limit a residual rigid transform.
+
+    ``scale`` (pairwise default) radially clamps translation and clips rotation.
+    That projects a runaway optimum onto the bound circle — a 60 px jump
+    becomes a 10 px walk in the wrong direction.
+
+    ``reject`` returns identity when either limit is exceeded. Use this for
+    manual-transform polish: if the optimizer wanted to leave the overlay,
+    keep the overlay.
+    """
+    mag = float(np.sqrt(tx**2 + ty**2))
+    over_t = max_translation_px > 0 and mag > max_translation_px
+    over_r = max_rotation_deg > 0 and abs(angle_deg) > max_rotation_deg
+    if bound_mode == "reject" and (over_t or over_r):
+        return 0.0, 0.0, 0.0, True
+    if over_t:
+        scale = max_translation_px / mag
+        tx, ty = tx * scale, ty * scale
+    if over_r:
+        angle_deg = float(np.clip(angle_deg, -max_rotation_deg, max_rotation_deg))
+    return float(tx), float(ty), float(angle_deg), False
+
+
 def register_refinement(
     fixed: np.ndarray,
     moving: np.ndarray,
@@ -81,6 +127,10 @@ def register_refinement(
     fixed_mask: np.ndarray | None = None,
     moving_mask: np.ndarray | None = None,
     initial_offset: tuple[float, float] | None = None,
+    bound_mode: str = "scale",
+    shrink_factors: list[int] | None = None,
+    smoothing_sigmas: list[float] | None = None,
+    diagnostics: dict | None = None,
 ) -> tuple[float, float, float, float]:
     """Compute small rotation and translation refinement using SimpleITK.
 
@@ -98,6 +148,16 @@ def register_refinement(
         Optional tissue masks multiplied into images before registration.
     initial_offset : tuple[float, float] or None
         Optional initial (dy, dx) translation offset for the transform.
+    bound_mode : {'scale', 'reject'}
+        How to enforce ``max_translation_px`` / ``max_rotation_deg``.
+        ``scale`` clamps; ``reject`` returns identity if the unconstrained
+        solution exceeds either limit.
+    shrink_factors, smoothing_sigmas : list or None
+        Multiscale pyramid. Default ``[4, 2, 1]`` / ``[2, 1, 0]`` (pairwise).
+        Manual polish should pass ``[1]`` / ``[0]`` so coarse levels cannot
+        pull toward the tissue silhouette.
+    diagnostics : dict or None
+        If given, filled with unconstrained parameters and ``rejected``.
 
     Returns
     -------
@@ -138,8 +198,12 @@ def register_refinement(
     reg.SetOptimizerScalesFromPhysicalShift()
     reg.SetInitialTransform(transform, inPlace=False)
     reg.SetInterpolator(sitk.sitkLinear)
-    reg.SetShrinkFactorsPerLevel([4, 2, 1])
-    reg.SetSmoothingSigmasPerLevel([2, 1, 0])
+    factors = [4, 2, 1] if shrink_factors is None else list(shrink_factors)
+    sigmas = [2, 1, 0] if smoothing_sigmas is None else list(smoothing_sigmas)
+    if len(factors) != len(sigmas):
+        raise ValueError("shrink_factors and smoothing_sigmas must have the same length")
+    reg.SetShrinkFactorsPerLevel(factors)
+    reg.SetSmoothingSigmasPerLevel(sigmas)
 
     try:
         final = reg.Execute(fixed_sitk, moving_sitk)
@@ -155,14 +219,16 @@ def register_refinement(
             tx, ty = inner.GetOffset()
             angle_deg = 0.0
 
-        mag = np.sqrt(tx**2 + ty**2)
-        if mag > max_translation_px:
-            scale = max_translation_px / mag
-            tx, ty = tx * scale, ty * scale
+        if diagnostics is not None:
+            diagnostics["unconstrained_tx"] = float(tx)
+            diagnostics["unconstrained_ty"] = float(ty)
+            diagnostics["unconstrained_rot_deg"] = float(angle_deg)
 
-        if abs(angle_deg) > max_rotation_deg:
-            angle_deg = float(np.clip(angle_deg, -max_rotation_deg, max_rotation_deg))
-
+        tx, ty, angle_deg, rejected = apply_refinement_bounds(
+            float(tx), float(ty), float(angle_deg), max_translation_px, max_rotation_deg, bound_mode
+        )
+        if diagnostics is not None:
+            diagnostics["rejected"] = rejected
         return tx, ty, angle_deg, metric
 
     except Exception:

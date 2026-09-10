@@ -5,10 +5,16 @@ Refine a single manually-corrected pairwise slice transform with image-based reg
 For the given fixed/moving zarr pair:
 1. Loads the Z-indices from the automated offsets.txt in auto_transform_dir.
 2. If a manual transform exists in --manual_transforms_dir for this pair:
-   a. Warps the moving slice with the manual transform.
-   b. Runs a tight image-based registration on the warped pair.
-   c. Composes manual o delta into a single output transform (source = "manual_refined").
-   d. Writes transform.tfm, offsets.txt, pairwise_registration_metrics.json to out_dir.
+   a. Builds the overlap-edge AIP (same slabs the manual-align tool shows).
+   b. Warps the moving AIP with the manual transform.
+   c. Runs a single-scale residual registration. If the unconstrained
+      solution exceeds --max_translation_px / --max_rotation_deg, the
+      residual is discarded (the manual overlay is kept). A post-hoc clamp
+      is not applied — that walks off the overlay.
+   d. Keeps the residual only when tissue NCC improves.
+   e. Composes manual o delta into a single output transform
+      (source = "manual_refined", or "manual" if the residual was rejected).
+   f. Writes transform.tfm, offsets.txt, pairwise_registration_metrics.json to out_dir.
 3. If no manual transform exists, copies auto_transform_dir to out_dir unchanged.
 
 Intended to be called once per pair by Nextflow (parallel execution).
@@ -29,7 +35,7 @@ import SimpleITK as sitk
 
 from linumpy.cli.args import add_overwrite_arg
 from linumpy.io.zarr import read_omezarr
-from linumpy.registration.refinement import register_refinement
+from linumpy.registration.refinement import register_refinement, tissue_ncc
 from linumpy.registration.transforms import create_transform
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -59,6 +65,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Max residual rotation to search during refinement [%(default)s degrees]",
+    )
+    p.add_argument(
+        "--overlap_px",
+        type=int,
+        default=20,
+        help=(
+            "Z voxels for the overlap-edge AIP (fixed: last N, moving: first N). "
+            "Must match the manual-align export --xy_overlap_px. [%(default)s]"
+        ),
+    )
+    p.add_argument(
+        "--ncc_min_improve",
+        type=float,
+        default=1e-4,
+        help="Keep the residual only if tissue NCC rises by at least this. [%(default)s]",
     )
     add_overwrite_arg(p)
     return p
@@ -201,6 +222,22 @@ def _warp_moving(moving: np.ndarray, tx: float, ty: float, rot_deg: float, cx: f
     return warped.astype(np.float32)
 
 
+def _overlap_aips(fixed_vol: np.ndarray, moving_vol: np.ndarray, overlap_px: int) -> tuple[np.ndarray, np.ndarray]:
+    """Mean-project the same overlap-edge slabs the manual-align tool shows."""
+    slab_f = min(overlap_px, int(fixed_vol.shape[0]))
+    slab_m = min(overlap_px, int(moving_vol.shape[0]))
+    fixed_aip = np.asarray(fixed_vol[-slab_f:]).mean(axis=0).astype(np.float32)
+    moving_aip = np.asarray(moving_vol[:slab_m]).mean(axis=0).astype(np.float32)
+    return fixed_aip, moving_aip
+
+
+def _accept_residual(ncc_before: float, ncc_after: float, min_improve: float) -> bool:
+    """Keep a residual only when tissue NCC strictly improved."""
+    if not np.isfinite(ncc_before) or not np.isfinite(ncc_after):
+        return False
+    return ncc_after > ncc_before + min_improve
+
+
 def _write_metrics(
     out_dir: Path,
     tx: float,
@@ -215,13 +252,20 @@ def _write_metrics(
     moving_path: Path,
     max_translation_px: float,
     max_rotation_deg: float,
+    source: str = "manual_refined",
+    ncc_before: float | None = None,
+    ncc_after: float | None = None,
+    reject_reason: str | None = None,
+    unconstrained_tx: float | None = None,
+    unconstrained_ty: float | None = None,
+    unconstrained_rot_deg: float | None = None,
 ) -> None:
     """Write pairwise_registration_metrics.json with source='manual_refined'."""
     mag = float(np.sqrt(tx**2 + ty**2))
     metrics = {
         "step_name": "pairwise_registration",
         "output_path": str(out_dir),
-        "source": "manual_refined",
+        "source": source,
         "metrics": {
             "translation_x": {"value": tx, "unit": "pixels"},
             "translation_y": {"value": ty, "unit": "pixels"},
@@ -241,6 +285,12 @@ def _write_metrics(
             "fixed_path": str(fixed_path) if fixed_path is not None else None,
             "moving_path": str(moving_path) if moving_path is not None else None,
             "fixed_z": fixed_z,
+            "ncc_before": ncc_before,
+            "ncc_after": ncc_after,
+            "reject_reason": reject_reason,
+            "unconstrained_tx": unconstrained_tx,
+            "unconstrained_ty": unconstrained_ty,
+            "unconstrained_rot_deg": unconstrained_rot_deg,
         },
     }
     (out_dir / "pairwise_registration_metrics.json").write_text(json.dumps(metrics, indent=2))
@@ -300,38 +350,77 @@ def main() -> None:
         fixed_z, moving_z = 0, 0
         logger.warning("z%d: offsets.txt missing, using z=0 for both slices", slice_id)
 
-    # Load zarr volumes and extract the relevant 2D slices
+    # Load zarr volumes; residual registration uses the overlap-edge AIP.
     fixed_vol, _res = read_omezarr(fixed_zarr)
     moving_vol, _res = read_omezarr(moving_zarr)
 
     fixed_z = max(0, min(fixed_z, fixed_vol.shape[0] - 1))
     moving_z = max(0, min(moving_z, moving_vol.shape[0] - 1))
 
-    fixed_slice = _normalize(np.array(fixed_vol[fixed_z]))
-    moving_slice = _normalize(np.array(moving_vol[moving_z]))
+    fixed_aip, moving_aip = _overlap_aips(np.asarray(fixed_vol), np.asarray(moving_vol), args.overlap_px)
+    fixed_aip = _normalize(fixed_aip)
+    moving_aip = _normalize(moving_aip)
+    logger.info("z%d: overlap AIP %s px (fixed last / moving first)", slice_id, args.overlap_px)
 
     # Load manual transform parameters (full-resolution pixels)
     man_tx, man_ty, man_rot, man_cx, man_cy = _load_manual_transform(manual_tfm_path)
     logger.info("z%d: manual tx=%.1f ty=%.1f rot=%.3f deg", slice_id, man_tx, man_ty, man_rot)
 
-    # Warp moving slice with manual transform so it is approximately aligned
-    warped_moving = _warp_moving(moving_slice, man_tx, man_ty, man_rot, man_cx, man_cy)
+    # Warp moving AIP with the manual transform so the residual starts near identity
+    warped_moving = _warp_moving(moving_aip, man_tx, man_ty, man_rot, man_cx, man_cy)
+    ncc_before = tissue_ncc(fixed_aip, warped_moving)
+    mask_f = fixed_aip > 0.01
+    mask_m = warped_moving > 0.01
 
-    # Run tight refinement on the warped pair
+    diag: dict = {}
     delta_tx, delta_ty, delta_rot, _metric = register_refinement(
-        fixed_slice,
+        fixed_aip,
         warped_moving,
         enable_rotation=True,
         max_rotation_deg=args.max_rotation_deg,
         max_translation_px=args.max_translation_px,
+        fixed_mask=mask_f,
+        moving_mask=mask_m,
+        bound_mode="reject",
+        shrink_factors=[1],
+        smoothing_sigmas=[0],
+        diagnostics=diag,
     )
-    logger.info("z%d: refinement delta tx=%.2f ty=%.2f rot=%.3f deg", slice_id, delta_tx, delta_ty, delta_rot)
+    logger.info(
+        "z%d: residual tx=%.2f ty=%.2f rot=%.3f deg (unconstrained mag=%.1f rejected=%s)",
+        slice_id,
+        delta_tx,
+        delta_ty,
+        delta_rot,
+        float(np.hypot(diag.get("unconstrained_tx", 0.0), diag.get("unconstrained_ty", 0.0))),
+        diag.get("rejected"),
+    )
 
-    # Compose manual o delta about the fixed-slice centre.
-    # The refinement runs in the fixed-slice reference frame with rotation
-    # centre at its geometric centre, so the composite must be re-expressed
-    # about that same centre for the saved .tfm to round-trip correctly.
-    final_center = [fixed_slice.shape[1] / 2.0, fixed_slice.shape[0] / 2.0]
+    reject_reason: str | None = None
+    if diag.get("rejected"):
+        reject_reason = "bound"
+        delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0
+        ncc_after = ncc_before
+        logger.info("z%d: keeping manual — optimizer exceeded residual bound", slice_id)
+    else:
+        cx = fixed_aip.shape[1] / 2.0
+        cy = fixed_aip.shape[0] / 2.0
+        refined_moving = _warp_moving(warped_moving, delta_tx, delta_ty, delta_rot, cx, cy)
+        ncc_after = tissue_ncc(fixed_aip, refined_moving)
+        if not _accept_residual(ncc_before, ncc_after, args.ncc_min_improve):
+            reject_reason = "ncc"
+            delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0
+            logger.info(
+                "z%d: keeping manual — tissue NCC %.4f -> %.4f",
+                slice_id,
+                ncc_before,
+                ncc_after,
+            )
+        else:
+            logger.info("z%d: accepted residual, tissue NCC %.4f -> %.4f", slice_id, ncc_before, ncc_after)
+
+    # Compose manual o delta about the AIP centre (same frame as the residual).
+    final_center = [fixed_aip.shape[1] / 2.0, fixed_aip.shape[0] / 2.0]
     final_tx, final_ty, final_rot = _compose_rigid_2d(
         man_tx,
         man_ty,
@@ -353,9 +442,8 @@ def main() -> None:
     sitk.WriteTransform(final_tfm, str(out_dir / "transform.tfm"))
     np.savetxt(str(out_dir / "offsets.txt"), [fixed_z, moving_z], fmt="%d")
 
-    # Estimate z_correlation from the warped pair for metrics
-    z_correlation = float(np.corrcoef(fixed_slice.ravel(), warped_moving.ravel())[0, 1])
-    z_correlation = max(0.0, z_correlation)
+    z_correlation = ncc_before if reject_reason else ncc_after
+    z_correlation = 0.0 if not np.isfinite(z_correlation) else max(0.0, float(z_correlation))
 
     _write_metrics(
         out_dir=out_dir,
@@ -371,6 +459,13 @@ def main() -> None:
         moving_path=moving_zarr,
         max_translation_px=args.max_translation_px,
         max_rotation_deg=args.max_rotation_deg,
+        source="manual" if reject_reason else "manual_refined",
+        ncc_before=None if ncc_before is None or not np.isfinite(ncc_before) else float(ncc_before),
+        ncc_after=None if ncc_after is None or not np.isfinite(ncc_after) else float(ncc_after),
+        reject_reason=reject_reason,
+        unconstrained_tx=diag.get("unconstrained_tx"),
+        unconstrained_ty=diag.get("unconstrained_ty"),
+        unconstrained_rot_deg=diag.get("unconstrained_rot_deg"),
     )
     logger.info("z%d: done", slice_id)
 
