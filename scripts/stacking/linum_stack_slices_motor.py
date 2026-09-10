@@ -215,6 +215,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=0.01,
         help="Tissue threshold for both-slice overlap voxels when fitting\noverlap z-gain. [%(default)s]",
     )
+    p.add_argument(
+        "--overlap_z_gain_min_overlap",
+        type=int,
+        default=8,
+        help="Skip overlap z-gain when the Z-end overlap is thinner than this\n"
+        "(voxels). Catches interpolated/short terminal slabs. [%(default)s]",
+    )
 
     # Output options
     p.add_argument(
@@ -697,26 +704,47 @@ def main() -> None:
         gain_b = ""
         gain_xy = ""
         if args.overlap_z_gain and overlap > 0:
-            fit = estimate_overlap_z_gain_fit(
-                prev_vol,
-                vol,
-                overlap,
-                moving_z_start=moving_z or 0,
-                tissue_threshold=args.overlap_z_gain_threshold,
-            )
-            if fit is not None:
-                gain_a, gain_b, gain_xy, n_planes = fit
+            prev_interp = "interpolated" in Path(slice_files[prev_id]).name.lower()
+            moving_interp = "interpolated" in Path(slice_files[slice_id]).name.lower()
+            if overlap < args.overlap_z_gain_min_overlap:
                 logger.info(
-                    "Slice %s→%s: overlap z-gain a=%.3f b=%.4f/vx  xy_frac=%.2f  planes=%s",
+                    "Slice %s→%s: overlap z-gain skipped (overlap %s < min %s)",
                     prev_id,
                     slice_id,
-                    gain_a,
-                    gain_b,
-                    gain_xy,
-                    n_planes,
+                    overlap,
+                    args.overlap_z_gain_min_overlap,
+                )
+            elif prev_interp or moving_interp:
+                logger.info(
+                    "Slice %s→%s: overlap z-gain skipped (interpolated slice)",
+                    prev_id,
+                    slice_id,
                 )
             else:
-                logger.info("Slice %s→%s: overlap z-gain skipped (not enough both-tissue overlap)", prev_id, slice_id)
+                fit = estimate_overlap_z_gain_fit(
+                    prev_vol,
+                    vol,
+                    overlap,
+                    moving_z_start=moving_z or 0,
+                    tissue_threshold=args.overlap_z_gain_threshold,
+                )
+                if fit is not None:
+                    gain_a, gain_b, gain_xy, n_planes = fit
+                    logger.info(
+                        "Slice %s→%s: overlap z-gain a=%.3f b=%.4f/vx  xy_frac=%.2f  planes=%s",
+                        prev_id,
+                        slice_id,
+                        gain_a,
+                        gain_b,
+                        gain_xy,
+                        n_planes,
+                    )
+                else:
+                    logger.info(
+                        "Slice %s→%s: overlap z-gain skipped (not enough both-tissue overlap)",
+                        prev_id,
+                        slice_id,
+                    )
 
         z_matches.append(
             {

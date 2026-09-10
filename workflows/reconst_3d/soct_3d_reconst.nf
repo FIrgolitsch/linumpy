@@ -1228,7 +1228,7 @@ process stack {
     // the flag is part of the hashed command. A Helpers-only change does not
     // bust the Nextflow task hash when soct_3d_reconst.nf is unchanged.
     def overlap_z_gain_flag = params.stack_overlap_z_gain
-        ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold}"
+        ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold} --overlap_z_gain_min_overlap ${params.stack_overlap_z_gain_min_overlap}"
         : ""
     def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag
 
