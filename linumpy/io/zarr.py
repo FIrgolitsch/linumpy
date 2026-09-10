@@ -475,7 +475,9 @@ class OmeZarrWriter:
 
     def __setitem__(self, index: Any, data: Any) -> None:
         """Write *data* at *index* into the underlying zarr array."""
-        self.zarray[index] = data
+        from linumpy.gpu import to_cpu
+
+        self.zarray[index] = to_cpu(data)
 
     def __getitem__(self, index: Any) -> Any:
         """Read a slice from the underlying zarr array."""

@@ -146,6 +146,20 @@ def test_tissue_mask_silhouette_gpu_mask_multiplies_cupy_volume():
     assert float(vol[:, 8, 8].min()) == 1.0
 
 
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU not available")
+def test_bias_save_writes_cupy_volume(tmp_path):
+    """zarr cannot ingest CuPy arrays; _save must host-copy first."""
+    import argparse
+
+    import cupy as cp
+
+    from scripts.illumination.linum_correct_bias_field import _save
+
+    arr = cp.ones((4, 8, 8), dtype=cp.float32)
+    args = argparse.Namespace(n_levels=0, pyramid_resolutions=None, make_isotropic=False)
+    _save(arr, str(tmp_path / "out.ome.zarr"), [0.01, 0.01, 0.01], args)
+
+
 # ---------------------------------------------------------------------------
 # n4_correct
 # ---------------------------------------------------------------------------

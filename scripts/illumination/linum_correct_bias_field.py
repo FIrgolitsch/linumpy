@@ -213,6 +213,9 @@ def _save(arr: np.ndarray, path: str, res: list, args: argparse.Namespace) -> No
     """Save a volume to OME-Zarr using resolution-based or fixed pyramid levels."""
     from pathlib import Path
 
+    from linumpy.gpu import to_cpu
+
+    arr = to_cpu(arr)
     writer = AnalysisOmeZarrWriter(Path(path), arr.shape, chunk_shape=(128, 128, 128), dtype=np.float32)
     writer[:] = arr
     writer.finalize(
