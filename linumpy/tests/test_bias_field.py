@@ -129,6 +129,23 @@ def test_tissue_mask_silhouette_rejects_bad_rank():
         tissue_mask_silhouette_xy(np.ones((8, 8), dtype=bool))
 
 
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU not available")
+def test_tissue_mask_silhouette_gpu_mask_multiplies_cupy_volume():
+    """Silhouette must live on device so CuPy in-place multiply does not crash."""
+    import cupy as cp
+
+    from linumpy.gpu import is_cupy_array
+
+    mask = cp.zeros((4, 16, 16), dtype=bool)
+    mask[:, 4:12, 4:12] = True
+    sil = tissue_mask_silhouette_xy(mask)
+    assert is_cupy_array(sil)
+    vol = cp.ones((4, 16, 16), dtype=cp.float32)
+    vol *= sil
+    assert float(vol[:, 0, 0].max()) == 0.0
+    assert float(vol[:, 8, 8].min()) == 1.0
+
+
 # ---------------------------------------------------------------------------
 # n4_correct
 # ---------------------------------------------------------------------------

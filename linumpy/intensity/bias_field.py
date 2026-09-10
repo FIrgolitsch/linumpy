@@ -260,7 +260,7 @@ def tissue_mask_silhouette_xy(mask: np.ndarray, dilate_px: int = 0) -> np.ndarra
     Returns
     -------
     np.ndarray
-        Boolean array of shape ``(Y, X)``.
+        Boolean array of shape ``(Y, X)``. CuPy when *mask* is CuPy.
     """
     from scipy.ndimage import binary_dilation, binary_fill_holes
     from skimage.morphology import disk
@@ -282,6 +282,10 @@ def tissue_mask_silhouette_xy(mask: np.ndarray, dilate_px: int = 0) -> np.ndarra
     silhouette = binary_fill_holes(mask_np.any(axis=0))
     if dilate_px > 0:
         silhouette = binary_dilation(silhouette, structure=disk(dilate_px))
+    if is_cupy_array(mask):
+        import cupy as cp
+
+        return cp.asarray(silhouette)
     return silhouette
 
 

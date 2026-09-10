@@ -1292,6 +1292,7 @@ process correct_bias_field {
     def gpu_pin_block = Helpers.gpuPinBlock(params, "correct_bias_field ${subject_name}")
     """
     ${gpu_pin_block}
+    # Silhouette is applied on the volume's device (CuPy *= NumPy ndarray crashes).
     linum-correct-bias-field ${stacked_zarr} ${subject_name}.ome.zarr \
         ${n_slices_opt} \
         --mode ${bias_mode} \

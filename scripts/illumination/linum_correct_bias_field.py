@@ -223,6 +223,21 @@ def _save(arr: np.ndarray, path: str, res: list, args: argparse.Namespace) -> No
     )
 
 
+def _as_same_module(arr: np.ndarray, like: np.ndarray) -> np.ndarray:
+    """Put *arr* on *like*'s module so in-place ufuncs can run."""
+    from linumpy.gpu import is_cupy_array
+
+    if is_cupy_array(like) and not is_cupy_array(arr):
+        import cupy as cp
+
+        return cp.asarray(arr)
+    if (not is_cupy_array(like)) and is_cupy_array(arr):
+        import cupy as cp
+
+        return cp.asnumpy(arr)
+    return arr
+
+
 def main() -> None:
     """Run function."""
     configure_all_libraries()
@@ -428,10 +443,10 @@ def main() -> None:
                 sil_xy.size,
                 args.zero_mask_dilate_px,
             )
-            corrected *= sil_xy
+            corrected *= _as_same_module(sil_xy, corrected)
         else:
             logger.info("Zeroing voxels outside per-section tissue mask\u2026")
-            corrected *= mask
+            corrected *= _as_same_module(mask, corrected)
     del mask
 
     # Save output
