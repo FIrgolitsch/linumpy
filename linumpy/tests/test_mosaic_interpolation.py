@@ -6,6 +6,7 @@ import pytest
 from linumpy.mosaic.interpolation import (
     _fractional_affine_parts,
     _matrix_fractional_power,
+    crop_to_cut_adjacent_z,
     find_best_overlap_planes,
     interpolate_average,
     interpolate_weighted,
@@ -184,6 +185,52 @@ def test_interpolate_z_morph_boundary_planes_match_sources():
     assert vol.shape[0] == min(before.shape[0], after.shape[0])
 
 
+def test_crop_to_cut_adjacent_z_keeps_before_bottom():
+    before = np.zeros((8, 4, 4), dtype=np.float32)
+    after = np.zeros((5, 4, 4), dtype=np.float32)
+    before[-1] = 3.0
+    after[0] = 7.0
+    b, a = crop_to_cut_adjacent_z(before, after)
+    assert b.shape[0] == 5
+    assert float(b[-1, 0, 0]) == 3.0
+    assert float(a[0, 0, 0]) == 7.0
+
+
+def test_interpolate_z_morph_identity_when_already_aligned():
+    """Already-aligned neighbours must still emit a volume (T=I), not hard-skip."""
+    before = _make_structured_vol(seed=5)
+    after = before.copy()
+    vol, diag = interpolate_z_morph(
+        before,
+        after,
+        max_iterations=20,
+        min_overlap_correlation=0.0,
+        min_ncc_improvement=0.05,
+        allow_identity=True,
+    )
+    assert vol is not None
+    assert diag.get("interpolation_failed", False) is False
+    assert diag["method_used"] == "zmorph"
+
+
+def test_interpolate_z_morph_identity_when_warp_rejected():
+    """High NCC neighbours still emit when the warp is rejected (T=I)."""
+    before = _make_structured_vol(seed=5)
+    after = np.roll(before, 1, axis=2)
+    vol, diag = interpolate_z_morph(
+        before,
+        after,
+        max_iterations=20,
+        min_overlap_correlation=0.0,
+        min_ncc_improvement=10.0,
+        allow_identity=True,
+    )
+    assert vol is not None
+    assert diag.get("interpolation_failed", False) is False
+    assert diag.get("used_identity_transform") is True
+    assert diag["identity_reason"] == "reg_did_not_improve"
+
+
 def test_interpolate_z_morph_hard_skips_when_registration_unreliable():
     """Unrelated noise volumes must not produce a fabricated interpolation.
 
@@ -207,9 +254,6 @@ def test_interpolate_z_morph_hard_skips_when_registration_unreliable():
     assert diag["fallback_reason"] in {
         "low_overlap_ncc",
         "no_foreground_planes",
-        "reg_did_not_improve",
-        "registration_exception",
-        "affine_determinant_non_positive",
     }
 
 

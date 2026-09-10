@@ -51,6 +51,7 @@ from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.metrics import collect_slice_interpolation_metrics
 from linumpy.mosaic.interpolation import (
+    crop_to_cut_adjacent_z,
     interpolate_average,
     interpolate_weighted,
     interpolate_z_morph,
@@ -131,8 +132,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.05,
         help="Minimum improvement in boundary NCC required after 2D\n"
-        "registration to accept the transform. Below this zmorph emits\n"
-        "no output (hard skip). [default: %(default)s]",
+        "registration to accept the warp. Below this zmorph uses identity\n"
+        "(T=I) when --allow_identity, else hard-skips. [default: %(default)s]",
+    )
+    p.add_argument(
+        "--registration_method",
+        choices=["euler", "affine", "translation"],
+        default="euler",
+        help="2D boundary registration: euler (rigid, default), affine, or translation.",
+    )
+    p.add_argument(
+        "--allow_identity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="If the warp does not improve NCC or is implausible, morph with T=I\n"
+        "instead of hard-skipping. Still uses only the two cut-adjacent planes.",
     )
     p.add_argument(
         "--diagnostics",
@@ -453,12 +467,13 @@ def main() -> None:
     if vol_before.shape != vol_after.shape:
         print(f"Shape mismatch detected: {vol_before.shape} vs {vol_after.shape}")
 
-        # Handle z-dimension mismatch by truncating to minimum
-        min_z = min(vol_before.shape[0], vol_after.shape[0])
+        # Handle z-dimension mismatch: keep cut-adjacent planes, not the top of both.
         if vol_before.shape[0] != vol_after.shape[0]:
-            print(f"  Truncating z-dimension to minimum: {min_z}")
-            vol_before = vol_before[:min_z]
-            vol_after = vol_after[:min_z]
+            print(
+                f"  Keeping cut-adjacent Z (before[-min_z:], after[:min_z]): "
+                f"{vol_before.shape[0]} vs {vol_after.shape[0]} → {min(vol_before.shape[0], vol_after.shape[0])}"
+            )
+            vol_before, vol_after = crop_to_cut_adjacent_z(vol_before, vol_after)
 
         # Handle X/Y dimension mismatch by using maximum and zero-padding
         if vol_before.shape[1:] != vol_after.shape[1:]:
@@ -468,13 +483,13 @@ def main() -> None:
 
             # Pad vol_before if needed
             if vol_before.shape[1] < max_x or vol_before.shape[2] < max_y:
-                padded = np.zeros((min_z, max_x, max_y), dtype=vol_before.dtype)
+                padded = np.zeros((vol_before.shape[0], max_x, max_y), dtype=vol_before.dtype)
                 padded[:, : vol_before.shape[1], : vol_before.shape[2]] = vol_before
                 vol_before = padded
 
             # Pad vol_after if needed
             if vol_after.shape[1] < max_x or vol_after.shape[2] < max_y:
-                padded = np.zeros((min_z, max_x, max_y), dtype=vol_after.dtype)
+                padded = np.zeros((vol_after.shape[0], max_x, max_y), dtype=vol_after.dtype)
                 padded[:, : vol_after.shape[1], : vol_after.shape[2]] = vol_after
                 vol_after = padded
 
@@ -503,6 +518,8 @@ def main() -> None:
             reference_slab_size=args.reference_slab_size,
             min_foreground_fraction=args.min_foreground_fraction,
             min_ncc_improvement=args.min_ncc_improvement,
+            registration_method=args.registration_method,
+            allow_identity=args.allow_identity,
         )
     elif args.method == "average":
         print("Performing simple average interpolation...")

@@ -185,12 +185,11 @@ fractional-affine intermediate planes between the two neighbours.
 | `interpolate_missing_slices` | `true` | Enable interpolation. Disable to keep gaps explicit. |
 | `interpolation_method` | `'zmorph'` | `'zmorph'` (registration-based morph), `'weighted'` (z-smoothed linear blend), `'average'` (50/50). |
 | `interpolation_blend_method` | `'gaussian'` | `'gaussian'` (feathered) or `'linear'`. |
-| `interpolation_min_overlap_correlation` | `0.3` | If the boundary-plane NCC is below this, falls back to `'weighted'`. |
-| `interpolation_min_ncc_improvement` | `0.05` | If post-registration NCC doesn't improve by this much, falls back to `'weighted'`. |
+| `interpolation_min_overlap_correlation` | `0.3` | If the boundary-plane NCC is below this, hard-skip (no zarr). |
+| `interpolation_min_ncc_improvement` | `0.05` | If post-registration NCC doesn't improve by this much, morph with T=I. |
 
 **When to lower `interpolation_min_overlap_correlation`:** if zmorph keeps
-falling back to weighted on slices that visually look fine, lower to e.g.
-`0.2`. Watch for spurious deformations on noisier boundaries.
+hard-skipping slices that visually share tissue, lower to e.g. `0.2`.
 
 **When to disable interpolation:** if you specifically want to see where the
 missing slices are (e.g. for QC), set `interpolate_missing_slices = false`.

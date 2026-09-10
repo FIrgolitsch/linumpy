@@ -81,7 +81,7 @@ The schema is defined by `linumpy.io.slice_config.CANONICAL_COLUMNS` and is enfo
 | `interpolated` | boolean | `linum-interpolate-missing-slice --finalise` | `true` if this slice was successfully interpolated from its neighbours (a zarr was produced). |
 | `interpolation_failed` | boolean | `linum-interpolate-missing-slice --finalise` | `true` if zmorph was attempted but hit a quality gate; no zarr was produced and the slot is a gap in the final volume. |
 | `interpolation_method_used` | string | `linum-interpolate-missing-slice --finalise` | Method actually used (`zmorph`, `weighted`, `average`). Empty when `interpolation_failed=true`. |
-| `interpolation_fallback_reason` | string | `linum-interpolate-missing-slice --finalise` | Reason zmorph hard-skipped (`low_overlap_ncc`, `reg_did_not_improve`, ...), or empty on success. |
+| `interpolation_fallback_reason` | string | `linum-interpolate-missing-slice --finalise` | Reason zmorph hard-skipped (`low_overlap_ncc`, `no_foreground_planes`), or empty on success (including identity morph). |
 | `notes` | string | any stage | Free-form human-readable annotation. Stages append with `; ` separators. |
 
 > **Raw numeric metrics** (SSIM, edge score, variance ratio, NCC values, affine determinants, ...) are deliberately **not** in `slice_config.csv`. They live in per-slice JSON diagnostics and in the end-of-pipeline quality report.
@@ -130,7 +130,12 @@ After `finalise_interpolation`, any slice that reached `linum-interpolate-missin
 - **Hard skip** — zmorph hit a quality gate, no zarr was produced, the slot stays a gap:
   - `interpolated=false`, `interpolation_failed=true`
   - `interpolation_method_used` empty
-  - `interpolation_fallback_reason` = one of `low_overlap_ncc`, `no_foreground_planes`, `registration_exception`, `reg_did_not_improve`, `affine_determinant_non_positive`
+  - `interpolation_fallback_reason` = `low_overlap_ncc` or `no_foreground_planes`
+
+Warp rejection (no NCC improvement, implausible transform, registration exception)
+still writes a zarr via identity morph; that counts as **Success** above.
+`used_identity_transform` lives in the per-slice diagnostics JSON, not in
+`slice_config`.
 
 The pipeline never fabricates a slice from a weighted blend when registration fails; blending two neighbours that could not be registered introduces ghost contours and would also be made-up data. See {doc}`SLICE_INTERPOLATION_FEATURE` for the interpolation algorithm details and rationale.
 

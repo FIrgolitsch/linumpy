@@ -88,17 +88,15 @@ flowchart TD
     START([Missing slice between<br/>vol_before and vol_after]) --> PLANES[find_best_overlap_planes<br/>foreground filter + NCC search]
     PLANES -->|no foreground planes| F1[fallback_reason:<br/>no_foreground_planes]
     PLANES -->|best NCC < min_overlap_correlation| F2[fallback_reason:<br/>low_overlap_ncc]
-    PLANES -->|good pair| REG[2D ITK registration<br/>boundary plane → reference]
-    REG -->|optimiser raised| F3[fallback_reason:<br/>registration_exception]
-    REG -->|det T ≤ 0| F4[fallback_reason:<br/>affine_determinant_non_positive]
-    REG -->|post-reg NCC ↑ < threshold| F5[fallback_reason:<br/>reg_did_not_improve]
+    PLANES -->|good pair| REG[2D ITK registration<br/>rigid Euler on cut-adjacent planes]
+    REG -->|optimiser raised| ID[identity T=I<br/>identity_reason]
+    REG -->|det T ≤ 0 or implausible warp| ID
+    REG -->|post-reg NCC ↑ < threshold| ID
     REG -->|gates pass| WARP[For each output plane at α = z / (nz_out-1):<br/>warp vol_before by T^α<br/>warp vol_after by T^(α-1)<br/>gaussian-feathered cross-fade]
+    ID --> WARP
     WARP --> OUT([Interpolated zarr<br/>+ manifest + diagnostics])
     F1 --> SKIP([Hard skip:<br/>no zarr written,<br/>genuine gap in stack])
     F2 --> SKIP
-    F3 --> SKIP
-    F4 --> SKIP
-    F5 --> SKIP
 ```
 
 ### `zmorph` — z-aware morphing (default)
@@ -114,9 +112,11 @@ slice between `vol_before` (slice `N-1`) and `vol_after` (slice `N+1`):
   was cut away.
 
 These two surfaces are separated only by the missing ~200 µm block and are
-the only directly observable evidence of its content. The affine transform
-`T` that maps one onto the other encodes the XY deformation (shift, rotation,
-shear, mild scaling) accumulated across the missing block during cutting.
+the only directly observable evidence of its content. The 2D transform
+`T` (rigid Euler by default) that maps one onto the other encodes the XY
+deformation accumulated across the missing block during cutting. Affine
+registration is available but unconstrained and can explode when the
+cut-adjacent planes are poorly cropped.
 
 #### Algorithm
 
@@ -182,39 +182,45 @@ automatically** — zmorph never silently falls back to them because a
 blended slice is also fabricated data and can introduce ghost contours
 when the two neighbours differ.
 
-### Failure handling: hard skip, no fabrication
+### Failure handling: identity morph vs hard skip
 
-When any quality gate fails, `interpolate_z_morph` returns
-``(None, diagnostics)`` with ``diagnostics["interpolation_failed"] = True``
-and a specific ``fallback_reason``. The CLI honours this by writing **no**
-interpolated zarr, only a manifest fragment and a diagnostics JSON. The
-Nextflow `interpolate_missing_slice` process declares the zarr output as
-`optional: true` for this reason.
+Hard skip (no zarr) only when the neighbours do not share identifiable
+tissue: ``no_foreground_planes`` or ``low_overlap_ncc``. In that case
+`interpolate_z_morph` returns ``(None, diagnostics)`` with
+``diagnostics["interpolation_failed"] = True``. The CLI writes **no**
+interpolated zarr. The Nextflow `interpolate_missing_slice` process declares
+the zarr output as `optional: true` for this reason.
 
-Possible failure reasons:
+When the neighbours do share tissue but the warp is rejected
+(``reg_did_not_improve``, ``implausible_transform``,
+``registration_exception``, ``affine_determinant_non_positive``), zmorph
+morphs with identity (``T = I``) and still emits a volume from the two
+cut-adjacent planes. That is still zmorph, not an interior `weighted` blend.
+Pass ``--no-allow_identity`` to restore a hard skip on those warp failures.
+
+Possible hard-skip reasons:
 
 ```
 zmorph
   ├─ no_foreground_planes              (no boundary plane passed the foreground filter)
-  ├─ low_overlap_ncc                   (best boundary NCC below min_overlap_correlation)
-  ├─ registration_exception            (2D ITK optimiser raised)
-  ├─ reg_did_not_improve               (post-reg NCC improvement < min_ncc_improvement)
-  └─ affine_determinant_non_positive   (reflection / degenerate transform)
+  └─ low_overlap_ncc                   (best boundary NCC below min_overlap_correlation)
 ```
 
-In every case the behaviour is identical: **no output zarr, manifest
-fragment with `interpolation_failed=true`, `slice_config_final.csv`
-stamps `interpolated=false, interpolation_failed=true`**. The stacked
-volume has a genuine gap at that z position. Pairwise registration
-automatically bridges the two surviving neighbours (the process takes
-consecutive elements of the sorted `all_slices` channel; missing zarrs
-are simply absent from that channel).
+Identity morph reasons (zarr still written, `used_identity_transform=true`):
+
+```
+  ├─ reg_did_not_improve             (post-reg NCC improvement < min_ncc_improvement)
+  ├─ implausible_transform            (det or translation outside mild-cut bounds)
+  ├─ registration_exception           (2D ITK optimiser raised)
+  └─ affine_determinant_non_positive (reflection / degenerate transform)
+```
 
 **Rationale.** A weighted blend of two neighbours that could not be
-registered to each other is also fabricated data, with the extra failure
-mode of ghost/double-contour artefacts whenever the tissue has moved
-between cuts. Reporting "this slice could not be reconstructed" is
-honest and keeps the final volume 100% measured.
+registered to each other is fabricated data, with ghost/double-contour
+artefacts whenever the tissue has moved between cuts. Identity morph of
+the two cut-adjacent surfaces is still only those two measured planes.
+Hard-skipping a shared-tissue gap (as z50 did when affine exploded) leaves
+an empty 400 µm hole that stacking cannot recover.
 
 ### Boundary plane selection
 
@@ -223,8 +229,7 @@ of `vol_before` against the first `overlap_search_window` planes of
 `vol_after` on the central ROI, after filtering by `min_foreground_fraction`
 to discard agarose-only planes. The best NCC pair is used as the registration
 reference. A minimum-correlation gate (`min_overlap_correlation`, default
-0.3) falls back to a weighted average when no pair is similar enough to
-register reliably.
+0.3) hard-skips when no pair is similar enough to share tissue.
 
 Slab averaging (`reference_slab_size`, default 3) averages the chosen plane
 with its immediate neighbours before running 2D registration, which makes
@@ -348,10 +353,10 @@ when reviewing the whole subject.
 | `interpolation_registration_metric` | `'MSE'` | `MSE`, `CC`, `MI` |
 | `interpolation_max_iterations` | `1000` | Max iterations for boundary registration |
 | `interpolation_overlap_search_window` | `5` | z-planes scanned at each boundary for the reference pair |
-| `interpolation_min_overlap_correlation` | `0.3` | NCC gate; below this the method falls back to a weighted average |
+| `interpolation_min_overlap_correlation` | `0.3` | NCC gate; below this zmorph hard-skips (no zarr) |
 | `interpolation_reference_slab_size` | `3` | planes averaged around the reference plane before registration |
 | `interpolation_min_foreground_fraction` | `0.1` | minimum foreground fraction for a candidate boundary plane |
-| `interpolation_min_ncc_improvement` | `0.05` | minimum post-reg NCC improvement to accept the transform |
+| `interpolation_min_ncc_improvement` | `0.05` | minimum post-reg NCC improvement to accept the warp; otherwise T=I |
 | `interpolation_preview` | `false` | emit PNG previews next to each interpolated slice |
 
 ### Standalone script

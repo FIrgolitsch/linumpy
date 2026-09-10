@@ -165,9 +165,6 @@ def test_zmorph_hard_skips_on_unrelated_volumes(script_runner, tmp_path):
     assert diag["fallback_reason"] in {
         "low_overlap_ncc",
         "no_foreground_planes",
-        "reg_did_not_improve",
-        "registration_exception",
-        "affine_determinant_non_positive",
     }
     assert diag["output_path"] is None
     assert not output.exists(), "No zarr must be produced when zmorph gates fail"
@@ -180,6 +177,45 @@ def test_zmorph_hard_skips_on_unrelated_volumes(script_runner, tmp_path):
     assert row["interpolation_failed"] == "true"
     assert row["method_used"] == ""
     assert row["output_path"] == ""
+
+
+def test_zmorph_identity_still_writes_zarr(script_runner, tmp_path):
+    """Rejected warp still writes a zarr when identity morph is allowed."""
+    slice_before, slice_after = _save_pair(tmp_path)
+    output = tmp_path / "slice_z01_interpolated.ome.zarr"
+    diagnostics = tmp_path / "diagnostics.json"
+
+    ret = script_runner.run(
+        [
+            "linum-interpolate-missing-slice",
+            str(slice_before),
+            str(slice_after),
+            str(output),
+            "--method",
+            "zmorph",
+            "--max_iterations",
+            "20",
+            "--min_overlap_correlation",
+            "0.0",
+            "--min_ncc_improvement",
+            "10.0",
+            "--registration_method",
+            "euler",
+            "--allow_identity",
+            "--slice_id",
+            "01",
+            "--diagnostics",
+            str(diagnostics),
+        ]
+    )
+    assert ret.success, ret.stderr
+    assert output.exists()
+    with diagnostics.open() as fh:
+        diag = json.load(fh)
+    assert diag["interpolation_failed"] is False
+    assert diag.get("used_identity_transform") is True
+    assert diag["identity_reason"] == "reg_did_not_improve"
+    assert diag["method_used"] == "zmorph"
 
 
 def test_finalise_merges_fragments_into_slice_config(script_runner, tmp_path):

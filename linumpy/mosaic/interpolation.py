@@ -5,13 +5,10 @@ affine warps (``T**alpha``, :func:`scipy.linalg.fractional_matrix_power`).
 Reconstructs a synthetic slice that transitions along Z from ``vol_before[-1]``
 to ``vol_after[0]``, matching the physical geometry of serial sectioning.
 
-When any quality gate fails, :func:`interpolate_z_morph` **does not fabricate
-a volume**. It returns ``(None, diagnostics)`` with
-``diagnostics["interpolation_failed"] = True`` and a specific
-``fallback_reason``. The caller must honour this by *not* emitting a
-reconstructed slice -- a blend of the two neighbours would also be
-fabricated data, with the added failure mode of ghost/double-contour
-artefacts whenever the two neighbours differ.
+When the warp is implausible or does not improve NCC, the morph uses
+identity (``T = I``) and still emits a volume from the two cut-adjacent
+planes. Hard skip only when the neighbours do not share identifiable
+tissue (``no_foreground_planes``, ``low_overlap_ncc``).
 
 Downstream of a failed interpolation, the pipeline treats the slice as a
 genuine multi-slice gap: no zarr is produced, the manifest fragment records
@@ -275,16 +272,72 @@ def _prepare_2d(plane: np.ndarray) -> np.ndarray:
     return plane
 
 
+def crop_to_cut_adjacent_z(vol_before: np.ndarray, vol_after: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Keep the cut-adjacent Z of each neighbour when depths differ.
+
+    ``vol_before[-1]`` is the tissue exposed just before the missing cut;
+    ``vol_after[0]`` is the tissue exposed just after. Truncating both volumes
+    from the top (``[:min_z]``) drops that interface on the thicker slab.
+    """
+    min_z = min(int(vol_before.shape[0]), int(vol_after.shape[0]))
+    return vol_before[-min_z:], vol_after[:min_z]
+
+
+def _as_affine_2d(tform: sitk.Transform) -> sitk.AffineTransform:
+    """Convert a 2-D Euler/affine SimpleITK transform to AffineTransform."""
+    name = tform.GetName()
+    if "Affine" in name:
+        return sitk.AffineTransform(tform)
+    aff = sitk.AffineTransform(2)
+    fixed = list(tform.GetFixedParameters())
+    if len(fixed) >= 2:
+        aff.SetCenter(fixed[:2])
+    params = list(tform.GetParameters())
+    if len(params) >= 3:
+        angle = float(params[0])
+        c, s = float(np.cos(angle)), float(np.sin(angle))
+        aff.SetMatrix((c, -s, s, c))
+        aff.SetTranslation([float(params[1]), float(params[2])])
+        return aff
+    if len(params) >= 2:
+        aff.SetTranslation([float(params[0]), float(params[1])])
+        return aff
+    raise TypeError(f"Cannot convert {name} to a 2-D affine")
+
+
+def _identity_affine_2d(center: np.ndarray) -> sitk.AffineTransform:
+    tform = sitk.AffineTransform(2)
+    tform.SetMatrix((1.0, 0.0, 0.0, 1.0))
+    tform.SetTranslation((0.0, 0.0))
+    tform.SetCenter(np.asarray(center, dtype=np.float64).tolist())
+    return tform
+
+
+def _transform_is_plausible(
+    matrix: np.ndarray,
+    translation: np.ndarray,
+    shape_yx: tuple[int, int],
+    max_translation_frac: float = 0.08,
+) -> bool:
+    """Return True if the 2-D affine is a mild in-plane cut deformation."""
+    det = float(np.linalg.det(matrix))
+    if not np.isfinite(det) or det <= 0.5 or det >= 2.0:
+        return False
+    max_t = max_translation_frac * float(min(shape_yx))
+    return float(np.linalg.norm(translation)) <= max_t
+
+
 def _register_boundary(
     fixed_2d: np.ndarray,
     moving_2d: np.ndarray,
     metric: str,
     max_iterations: int,
+    method: str = "euler",
 ) -> sitk.Transform:
     transform, _, _ = register_2d_images_sitk(
         fixed_2d,
         moving_2d,
-        method="affine",
+        method=method,
         metric=metric,
         max_iterations=max_iterations,
         return_3d_transform=False,
@@ -389,23 +442,22 @@ def interpolate_z_morph(
     min_foreground_fraction: float = 0.1,
     min_ncc_improvement: float = 0.05,
     blend_method: str = "gaussian",
+    registration_method: str = "euler",
+    allow_identity: bool = True,
+    max_translation_frac: float = 0.08,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     """Z-aware morphing interpolation.
 
-    Registers ``vol_after[0]`` to ``vol_before[-1]`` to get an affine ``T``,
-    then for each output plane at fractional depth ``alpha ∈ [0, 1]`` warps
-    the before-boundary by ``T**alpha`` and the after-boundary by
+    Registers the cut-adjacent boundary planes (rigid Euler by default) to
+    get ``T``, then for each output plane at fractional depth ``alpha ∈ [0, 1]``
+    warps the before-boundary by ``T**alpha`` and the after-boundary by
     ``T**(alpha - 1)``, cross-fading with weight ``alpha``. Output top/bottom
     planes match the boundary planes exactly.
 
-    **Hard skip on gate failure.** When any quality gate fails
-    (``no_foreground_planes``, ``low_overlap_ncc``, ``registration_exception``,
-    ``reg_did_not_improve``, ``affine_determinant_non_positive``) the function
-    returns ``(None, diagnostics)`` with
-    ``diagnostics["interpolation_failed"] = True`` and a specific
-    ``fallback_reason``. **No fabricated volume is produced** -- blending the
-    two neighbours would also be made-up data, with the added failure mode of
-    ghost/double-contour artefacts whenever the two neighbours differ.
+    When the warp is implausible or does not improve NCC, ``T`` falls back to
+    identity (still only the two boundary surfaces — not a blend of interiors).
+    Hard skip only when the neighbours do not share identifiable tissue
+    (``no_foreground_planes``, ``low_overlap_ncc``).
 
     See ``docs/SLICE_INTERPOLATION_FEATURE.md`` for the physical model, the
     rationale for the hard-skip behaviour, and parameter-tuning guidance.
@@ -418,6 +470,7 @@ def interpolate_z_morph(
     diagnostics : dict
         JSON-serialisable trace of the attempt.
     """
+    vol_before, vol_after = crop_to_cut_adjacent_z(vol_before, vol_after)
     nz_before, nx, ny = vol_before.shape
     nz_after = vol_after.shape[0]
     nz_out = output_z if output_z is not None else min(nz_before, nz_after)
@@ -435,6 +488,8 @@ def interpolate_z_morph(
         "blend_method": blend_method,
         "registration_metric": metric,
         "max_iterations": max_iterations,
+        "registration_method": registration_method,
+        "allow_identity": allow_identity,
     }
 
     # -- Boundary plane/slab selection --------------------------------------
@@ -475,31 +530,75 @@ def interpolate_z_morph(
     moving_2d = _prepare_2d(slab_before)
 
     try:
-        transform_2d = _register_boundary(fixed_2d, moving_2d, metric=metric, max_iterations=max_iterations)
+        transform_2d = _register_boundary(
+            fixed_2d,
+            moving_2d,
+            metric=metric,
+            max_iterations=max_iterations,
+            method=registration_method,
+        )
+        affine_2d = _as_affine_2d(transform_2d)
+        matrix = np.array(affine_2d.GetMatrix()).reshape(2, 2)
+        translation = np.array(affine_2d.GetTranslation())
+        center = np.array(affine_2d.GetCenter())
+        warped_slab_before = apply_transform(slab_before.astype(np.float32), transform_2d)
+        post_reg_ncc = _ncc(slab_after, warped_slab_before)
+        ncc_improvement = float(post_reg_ncc - best_corr)
+        plausible = _transform_is_plausible(matrix, translation, (nx, ny), max_translation_frac=max_translation_frac)
+        use_identity = (ncc_improvement < min_ncc_improvement) or (not plausible)
+        identity_reason = None
+        if ncc_improvement < min_ncc_improvement:
+            identity_reason = "reg_did_not_improve"
+        elif not plausible:
+            identity_reason = "implausible_transform"
     except Exception as exc:
         diag["registration_error_message"] = str(exc)
-        return _hard_skip("registration_exception")
+        if not allow_identity:
+            return _hard_skip("registration_exception")
+        affine_2d = _identity_affine_2d(np.array([ny / 2.0, nx / 2.0], dtype=np.float64))
+        matrix = np.array(affine_2d.GetMatrix()).reshape(2, 2)
+        translation = np.array(affine_2d.GetTranslation())
+        center = np.array(affine_2d.GetCenter())
+        post_reg_ncc = float(best_corr)
+        ncc_improvement = 0.0
+        use_identity = True
+        identity_reason = "registration_exception"
 
-    affine_2d = sitk.AffineTransform(transform_2d)
-    matrix = np.array(affine_2d.GetMatrix()).reshape(2, 2)
-    translation = np.array(affine_2d.GetTranslation())
-    center = np.array(affine_2d.GetCenter())
-
-    warped_slab_before = apply_transform(slab_before.astype(np.float32), transform_2d)
-    post_reg_ncc = _ncc(slab_after, warped_slab_before)
     diag["post_reg_ncc"] = float(post_reg_ncc)
-    diag["ncc_improvement"] = float(post_reg_ncc - best_corr)
+    diag["ncc_improvement"] = float(ncc_improvement)
     diag["affine_matrix"] = matrix.tolist()
     diag["affine_translation"] = translation.tolist()
     diag["affine_determinant"] = float(np.linalg.det(matrix))
 
-    if post_reg_ncc - best_corr < min_ncc_improvement:
-        return _hard_skip("reg_did_not_improve")
+    if use_identity:
+        if not allow_identity:
+            return _hard_skip(identity_reason or "reg_did_not_improve")
+        logger.info(
+            "[interpolation] using identity morph (reason=%s, pre_reg_ncc=%.3f)",
+            identity_reason,
+            best_corr,
+        )
+        diag["used_identity_transform"] = True
+        diag["identity_reason"] = identity_reason
+        affine_2d = _identity_affine_2d(center)
+        matrix = np.eye(2, dtype=np.float64)
+        translation = np.zeros(2, dtype=np.float64)
+        center = np.array(affine_2d.GetCenter())
+        diag["affine_matrix"] = matrix.tolist()
+        diag["affine_translation"] = translation.tolist()
+        diag["affine_determinant"] = 1.0
 
     det = float(np.linalg.det(matrix))
     if det <= 0.0:
         diag["affine_determinant_invalid"] = True
-        return _hard_skip("affine_determinant_non_positive")
+        if allow_identity:
+            affine_2d = _identity_affine_2d(center)
+            matrix = np.eye(2, dtype=np.float64)
+            translation = np.zeros(2, dtype=np.float64)
+            diag["used_identity_transform"] = True
+            diag["identity_reason"] = "affine_determinant_non_positive"
+        else:
+            return _hard_skip("affine_determinant_non_positive")
 
     # -- Build the morphed output ------------------------------------------
     top_of_after = vol_after[0].astype(np.float32)

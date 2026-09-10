@@ -1016,8 +1016,10 @@ process generate_common_space_preview {
 }
 
 // Interpolate a single missing slice via z-aware morphing (zmorph).
-// On gate failure the zarr is omitted (hard skip); see
-// docs/SLICE_INTERPOLATION_FEATURE.md for the full failure policy.
+// Hard skip only when neighbours do not share tissue. An implausible warp
+// morphs with T=I (--allow_identity). Flags are in the script block so
+// -resume does not cache-hit a previous skip. See
+// docs/SLICE_INTERPOLATION_FEATURE.md.
 process interpolate_missing_slice {
     input:
     tuple val(missing_slice_id), path(slice_before), path(slice_after)
@@ -1042,6 +1044,8 @@ process interpolate_missing_slice {
         --max_iterations ${params.interpolation_max_iterations} \
         --overlap_search_window ${params.interpolation_overlap_search_window} \
         --min_overlap_correlation ${params.interpolation_min_overlap_correlation} \
+        --registration_method euler \
+        --allow_identity \
         ${slab_opt} \
         ${fg_opt} \
         ${ncc_opt} \
