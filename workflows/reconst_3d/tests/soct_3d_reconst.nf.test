@@ -44,9 +44,10 @@ nextflow_pipeline {
             // Per-slice processes should run once per input zarr (2 test files)
             assert tasks.count { it.name =~ /stitch_3d_with_refinement/ } == 2
             assert tasks.count { it.name =~ /normalize/ } == 2
+            // N4 is off, but agarose zeroing (mask_only) still runs
+            assert tasks.any { it.name =~ /correct_bias_field/ }
             // Optional stages should NOT have run
             assert !tasks.any { it.name =~ /detect_rehoming_events/ }
-            assert !tasks.any { it.name =~ /correct_bias_field/ }
         }
     }
 

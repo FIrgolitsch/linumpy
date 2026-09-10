@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Apply N4 bias field correction to an OME-Zarr OCT volume.
 
-Three correction modes are supported.
+Four correction modes are supported.
 
 * ``per_section`` -- independently correct each serial tissue section
   (removes depth-dependent attenuation per section).
 * ``global`` -- correct the whole stack as one volume (removes slow
   large-scale intensity gradients).
 * ``two_pass`` -- run ``per_section`` first, then ``global`` (default).
+* ``mask_only`` -- skip N4 and histogram matching; only zero voxels outside
+  the tissue mask (drops the agarose halo for atlas registration).
 
 The ``--strength`` parameter (0-1) blends between the original and the
 fully-corrected result:
 ``output = strength * corrected + (1 - strength) * input``.
+It is ignored in ``mask_only``.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -36,7 +39,7 @@ from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr_array
 
 logger = logging.getLogger(__name__)
 
-_MODES = ("per_section", "global", "two_pass")
+_MODES = ("per_section", "global", "two_pass", "mask_only")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -49,7 +52,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=_MODES,
         default="two_pass",
-        help="Correction mode. [%(default)s]",
+        help="Correction mode: per_section, global, two_pass, or mask_only\n(skip N4; zero agarose only). [%(default)s]",
     )
     p.add_argument(
         "--strength",
@@ -144,7 +147,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Zero out voxels outside the output mask in the final volume\n"
-        "(removes agarose halo).  N4 still fits on the per-section Otsu mask.\n"
+        "(removes agarose halo).  Runs even in --mode mask_only.  When N4\n"
+        "runs, it still fits on the per-section Otsu mask.\n"
         "[%(default)s]",
     )
     p.add_argument(
@@ -260,8 +264,12 @@ def main() -> None:
     )
     logger.info("Tissue mask: %d/%d voxels", int(mask.sum()), mask.size)
 
+    run_n4 = args.mode != "mask_only"
+    if not run_n4:
+        logger.info("mask_only: skipping histogram matching and N4")
+
     # Histogram-matching pre-pass: equalise inter-section intensity drift
-    if args.histogram_match:
+    if run_n4 and args.histogram_match:
         hm_n_serial = None if args.histogram_match_per_zplane else args.n_serial_slices
         logger.info(
             "Histogram matching (n_serial_slices=%s, n_bins=%d, threshold=%g)\u2026",
@@ -278,7 +286,7 @@ def main() -> None:
         ).astype(np.float32)
 
     # Z-profile smoothing: remove residual per-Z jitter that HM cannot fully fix
-    if args.zprofile_smooth_sigma > 0:
+    if run_n4 and args.zprofile_smooth_sigma > 0:
         logger.info("Z-profile gain smoothing (sigma=%g)\u2026", args.zprofile_smooth_sigma)
         vol = apply_zprofile_smoothing(vol, mask, sigma=args.zprofile_smooth_sigma).astype(np.float32)
 
@@ -300,96 +308,102 @@ def main() -> None:
     # float32 buffer (~36 GB on a typical OCT mosaic) during the per-section
     # pass and removes the matching kernel-compaction pressure.
     can_overwrite_vol = args.strength >= 1.0
+    vol_for_blend: np.ndarray | None = None
 
-    if args.mode in ("per_section", "two_pass"):
-        logger.info(
-            "Running per-section N4 (n_serial_slices=%d, n_processes=%d)…",
-            args.n_serial_slices,
-            n_processes,
-        )
-        if can_overwrite_vol and n_processes == 1:
-            # Pre-allocate the bias buffer and pass `vol` as the corrected
-            # destination so per-section writes in place.
-            bias_field_combined = np.empty_like(vol, dtype=np.float32)
-            n4_correct_per_section(
-                vol,
-                n_serial_slices=args.n_serial_slices,
-                mask=mask,
-                n_processes=n_processes,
-                spline_distance_mm=per_section_spline,
-                out=vol,
-                bias_out=bias_field_combined,
-                **n4_kwargs,
-            )
-            working_vol = vol
-        else:
-            vol_ps, bias_ps = n4_correct_per_section(
-                vol,
-                n_serial_slices=args.n_serial_slices,
-                mask=mask,
-                n_processes=n_processes,
-                spline_distance_mm=per_section_spline,
-                **n4_kwargs,
-            )
-            bias_field_combined = bias_ps
-            working_vol = vol_ps
-            # Drop the per-section aliases so the global pass below does not
-            # have to keep two extra full-size float32 volumes alive.
-            del vol_ps, bias_ps
-    else:
+    if args.mode == "mask_only":
         working_vol = vol
-
-    # The strength blend is the only consumer of the original input
-    # buffer below; keep an alias just for that branch and drop the
-    # primary ``vol`` name so the buffer can be released before the
-    # global pass when no blend is needed.  In the in-place per-section
-    # path ``working_vol is vol``, so this just drops a redundant
-    # reference; in the per-section path it frees the original ~36 GB
-    # input buffer.  Holding it through the global pass forces
-    # kcompactd0 to fight for THP-sized free regions.
-    vol_for_blend: np.ndarray | None = vol if args.strength < 1.0 else None
-    del vol
-
-    if args.mode in ("global", "two_pass"):
-        logger.info("Running global N4…")
-        # When the GPU backend is in play and ``working_vol`` already
-        # owns a full-resolution float32 buffer, alias it as the output
-        # destination so n4_correct_gpu does not allocate a fresh
-        # ``corrected_host`` (~one full-volume float32, ~80 GB on a
-        # large mosaic).  The host buffer is not read after the initial
-        # H2D upload.  Pre-allocate a separate ``bias_global`` buffer
-        # so the multiplicative combine into ``bias_field_combined``
-        # below stays well-defined.
-        gpu_inplace = (
-            args.backend in ("gpu", "auto")
-            and isinstance(working_vol, np.ndarray)
-            and working_vol.dtype == np.float32
-            and vol_for_blend is not working_vol
-        )
-        if gpu_inplace:
-            bias_global = np.empty_like(working_vol, dtype=np.float32)
-            n4_correct(
-                working_vol,
-                mask,
-                spline_distance_mm=global_spline,
-                out=working_vol,
-                bias_out=bias_global,
-                **n4_kwargs,
+        bias_field_combined = None
+        del vol
+    else:
+        if args.mode in ("per_section", "two_pass"):
+            logger.info(
+                "Running per-section N4 (n_serial_slices=%d, n_processes=%d)…",
+                args.n_serial_slices,
+                n_processes,
             )
+            if can_overwrite_vol and n_processes == 1:
+                # Pre-allocate the bias buffer and pass `vol` as the corrected
+                # destination so per-section writes in place.
+                bias_field_combined = np.empty_like(vol, dtype=np.float32)
+                n4_correct_per_section(
+                    vol,
+                    n_serial_slices=args.n_serial_slices,
+                    mask=mask,
+                    n_processes=n_processes,
+                    spline_distance_mm=per_section_spline,
+                    out=vol,
+                    bias_out=bias_field_combined,
+                    **n4_kwargs,
+                )
+                working_vol = vol
+            else:
+                vol_ps, bias_ps = n4_correct_per_section(
+                    vol,
+                    n_serial_slices=args.n_serial_slices,
+                    mask=mask,
+                    n_processes=n_processes,
+                    spline_distance_mm=per_section_spline,
+                    **n4_kwargs,
+                )
+                bias_field_combined = bias_ps
+                working_vol = vol_ps
+                # Drop the per-section aliases so the global pass below does not
+                # have to keep two extra full-size float32 volumes alive.
+                del vol_ps, bias_ps
         else:
-            working_vol, bias_global = n4_correct(
-                working_vol,
-                mask,
-                spline_distance_mm=global_spline,
-                **n4_kwargs,
+            working_vol = vol
+
+        # The strength blend is the only consumer of the original input
+        # buffer below; keep an alias just for that branch and drop the
+        # primary ``vol`` name so the buffer can be released before the
+        # global pass when no blend is needed.  In the in-place per-section
+        # path ``working_vol is vol``, so this just drops a redundant
+        # reference; in the per-section path it frees the original ~36 GB
+        # input buffer.  Holding it through the global pass forces
+        # kcompactd0 to fight for THP-sized free regions.
+        vol_for_blend = vol if args.strength < 1.0 else None
+        del vol
+
+        if args.mode in ("global", "two_pass"):
+            logger.info("Running global N4…")
+            # When the GPU backend is in play and ``working_vol`` already
+            # owns a full-resolution float32 buffer, alias it as the output
+            # destination so n4_correct_gpu does not allocate a fresh
+            # ``corrected_host`` (~one full-volume float32, ~80 GB on a
+            # large mosaic).  The host buffer is not read after the initial
+            # H2D upload.  Pre-allocate a separate ``bias_global`` buffer
+            # so the multiplicative combine into ``bias_field_combined``
+            # below stays well-defined.
+            gpu_inplace = (
+                args.backend in ("gpu", "auto")
+                and isinstance(working_vol, np.ndarray)
+                and working_vol.dtype == np.float32
+                and vol_for_blend is not working_vol
             )
-        if bias_field_combined is not None:
-            # Combine in place to avoid a third 36 GB allocation during the
-            # multiply, then release bias_global immediately.
-            bias_field_combined *= bias_global
-            del bias_global
-        else:
-            bias_field_combined = bias_global
+            if gpu_inplace:
+                bias_global = np.empty_like(working_vol, dtype=np.float32)
+                n4_correct(
+                    working_vol,
+                    mask,
+                    spline_distance_mm=global_spline,
+                    out=working_vol,
+                    bias_out=bias_global,
+                    **n4_kwargs,
+                )
+            else:
+                working_vol, bias_global = n4_correct(
+                    working_vol,
+                    mask,
+                    spline_distance_mm=global_spline,
+                    **n4_kwargs,
+                )
+            if bias_field_combined is not None:
+                # Combine in place to avoid a third 36 GB allocation during the
+                # multiply, then release bias_global immediately.
+                bias_field_combined *= bias_global
+                del bias_global
+            else:
+                bias_field_combined = bias_global
 
     corrected = working_vol
     del working_vol

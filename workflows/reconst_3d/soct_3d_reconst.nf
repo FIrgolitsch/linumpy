@@ -46,7 +46,11 @@ workflow {
     def rehomLabel = params.detect_rehoming
         ? (params.tile_fov_mm ? "enabled (tile_fov=${params.tile_fov_mm} mm)" : 'enabled')
         : 'disabled'
-    def biasLabel  = params.correct_bias_field ? "enabled (mode=${params.bias_mode}, zero_mask=${params.bias_zero_mask_mode})" : 'disabled'
+    def biasLabel  = params.correct_bias_field
+        ? "enabled (mode=${params.bias_mode}, zero_mask=${params.bias_zero_mask_mode})"
+        : (params.bias_zero_outside_mask
+            ? "mask_only (zero_mask=${params.bias_zero_mask_mode}, N4 off)"
+            : 'disabled')
     def manualLabel = (params.refine_manual_transforms && params.manual_transforms_dir)
         ? "${params.manual_transforms_dir}"
         : 'disabled'
@@ -397,8 +401,9 @@ workflow {
         tuple(name, ids_str.split(',').size(), ids_str)
     }
 
-    // Stage 8: Bias Field Correction (optional)
-    if (params.correct_bias_field) {
+    // Stage 8: Bias field / agarose mask. N4 is optional; agarose zeroing
+    // still runs when bias_zero_outside_mask is true (mode=mask_only).
+    if (params.correct_bias_field || params.bias_zero_outside_mask) {
         znorm_input = stack_output
             .combine(stack_metadata)
             .map { zarr, _zip, _png, _annotated, name, n, ids_str -> tuple(zarr, name, n, ids_str) }
@@ -1268,6 +1273,7 @@ process correct_bias_field {
     tuple path("${subject_name}.ome.zarr"), path("${subject_name}.ome.zarr.zip"), path("${subject_name}.png"), path("${subject_name}_annotated.png")
 
     script:
+    def bias_mode = params.correct_bias_field ? params.bias_mode : "mask_only"
     def n_slices_opt = n_slices > 0 ? "--n_serial_slices ${n_slices}" : ""
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def backend_flag = params.use_gpu ? "auto" : "cpu"
@@ -1282,7 +1288,7 @@ process correct_bias_field {
     ${gpu_pin_block}
     linum-correct-bias-field ${stacked_zarr} ${subject_name}.ome.zarr \
         ${n_slices_opt} \
-        --mode ${params.bias_mode} \
+        --mode ${bias_mode} \
         --strength ${params.bias_strength} \
         --backend ${backend_flag} \
         --n_processes ${task.cpus} \

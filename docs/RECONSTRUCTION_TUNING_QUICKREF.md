@@ -90,14 +90,14 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 ### Bias correction
 | Param | Default | Lever |
 |---|---|---|
-| `correct_bias_field` | `false` | Master switch. |
+| `correct_bias_field` | `false` | N4 switch. Agarose zeroing still runs if `bias_zero_outside_mask=true`. |
 | `bias_mode` | `'two_pass'` | `'per_section'` if per-slice issues only. |
 | `bias_strength` | `1.0` | Lower if over-flattening. |
 | `bias_histogram_match_per_zplane` | `true` | Keep on. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Range 2–4. |
 | `bias_tissue_threshold` | `0.005` | Lower if tissue mistaken for bg. |
-| `bias_zero_outside_mask` | `true` | Master switch for agarose zeroing. Keep on. |
-| `bias_zero_mask_mode` | `'section'` | `'silhouette'` keeps dim overlap inside the brain XY footprint. |
+| `bias_zero_outside_mask` | `true` | Master switch for agarose zeroing. Keep on. Runs with N4 off (`mask_only`). |
+| `bias_zero_mask_mode` | `'section'` | `'silhouette'` keeps dim overlap; use it for atlas registration. |
 | `bias_zero_mask_dilate_px` | `0` | Extra XY margin on the silhouette (e.g. 8). |
 
 ### Atlas registration

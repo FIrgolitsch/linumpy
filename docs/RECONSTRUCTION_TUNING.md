@@ -303,7 +303,7 @@ and slow inter-slice intensity drift.
 | `bias_histogram_match_per_zplane` | `true` | Match each Z-plane to the global tissue distribution before N4. **Strongly reduces inter-slice intensity steps.** Roughly an order of magnitude better than chunked HM in tested cases. |
 | `bias_tissue_threshold` | `0.005` | Voxels at or below this intensity are considered background and excluded from histogram matching. Lower if tissue is being treated as background. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Gaussian smoothing (sigma in Z-planes) of a residual scalar gain after HM. Eliminates the small inter-slice steps HM cannot remove. `0` = disabled. Typical range 2–4. |
-| `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask (agarose suppression). N4 still fits on the per-section Otsu mask. Keep `true`. |
+| `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask (agarose suppression). N4 still fits on the per-section Otsu mask. Keep `true`. Runs even when `correct_bias_field` is false (`mask_only`). |
 | `bias_zero_mask_mode` | `'section'` | `'section'` applies the per-section Otsu mask (can punch dim overlap). `'silhouette'` ORs that mask along Z, hole-fills, and extrudes the XY footprint so overlap inside the brain is kept. |
 | `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette after hole-fill. Ignored in `'section'` mode. |
 

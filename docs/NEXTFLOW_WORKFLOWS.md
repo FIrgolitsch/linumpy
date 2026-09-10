@@ -390,7 +390,7 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `correct_bias_field` | `false` | Enable post-stacking N4 bias field correction |
+| `correct_bias_field` | `false` | Enable post-stacking N4. Agarose zeroing still runs if `bias_zero_outside_mask` is true (`mask_only`). |
 | `bias_mode` | `'two_pass'` | Correction mode: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global) |
 | `bias_strength` | `1.0` | Correction mixing strength (0 = passthrough, 1 = full correction) |
 | `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask. Keep `true` to drop agarose. |
@@ -591,7 +591,7 @@ output/
 │   ├── {subject}.ome.zarr.zip
 │   ├── {subject}.png
 │   └── {subject}_annotated.png
-├── correct_bias_field/                 # Only when correct_bias_field = true
+├── correct_bias_field/                 # N4 and/or agarose mask (mask_only when N4 is off)
 │   └── {subject}_corrected.ome.zarr
 ├── align_to_ras/                       # Only when align_to_ras_enabled = true
 │   ├── {subject}_ras.ome.zarr
