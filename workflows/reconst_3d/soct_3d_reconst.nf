@@ -1153,7 +1153,9 @@ process refine_manual_transforms {
     path "*"
 
     script:
+    def manual_fp = Helpers.manualTransformsFingerprint(params)
     """
+    # manual_transforms_fingerprint ${manual_fp}
     dirname=\$(basename ${moving_vol} .ome.zarr)
     linum-refine-manual-transforms ${fixed_vol} ${moving_vol} auto_transforms \$dirname \
         --max_translation_px ${params.refine_max_translation_px} \

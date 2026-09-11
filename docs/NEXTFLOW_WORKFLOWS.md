@@ -1134,14 +1134,14 @@ without exhaustion.
 ### `-resume` hashes script strings, not files behind a path string
 
 Nextflow's task hash includes process **inputs** and the **script block
-text**. It does **not** hash files that a script merely names as an
-absolute path. `--manual_transforms_dir /scratch/.../manual_transforms`
-therefore cache-hits after you replace `transform.tfm` files in place.
+text**. Default file fingerprints are **size + mtime**, not bytes.
+`--manual_transforms_dir /abs/path` is a string; even a staged `path`
+directory cache-hits after `rsync -a` / `scp -p` because those preserve
+mtime and `.tfm` files often stay the same length.
 
-`refine_manual_transforms` stages that directory as a `path` input so
-contents enter the hash. Stack embeds `Helpers.manualTransformsFingerprint`
-in its script block for the `refine_manual_transforms = false` path (same
-gotcha). Python-only edits also do not bust cache unless the `.nf` script
+`Helpers.manualTransformsFingerprint` MD5s every `transform.tfm` and is
+embedded in the refine and stack script blocks so in-place uploads bust
+`-resume`. Python-only edits also do not bust cache unless the `.nf` script
 string changes.
 
 ### Hard-skip behaviour for failed interpolation

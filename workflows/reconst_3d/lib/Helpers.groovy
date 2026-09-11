@@ -286,9 +286,9 @@ class Helpers {
     }
 
     /**
-     * Content stamp for the manual-transforms tree. Embedded in the stack
-     * script block so replacing transform.tfm files busts -resume even
-     * though --manual_transforms_dir is an absolute path string.
+     * MD5 of every transform.tfm. Embedded in refine + stack script blocks
+     * because Nextflow's default file cache is size+mtime, and rsync -a /
+     * scp -p preserves those after an in-place upload.
      */
     static String manualTransformsFingerprint(Map params) {
         def dirPath = params.manual_transforms_dir?.toString()
@@ -306,10 +306,22 @@ class Helpers {
             }
             def tfm = new File(sub, 'transform.tfm')
             if (tfm.exists()) {
-                parts << "${sub.name}:${tfm.length()}:${tfm.lastModified()}"
+                parts << "${sub.name}:${md5Hex(tfm)}"
             }
         }
         return parts.sort().join(',')
+    }
+
+    static String md5Hex(File f) {
+        def md = java.security.MessageDigest.getInstance('MD5')
+        f.withInputStream { is ->
+            byte[] buf = new byte[8192]
+            int n
+            while ((n = is.read(buf)) > 0) {
+                md.update(buf, 0, n)
+            }
+        }
+        md.digest().encodeHex().toString()
     }
 
     static String stackCumulativeArgs(Map params) {
