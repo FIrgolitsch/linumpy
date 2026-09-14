@@ -33,6 +33,7 @@ from linumpy.intensity.bias_field import (
     compute_tissue_mask,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_section_silhouettes,
     tissue_mask_silhouette_xy,
 )
 from linumpy.intensity.normalization import apply_histogram_matching, apply_zprofile_smoothing
@@ -155,12 +156,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--zero_mask_mode",
-        choices=("section", "silhouette"),
+        choices=("section", "silhouette", "section_silhouette"),
         default="section",
         help="Which mask is applied when --zero_outside_mask is on.\n"
         "'section' uses the per-section Otsu mask (can punch dim overlap).\n"
-        "'silhouette' ORs that mask along Z, hole-fills, and extrudes the\n"
-        "XY footprint so overlap inside the brain is kept. [%(default)s]",
+        "'silhouette' ORs that mask along all Z, hole-fills, and extrudes the\n"
+        "XY footprint (keeps other slices' agarose FOVs).\n"
+        "'section_silhouette' ORs within each serial section only so overlap\n"
+        "inside that cut is kept and other slices' agarose is dropped. [%(default)s]",
     )
     p.add_argument(
         "--zero_mask_dilate_px",
@@ -449,6 +452,17 @@ def main() -> None:
                 args.zero_mask_dilate_px,
             )
             corrected *= _as_same_module(sil_xy, corrected)
+        elif args.zero_mask_mode == "section_silhouette":
+            n_sec = args.n_serial_slices if args.n_serial_slices and args.n_serial_slices > 0 else 1
+            out_mask = tissue_mask_section_silhouettes(mask, n_sec, dilate_px=args.zero_mask_dilate_px)
+            logger.info(
+                "Zeroing outside per-section silhouettes (%d/%d voxels, %d sections, dilate=%d)\u2026",
+                int(out_mask.sum()),
+                out_mask.size,
+                n_sec,
+                args.zero_mask_dilate_px,
+            )
+            corrected *= _as_same_module(out_mask, corrected)
         else:
             logger.info("Zeroing voxels outside per-section tissue mask\u2026")
             corrected *= _as_same_module(mask, corrected)

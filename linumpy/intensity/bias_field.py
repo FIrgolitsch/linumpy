@@ -289,6 +289,58 @@ def tissue_mask_silhouette_xy(mask: np.ndarray, dilate_px: int = 0) -> np.ndarra
     return silhouette
 
 
+def tissue_mask_section_silhouettes(
+    mask: np.ndarray,
+    n_serial_slices: int,
+    dilate_px: int = 0,
+) -> np.ndarray:
+    """Per-section XY silhouettes, extruded only within that section's Z span.
+
+    A global OR-Z silhouette keeps every slice's agarose FOV on every other
+    slice. Restricting the OR to each serial section keeps dim overlap inside
+    that cut and drops agarose that only exists in other FOVs.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean tissue mask ``(Z, Y, X)`` from :func:`compute_tissue_mask`.
+    n_serial_slices : int
+        Number of serial sections (same chunking as the Otsu mask).
+    dilate_px : int
+        Extra XY margin in pixels after hole-filling. ``0`` disables dilation.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array of shape ``(Z, Y, X)``. CuPy when *mask* is CuPy.
+    """
+    from linumpy.gpu import is_cupy_array
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
+    if n_serial_slices < 1:
+        raise ValueError(f"n_serial_slices must be >= 1; got {n_serial_slices}")
+
+    cupy_input = is_cupy_array(mask)
+    if cupy_input:
+        import cupy as cp
+
+        mask_np = np.asarray(cp.asnumpy(mask), dtype=bool)
+    else:
+        mask_np = np.asarray(mask, dtype=bool)
+
+    out = np.zeros_like(mask_np, dtype=bool)
+    for start, end in _chunk_boundaries(mask_np.shape[0], n_serial_slices):
+        sil = tissue_mask_silhouette_xy(mask_np[start:end], dilate_px=dilate_px)
+        out[start:end] = sil[None, ...]
+
+    if cupy_input:
+        import cupy as cp
+
+        return cp.asarray(out)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # N4 core
 # ---------------------------------------------------------------------------

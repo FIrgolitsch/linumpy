@@ -395,12 +395,12 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 |-----------|---------|-------------|
 | `correct_bias_field` | `false` | Enable post-stacking N4. Agarose zeroing still runs if `bias_zero_outside_mask` is true (`mask_only`). |
 | `bias_histogram_match` | `true` | Histogram-match tissue to a global reference. Runs in `mask_only` (N4 off) as well as N4 modes. |
-| `bias_histogram_match_per_zplane` | `true` | Match each Z-plane independently (strongest slice-stripe reduction). |
+| `bias_histogram_match_per_zplane` | `true` | Match each Z-plane independently. Flattens in-focus vs overlap contrast on SOCT and makes residual XY seams look like slice lines — keep off when `stack_overlap_z_gain` is on. |
 | `bias_mode` | `'two_pass'` | Correction mode: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global) |
 | `bias_strength` | `1.0` | Correction mixing strength (0 = passthrough, 1 = full correction) |
 | `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask. Keep `true` to drop agarose. |
-| `bias_zero_mask_mode` | `'section'` | `'silhouette'` keeps dim overlap inside the brain XY footprint (N4 still fits on the per-section Otsu mask). |
-| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette. Ignored in `'section'` mode. |
+| `bias_zero_mask_mode` | `'section'` | `'section'` = per-section Otsu (can punch dim overlap). `'silhouette'` = global OR-Z (keeps other slices' agarose FOVs). `'section_silhouette'` = OR within each serial section only. |
+| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on silhouette modes. Ignored in `'section'` mode. |
 
 #### Atlas Registration (RAS Alignment)
 

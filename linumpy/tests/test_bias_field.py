@@ -9,6 +9,7 @@ from linumpy.intensity.bias_field import (
     compute_tissue_mask,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_section_silhouettes,
     tissue_mask_silhouette_xy,
 )
 
@@ -127,6 +128,21 @@ def test_tissue_mask_silhouette_dilate_expands():
 def test_tissue_mask_silhouette_rejects_bad_rank():
     with pytest.raises(ValueError, match="3-D"):
         tissue_mask_silhouette_xy(np.ones((8, 8), dtype=bool))
+
+
+def test_section_silhouettes_drop_other_slice_agarose_fov():
+    """Agarose in slice 0's unique FOV must not survive on slice 1."""
+    mask = np.zeros((8, 24, 24), dtype=bool)
+    mask[:4, 4:20, 4:20] = True
+    mask[4:, 8:16, 8:16] = True
+    mask[:4, 2:4, 4:20] = True  # slice-0-only agarose FOV edge
+    out = tissue_mask_section_silhouettes(mask, n_serial_slices=2, dilate_px=0)
+    assert out[:4, 10, 10].all()
+    assert out[4:, 10, 10].all()
+    assert out[:4, 2, 10].all()
+    assert not out[4:, 2, 10].any()
+    global_sil = tissue_mask_silhouette_xy(mask)
+    assert global_sil[2, 10]  # global OR keeps slice-0 agarose on all Z
 
 
 @pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU not available")
