@@ -1,6 +1,7 @@
 """Tests for linumpy/mosaic/stacking.py"""
 
 import numpy as np
+import pytest
 
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
@@ -9,12 +10,14 @@ from linumpy.mosaic.stacking import (
     blend_overlap_z,
     enforce_z_consistency,
     estimate_overlap_z_gain_fit,
+    estimate_z_blend_xy_shift,
     expected_z_overlap,
     extract_overlap_rois,
     find_z_overlap,
     fit_overlap_log_ratio,
     overlap_z_gain_curve,
     overlap_z_profiles,
+    refine_z_blend_overlap,
 )
 
 
@@ -295,3 +298,96 @@ def test_estimate_overlap_z_gain_fit_returns_none_without_tissue():
     fixed = np.zeros((8, 16, 16), dtype=np.float32)
     moving = np.zeros((8, 16, 16), dtype=np.float32)
     assert estimate_overlap_z_gain_fit(fixed, moving, overlap=4, min_voxels=50) is None
+
+
+# ---------------------------------------------------------------------------
+# estimate_z_blend_xy_shift / refine_z_blend_overlap (keep-if-better)
+# ---------------------------------------------------------------------------
+
+
+def _gaussian_blob(size=64, cy=32.0, cx=32.0, sig=8.0):
+    y, x = np.mgrid[:size, :size]
+    return np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (2 * sig**2)).astype(np.float32)
+
+
+def _stack_aip(aip, nz=4):
+    return np.stack([aip] * nz, axis=0)
+
+
+def test_estimate_z_blend_xy_shift_too_few_valid_pixels():
+    existing = np.zeros((4, 20, 20), dtype=np.float32)
+    moving = np.zeros((4, 20, 20), dtype=np.float32)
+    dy, dx, mag = estimate_z_blend_xy_shift(existing, moving, 10.0)
+    assert (dy, dx, mag) == (0.0, 0.0, 0.0)
+
+
+def test_estimate_z_blend_xy_shift_applies_when_ncc_rises(monkeypatch):
+    blob = _gaussian_blob()
+    existing = _stack_aip(blob)
+    moving = _stack_aip(np.roll(blob, 3, axis=0))
+
+    def fake_register(*_args, **kwargs):
+        diag = kwargs.get("diagnostics")
+        if diag is not None:
+            diag["rejected"] = False
+        return 0.0, -3.0, 0.0, 0.0
+
+    monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
+    dy, dx, mag = estimate_z_blend_xy_shift(existing, moving, 10.0)
+    assert dy == pytest.approx(-3.0)
+    assert dx == pytest.approx(0.0)
+    assert mag == pytest.approx(3.0)
+
+
+def test_estimate_z_blend_xy_shift_keeps_when_ncc_does_not_rise(monkeypatch):
+    blob = _gaussian_blob()
+    vol = _stack_aip(blob)
+
+    def fake_register(*_args, **kwargs):
+        diag = kwargs.get("diagnostics")
+        if diag is not None:
+            diag["rejected"] = False
+        return 0.0, 4.0, 0.0, 0.0
+
+    monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
+    dy, dx, mag = estimate_z_blend_xy_shift(vol, vol.copy(), 10.0)
+    assert (dy, dx, mag) == (0.0, 0.0, 0.0)
+
+
+def test_estimate_z_blend_xy_shift_keeps_when_over_bound(monkeypatch):
+    blob = _gaussian_blob()
+    existing = _stack_aip(blob)
+    moving = _stack_aip(np.roll(blob, 3, axis=0))
+
+    def fake_register(*_args, **kwargs):
+        diag = kwargs.get("diagnostics")
+        if diag is not None:
+            diag["rejected"] = True
+            diag["unconstrained_tx"] = 20.0
+            diag["unconstrained_ty"] = 0.0
+        return 0.0, 0.0, 0.0, 0.0
+
+    monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
+    dy, dx, mag = estimate_z_blend_xy_shift(existing, moving, 10.0)
+    assert (dy, dx, mag) == (0.0, 0.0, 0.0)
+
+
+def test_refine_z_blend_overlap_shifts_slab_when_accepted(monkeypatch):
+    from linumpy.registration.refinement import tissue_ncc
+
+    blob = _gaussian_blob()
+    existing = _stack_aip(blob)
+    moving = _stack_aip(np.roll(blob, 3, axis=0))
+
+    def fake_register(*_args, **kwargs):
+        diag = kwargs.get("diagnostics")
+        if diag is not None:
+            diag["rejected"] = False
+        return 0.0, -3.0, 0.0, 0.0
+
+    monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
+    refined, mag = refine_z_blend_overlap(existing, moving, 10.0)
+    assert mag == pytest.approx(3.0)
+    ncc_before = tissue_ncc(blob, moving[0])
+    ncc_after = tissue_ncc(blob, refined[0])
+    assert ncc_after > ncc_before

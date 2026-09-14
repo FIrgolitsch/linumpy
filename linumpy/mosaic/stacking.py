@@ -438,58 +438,96 @@ def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "
     return existing
 
 
-def refine_z_blend_overlap(
-    existing: np.ndarray, moving_overlap: np.ndarray, max_refinement_px: float
-) -> tuple[np.ndarray, float]:
-    """Find and apply a small XY shift to align moving_overlap with existing before blending.
+def estimate_z_blend_xy_shift(
+    existing: np.ndarray,
+    moving_overlap: np.ndarray,
+    max_refinement_px: float,
+    ncc_min_improve: float = 1e-4,
+    tissue_threshold: float = 0.01,
+) -> tuple[float, float, float]:
+    """Keep-if-better XY residual for the Z-blend overlap.
 
-    Uses 2D phase correlation on Z-projected overlap regions to detect residual
-    XY misalignment at slice boundaries.
-
-    Parameters
-    ----------
-    existing : np.ndarray
-        3D array (Z, Y, X) from current stack at the overlap zone.
-    moving_overlap : np.ndarray
-        3D array (Z, Y, X) from incoming slice at the overlap zone.
-    max_refinement_px : float
-        Maximum allowed shift magnitude in pixels.
-
-    Returns
-    -------
-    refined : np.ndarray
-        Shifted moving_overlap with residual XY misalignment corrected.
-    magnitude : float
-        Shift magnitude applied (pixels), or 0.0 if not applied.
+    Estimates a translation-only shift from overlap AIPs (mean along Z).
+    Returns ``(dy, dx, magnitude)``. Identity ``(0, 0, 0)`` when the
+    optimizer exceeds ``max_refinement_px`` or tissue NCC does not rise.
     """
-    from scipy.ndimage import shift as ndi_shift
-
-    from linumpy.registration.transforms import pair_wise_phase_correlation
+    from linumpy.registration.refinement import register_refinement, tissue_ncc
 
     fixed_2d = np.mean(existing, axis=0).astype(np.float32)
     moving_2d = np.mean(moving_overlap, axis=0).astype(np.float32)
+    valid = (fixed_2d > tissue_threshold) & (moving_2d > tissue_threshold)
+    if int(np.sum(valid)) < 1000:
+        return 0.0, 0.0, 0.0
 
-    valid = (fixed_2d > 0) & (moving_2d > 0)
-    if np.sum(valid) < 1000:
-        return moving_overlap, 0.0
+    ncc_before = tissue_ncc(fixed_2d, moving_2d, threshold=tissue_threshold)
+    if not np.isfinite(ncc_before):
+        return 0.0, 0.0, 0.0
 
-    try:
-        shift = pair_wise_phase_correlation(fixed_2d, moving_2d)
-        dy, dx = float(shift[0]), float(shift[1])
-    except Exception as e:
-        logger.debug("Z-blend phase correlation failed: %s", e)
-        return moving_overlap, 0.0
+    diag: dict[str, Any] = {}
+    tx, ty, _rot, _metric = register_refinement(
+        fixed_2d,
+        moving_2d,
+        enable_rotation=False,
+        max_rotation_deg=0.0,
+        max_translation_px=max_refinement_px,
+        fixed_mask=(fixed_2d > tissue_threshold),
+        moving_mask=(moving_2d > tissue_threshold),
+        bound_mode="reject",
+        shrink_factors=[1],
+        smoothing_sigmas=[0],
+        diagnostics=diag,
+    )
+    if diag.get("rejected"):
+        logger.debug(
+            "Z-blend refinement rejected: unconstrained mag=%.2f px > max %s px",
+            float(np.hypot(diag.get("unconstrained_tx", 0.0), diag.get("unconstrained_ty", 0.0))),
+            max_refinement_px,
+        )
+        return 0.0, 0.0, 0.0
 
-    magnitude = np.sqrt(dy**2 + dx**2)
-
+    dy, dx = float(ty), float(tx)
+    magnitude = float(np.hypot(dy, dx))
     if magnitude < 0.1:
-        return moving_overlap, 0.0
+        return 0.0, 0.0, 0.0
 
-    if magnitude > max_refinement_px:
-        logger.debug("Z-blend refinement rejected: %.2f px > max %s px", magnitude, max_refinement_px)
-        return moving_overlap, 0.0
+    from scipy.ndimage import shift as ndi_shift
 
-    refined = ndi_shift(moving_overlap.astype(np.float32), [0, dy, dx], order=0, mode="nearest")
+    shifted_2d = ndi_shift(moving_2d, [dy, dx], order=1, mode="constant", cval=0.0)
+    ncc_after = tissue_ncc(fixed_2d, shifted_2d, threshold=tissue_threshold)
+    if not np.isfinite(ncc_after) or (ncc_after - ncc_before) < ncc_min_improve:
+        logger.debug(
+            "Z-blend refinement rejected: tissue NCC %.4f -> %.4f",
+            ncc_before,
+            ncc_after,
+        )
+        return 0.0, 0.0, 0.0
+    logger.debug(
+        "Z-blend refinement accepted: dy=%.2f dx=%.2f NCC %.4f -> %.4f",
+        dy,
+        dx,
+        ncc_before,
+        ncc_after,
+    )
+    return dy, dx, magnitude
+
+
+def refine_z_blend_overlap(
+    existing: np.ndarray,
+    moving_overlap: np.ndarray,
+    max_refinement_px: float,
+    ncc_min_improve: float = 1e-4,
+) -> tuple[np.ndarray, float]:
+    """Find and apply a keep-if-better XY shift on the overlap slab.
+
+    Prefer :func:`estimate_z_blend_xy_shift` and shift the full incoming
+    slice so unique (non-overlap) planes move with the blend zone.
+    """
+    from scipy.ndimage import shift as ndi_shift
+
+    dy, dx, magnitude = estimate_z_blend_xy_shift(existing, moving_overlap, max_refinement_px, ncc_min_improve=ncc_min_improve)
+    if magnitude <= 0:
+        return moving_overlap, 0.0
+    refined = ndi_shift(moving_overlap.astype(np.float32), [0, dy, dx], order=1, mode="constant", cval=0.0)
     return refined, magnitude
 
 

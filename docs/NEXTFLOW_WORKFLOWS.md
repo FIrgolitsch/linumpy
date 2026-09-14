@@ -314,7 +314,8 @@ and correlation or physics-based Z-matching.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `stack_blend_enabled` | `true` | Blend overlapping regions between slices |
-| `blend_refinement_px` | `0` | Z-blend refinement: phase-correlation XY correction in the overlap zone before blending (0 = disabled) |
+| `blend_refinement_px` | `0` | Keep-if-better XY residual on the Z-blend overlap AIP (pixels). Translation-only SimpleITK; applied to the whole incoming slice when tissue NCC rises. Identity if unconstrained magnitude exceeds this bound. 0 = disabled |
+| `blend_refinement_ncc_min_improve` | `1e-4` | Minimum tissue-NCC gain required to accept a Z-blend XY shift |
 | `stack_blend_z_refine_vox` | `5` | Z-blend position refinement: search up to N voxels below the expected boundary for the best-correlated plane |
 | `stack_overlap_z_gain` | `false` | Boost the previous slice so its Z-end overlap matches the next slice's top (both-tissue voxels). Replaces the scalar median scale that dims the incoming slice. |
 | `stack_overlap_z_gain_threshold` | `0.01` | Tissue threshold for both-slice overlap voxels when fitting overlap z-gain |

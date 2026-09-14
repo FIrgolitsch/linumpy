@@ -37,10 +37,10 @@ from linumpy.mosaic.stacking import (
     blend_overlap_z,
     enforce_z_consistency,
     estimate_overlap_z_gain_fit,
+    estimate_z_blend_xy_shift,
     expected_z_overlap,
     find_z_overlap,
     overlap_z_gain_curve,
-    refine_z_blend_overlap,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -186,10 +186,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--blend_refinement_px",
         type=float,
         default=0,
-        help="Enable Z-blend refinement: phase-correlation-based XY shift\n"
-        "correction applied in the overlap zone before blending, analogous\n"
-        "to stitch_3d_with_refinement for tiles. Set to the maximum\n"
-        "allowed shift in pixels (e.g. 10). 0 disables. [%(default)s]",
+        help="Keep-if-better XY residual on the Z-blend overlap AIP\n"
+        "(translation-only SimpleITK). Applied to the whole incoming slice\n"
+        "when tissue NCC rises; identity if the unconstrained shift exceeds\n"
+        "this bound (pixels). 0 disables. [%(default)s]",
+    )
+    p.add_argument(
+        "--blend_refinement_ncc_min_improve",
+        type=float,
+        default=1e-4,
+        help="Minimum tissue-NCC gain required to accept a Z-blend XY shift.\n"
+        "Rejected shifts keep the pairwise/manual overlay. [%(default)s]",
     )
     p.add_argument(
         "--blend_z_refine_vox",
@@ -1003,11 +1010,33 @@ def main() -> None:
                                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
                                 logger.debug("Slice %s: intensity scale=%.3f", slice_id, scale)
 
-                # Z-blend refinement: correct residual XY misalignment in the overlap zone
+                # Keep-if-better XY residual on overlap AIPs. Shift the whole
+                # incoming volume so unique-Z planes move with the blend zone.
                 if args.blend_refinement_px > 0:
-                    moving_overlap, ref_mag = refine_z_blend_overlap(existing, moving_overlap, args.blend_refinement_px)
+                    dy, dx, ref_mag = estimate_z_blend_xy_shift(
+                        existing,
+                        moving_overlap,
+                        args.blend_refinement_px,
+                        ncc_min_improve=args.blend_refinement_ncc_min_improve,
+                    )
                     if ref_mag > 0:
-                        logger.debug("Slice %s: z-blend XY refinement %.2f px", slice_id, ref_mag)
+                        from scipy.ndimage import shift as ndi_shift
+
+                        shifted = ndi_shift(
+                            shifted.astype(np.float32),
+                            [0, dy, dx],
+                            order=1,
+                            mode="constant",
+                            cval=0.0,
+                        )
+                        moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
+                        logger.debug(
+                            "Slice %s: z-blend XY refinement dy=%.2f dx=%.2f mag=%.2f px",
+                            slice_id,
+                            dy,
+                            dx,
+                            ref_mag,
+                        )
 
                 # Blend
                 blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)

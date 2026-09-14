@@ -473,6 +473,7 @@ linum-stack-slices-motor <slices_dir> <shifts_file> <output.ome.zarr> \
     [--blend] \
     [--blend_depth] \
     [--blend_refinement_px 0] \
+    [--blend_refinement_ncc_min_improve 1e-4] \
     [--blend_z_refine_vox 0] \
     [--overlap_z_gain | --no-overlap_z_gain] \
     [--overlap_z_gain_threshold 0.01] \
@@ -507,6 +508,8 @@ linum-stack-slices-motor <slices_dir> <shifts_file> <output.ome.zarr> \
 | `--no_xy_shift` | off | Ignore XY shifts from motor CSV (stack without XY displacement) |
 | `--slice_config` | — | CSV to filter which slices are included / motor-only |
 | `--load_max_rotation` | — | Metric-based gate: skip transforms with rotation above this threshold |
+| `--blend_refinement_px` | `0` | Keep-if-better XY residual on the Z-blend overlap AIP (max pixels; 0 = off) |
+| `--blend_refinement_ncc_min_improve` | `1e-4` | Minimum tissue-NCC gain to accept the Z-blend XY shift |
 | `--overlap_z_gain` | off | Boost previous slice from Z-end overlap fit (both-tissue); skip scalar dimming of the incoming slice |
 | `--overlap_z_gain_threshold` | `0.01` | Tissue threshold for both-slice overlap voxels |
 
