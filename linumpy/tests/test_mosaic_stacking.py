@@ -251,6 +251,13 @@ def test_overlap_z_gain_curve_ramps_unique_then_overlap():
     assert np.all(np.diff(g[: nz - ov + 1]) >= -1e-6)
 
 
+def test_overlap_z_gain_curve_clamps_to_hi():
+    nz, ov = 8, 4
+    a, b = np.log(3.0), 0.0
+    g = overlap_z_gain_curve(nz, ov, a, b, clamp=(0.5, 2.0))
+    assert float(np.max(g)) == 2.0
+
+
 def test_apply_overlap_z_gain_multiplies_planes():
     vol = np.ones((5, 3, 3), dtype=np.float32)
     gain = np.array([1.0, 1.5, 2.0, 2.5, 3.0], dtype=np.float32)

@@ -319,6 +319,8 @@ and correlation or physics-based Z-matching.
 | `stack_overlap_z_gain` | `false` | Boost the previous slice so its Z-end overlap matches the next slice's top (both-tissue voxels). Replaces the scalar median scale that dims the incoming slice. |
 | `stack_overlap_z_gain_threshold` | `0.01` | Tissue threshold for both-slice overlap voxels when fitting overlap z-gain |
 | `stack_overlap_z_gain_min_overlap` | `8` | Skip overlap z-gain when the Z-end overlap is thinner than this (voxels) |
+| `stack_overlap_z_gain_clamp_lo` | `0.5` | Floor on overlap z-gain (same as the scalar median scale) |
+| `stack_overlap_z_gain_clamp_hi` | `2.0` | Cap on overlap z-gain so overlap bands cannot exceed 2× |
 
 **Motor stacking / transform application:**
 
@@ -391,6 +393,8 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `correct_bias_field` | `false` | Enable post-stacking N4. Agarose zeroing still runs if `bias_zero_outside_mask` is true (`mask_only`). |
+| `bias_histogram_match` | `true` | Histogram-match tissue to a global reference. Runs in `mask_only` (N4 off) as well as N4 modes. |
+| `bias_histogram_match_per_zplane` | `true` | Match each Z-plane independently (strongest slice-stripe reduction). |
 | `bias_mode` | `'two_pass'` | Correction mode: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global) |
 | `bias_strength` | `1.0` | Correction mixing strength (0 = passthrough, 1 = full correction) |
 | `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask. Keep `true` to drop agarose. |

@@ -8,8 +8,9 @@ Four correction modes are supported.
 * ``global`` -- correct the whole stack as one volume (removes slow
   large-scale intensity gradients).
 * ``two_pass`` -- run ``per_section`` first, then ``global`` (default).
-* ``mask_only`` -- skip N4 and histogram matching; only zero voxels outside
-  the tissue mask (drops the agarose halo for atlas registration).
+* ``mask_only`` -- skip N4; still run histogram matching / Z-profile
+  smoothing when those flags are on, then zero voxels outside the tissue
+  mask (drops the agarose halo).
 
 The ``--strength`` parameter (0-1) blends between the original and the
 fully-corrected result:
@@ -52,7 +53,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=_MODES,
         default="two_pass",
-        help="Correction mode: per_section, global, two_pass, or mask_only\n(skip N4; zero agarose only). [%(default)s]",
+        help="Correction mode: per_section, global, two_pass, or mask_only\n"
+        "(skip N4; histogram matching still runs unless --no-histogram_match). [%(default)s]",
     )
     p.add_argument(
         "--strength",
@@ -105,9 +107,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--histogram_match",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply per-section histogram matching to a global reference distribution\n"
-        "before N4 correction.  Equalises section-to-section intensity drift while\n"
-        "preserving relative contrast within each section. [%(default)s]",
+        help="Apply per-section histogram matching to a global reference distribution.\n"
+        "Equalises section-to-section intensity drift while preserving relative\n"
+        "contrast within each section. Runs in mask_only as well as N4 modes. [%(default)s]",
     )
     p.add_argument(
         "--histogram_n_bins",
@@ -284,10 +286,10 @@ def main() -> None:
 
     run_n4 = args.mode != "mask_only"
     if not run_n4:
-        logger.info("mask_only: skipping histogram matching and N4")
+        logger.info("mask_only: skipping N4")
 
     # Histogram-matching pre-pass: equalise inter-section intensity drift
-    if run_n4 and args.histogram_match:
+    if args.histogram_match:
         hm_n_serial = None if args.histogram_match_per_zplane else args.n_serial_slices
         logger.info(
             "Histogram matching (n_serial_slices=%s, n_bins=%d, threshold=%g)\u2026",
@@ -304,7 +306,7 @@ def main() -> None:
         ).astype(np.float32)
 
     # Z-profile smoothing: remove residual per-Z jitter that HM cannot fully fix
-    if run_n4 and args.zprofile_smooth_sigma > 0:
+    if args.zprofile_smooth_sigma > 0:
         logger.info("Z-profile gain smoothing (sigma=%g)\u2026", args.zprofile_smooth_sigma)
         vol = apply_zprofile_smoothing(vol, mask, sigma=args.zprofile_smooth_sigma).astype(np.float32)
 

@@ -51,3 +51,51 @@ def test_mask_only_zeros_agarose_keeps_tissue(tmp_path, script_runner):
     # Halo gone; interior tissue kept.
     assert float(arr[:, 0, 0].max()) == 0.0
     assert float(arr[:, 16, 16].mean()) > 0.5
+
+
+def test_mask_only_runs_histogram_match(tmp_path, script_runner):
+    """mask_only skips N4 but still histogram-matches when the flag is on."""
+    import dask.array as da
+    import numpy as np
+
+    from linumpy.io.zarr import read_omezarr, save_omezarr
+
+    vol = np.zeros((8, 32, 32), dtype=np.float32)
+    vol[:4, 8:24, 8:24] = 0.4
+    vol[4:, 8:24, 8:24] = 0.9
+    inp = tmp_path / "in.ome.zarr"
+    out = tmp_path / "out.ome.zarr"
+    save_omezarr(
+        da.from_array(vol),
+        inp,
+        voxel_size=(0.01, 0.01, 0.01),
+        chunks=vol.shape,
+        n_levels=0,
+    )
+
+    ret = script_runner.run(
+        [
+            "linum-correct-bias-field",
+            str(inp),
+            str(out),
+            "--mode",
+            "mask_only",
+            "--histogram_match",
+            "--histogram_match_per_zplane",
+            "--tissue_threshold",
+            "0.1",
+            "--zprofile_smooth_sigma",
+            "0",
+            "--n_levels",
+            "0",
+            "--no_isotropic",
+        ]
+    )
+    assert ret.success, ret.stderr
+    result, _ = read_omezarr(out, level=0)
+    arr = np.asarray(result[:], dtype=np.float32)
+    while arr.ndim > 3 and arr.shape[0] == 1:
+        arr = arr[0]
+    lo = float(arr[:4, 16, 16].mean())
+    hi = float(arr[4:, 16, 16].mean())
+    assert abs(hi - lo) < abs(0.9 - 0.4)

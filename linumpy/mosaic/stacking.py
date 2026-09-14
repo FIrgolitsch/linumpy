@@ -565,7 +565,7 @@ def overlap_z_gain_curve(
     overlap: int,
     a: float,
     b: float,
-    clamp: tuple[float, float] = (0.25, 4.0),
+    clamp: tuple[float, float] = (0.5, 2.0),
 ) -> np.ndarray:
     """1-D gain for the previous (fixed) slab.
 

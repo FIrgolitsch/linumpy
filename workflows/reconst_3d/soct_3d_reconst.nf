@@ -1258,7 +1258,7 @@ process stack {
     // the flag is part of the hashed command. A Helpers-only change does not
     // bust the Nextflow task hash when soct_3d_reconst.nf is unchanged.
     def overlap_z_gain_flag = params.stack_overlap_z_gain
-        ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold} --overlap_z_gain_min_overlap ${params.stack_overlap_z_gain_min_overlap}"
+        ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold} --overlap_z_gain_min_overlap ${params.stack_overlap_z_gain_min_overlap} --overlap_z_gain_clamp_lo ${params.stack_overlap_z_gain_clamp_lo} --overlap_z_gain_clamp_hi ${params.stack_overlap_z_gain_clamp_hi}"
         : ""
     // In the hashed script block so a default-only Python change cannot cache-hit.
     def blend_tissue_flag = " --blend_tissue_threshold ${params.stack_overlap_z_gain_threshold}"
@@ -1306,7 +1306,8 @@ process correct_bias_field {
     def n_slices_opt = n_slices > 0 ? "--n_serial_slices ${n_slices}" : ""
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def backend_flag = params.use_gpu ? "auto" : "cpu"
-    def hm_perz_flag = params.bias_histogram_match_per_zplane ? "--histogram_match_per_zplane" : ""
+    def hm_flag = params.bias_histogram_match ? "--histogram_match" : "--no-histogram_match"
+    def hm_perz_flag = params.bias_histogram_match_per_zplane ? "--histogram_match_per_zplane" : "--no-histogram_match_per_zplane"
     def tissue_thresh_flag = params.bias_tissue_threshold != null ? "--tissue_threshold ${params.bias_tissue_threshold}" : ""
     def zprofile_flag = params.bias_zprofile_smooth_sigma != null ? "--zprofile_smooth_sigma ${params.bias_zprofile_smooth_sigma}" : ""
     def zero_mask_flag = params.bias_zero_outside_mask ? "--zero_outside_mask" : "--no-zero_outside_mask"
@@ -1323,6 +1324,7 @@ process correct_bias_field {
         --backend ${backend_flag} \
         --n_processes ${task.cpus} \
         --verbose \
+        ${hm_flag} \
         ${hm_perz_flag} \
         ${tissue_thresh_flag} \
         ${zprofile_flag} \

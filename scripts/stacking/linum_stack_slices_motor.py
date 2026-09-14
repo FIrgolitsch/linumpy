@@ -224,6 +224,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "(voxels). Catches interpolated/short terminal slabs. [%(default)s]",
     )
     p.add_argument(
+        "--overlap_z_gain_clamp_lo",
+        type=float,
+        default=0.5,
+        help="Lower clamp on overlap z-gain (same floor as the scalar median scale). [%(default)s]",
+    )
+    p.add_argument(
+        "--overlap_z_gain_clamp_hi",
+        type=float,
+        default=2.0,
+        help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
+    )
+    p.add_argument(
         "--blend_tissue_threshold",
         type=float,
         default=0.01,
@@ -849,7 +861,13 @@ def main() -> None:
             return vol
         a, b = overlap_z_fits[slice_id]
         ov = overlap_as_fixed.get(slice_id, 0)
-        g = overlap_z_gain_curve(vol.shape[0], ov, a, b)
+        g = overlap_z_gain_curve(
+            vol.shape[0],
+            ov,
+            a,
+            b,
+            clamp=(args.overlap_z_gain_clamp_lo, args.overlap_z_gain_clamp_hi),
+        )
         logger.info(
             "Slice %s: applying overlap z-gain (median=%.3f, overlap=%s vx)",
             slice_id,
