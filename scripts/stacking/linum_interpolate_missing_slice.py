@@ -128,6 +128,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "candidate boundary plane to be considered. [default: %(default)s]",
     )
     p.add_argument(
+        "--tissue_threshold",
+        type=float,
+        default=0.01,
+        help="Intensity floor for tissue NCC and foreground filtering.\n"
+        "Must be an absolute threshold, not a per-plane percentile.\n"
+        "[default: %(default)s]",
+    )
+    p.add_argument(
         "--min_ncc_improvement",
         type=float,
         default=0.05,
@@ -231,6 +239,8 @@ def generate_preview(
     preview_slice: Any = None,
     dpi: int = 150,
     failure_reason: str | None = None,
+    before_z: int | None = None,
+    after_z: int | None = None,
 ) -> Any:
     """
     Generate a preview image showing the interpolation results.
@@ -239,24 +249,22 @@ def generate_preview(
     before/after pair with a red banner explaining why no output was
     produced. This keeps visual QA working even for hard-skipped slices.
 
-    Parameters
-    ----------
-    vol_before, vol_after : np.ndarray
-        Neighbouring volumes.
-    interpolated : np.ndarray | None
-        Interpolated result, or ``None`` for a hard-skipped slice.
-    output_path : str or Path
-        Path to save the preview image.
-    preview_slice : int, optional
-        Z-index to use for preview. Default: middle slice.
-    dpi : int
-        DPI for the output image.
-    failure_reason : str, optional
-        Text shown in the banner when *interpolated* is ``None``.
+    Default neighbour planes are the cut faces (``vol_before[-1]``,
+    ``vol_after[0]``), not the mid-slab interiors. Pass *before_z* /
+    *after_z* to show the planes zmorph actually morphed.
     """
-    if preview_slice is None:
-        preview_slice = vol_before.shape[0] // 2
-    preview_slice = max(0, min(preview_slice, vol_before.shape[0] - 1))
+    if before_z is None:
+        before_z = vol_before.shape[0] - 1 if preview_slice is None else preview_slice
+    if after_z is None:
+        after_z = 0 if preview_slice is None else preview_slice
+    before_z = max(0, min(int(before_z), vol_before.shape[0] - 1))
+    after_z = max(0, min(int(after_z), vol_after.shape[0] - 1))
+    if interpolated is None:
+        interp_z = 0
+    elif preview_slice is None:
+        interp_z = interpolated.shape[0] // 2
+    else:
+        interp_z = max(0, min(int(preview_slice), interpolated.shape[0] - 1))
 
     def normalize_for_display(img: Any) -> Any:
         img = img.astype(np.float32)
@@ -265,8 +273,8 @@ def generate_preview(
             img = (img - p1) / (p99 - p1)
         return np.clip(img, 0, 1)
 
-    before_slice = normalize_for_display(vol_before[preview_slice])
-    after_slice = normalize_for_display(vol_after[preview_slice])
+    before_slice = normalize_for_display(vol_before[before_z])
+    after_slice = normalize_for_display(vol_after[after_z])
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes = axes.flatten()
@@ -320,7 +328,7 @@ def generate_preview(
         axes[3].set_title("XZ View: Before | [skipped] | After")
         axes[3].axis("off")
     else:
-        interp_slice = normalize_for_display(interpolated[preview_slice])
+        interp_slice = normalize_for_display(interpolated[interp_z])
         axes[2].imshow(interp_slice, cmap="gray")
         axes[2].set_title("Interpolated (output)")
         axes[2].axis("off")
@@ -337,9 +345,9 @@ def generate_preview(
         axes[3].axis("off")
 
     title = (
-        f"Slice Interpolation Preview (z={preview_slice}) -- FAILED"
+        f"Slice Interpolation Preview (before z={before_z}, after z={after_z}) -- FAILED"
         if interpolated is None
-        else f"Slice Interpolation Preview (z={preview_slice})"
+        else f"Slice Interpolation Preview (before z={before_z}, after z={after_z}, interp z={interp_z})"
     )
     fig.suptitle(title, fontsize=14)
     fig.tight_layout()
@@ -517,6 +525,7 @@ def main() -> None:
             min_overlap_correlation=args.min_overlap_correlation,
             reference_slab_size=args.reference_slab_size,
             min_foreground_fraction=args.min_foreground_fraction,
+            tissue_threshold=args.tissue_threshold,
             min_ncc_improvement=args.min_ncc_improvement,
             registration_method=args.registration_method,
             allow_identity=args.allow_identity,
@@ -553,6 +562,8 @@ def main() -> None:
             preview_slice=args.preview_slice,
             dpi=args.preview_dpi,
             failure_reason=diagnostics.get("fallback_reason") if failed else None,
+            before_z=diagnostics.get("morph_z_before"),
+            after_z=diagnostics.get("morph_z_after"),
         )
 
     if not failed:

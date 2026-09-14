@@ -1053,6 +1053,7 @@ process interpolate_missing_slice {
     def slab_opt = params.interpolation_reference_slab_size ? "--reference_slab_size ${params.interpolation_reference_slab_size}" : ""
     def fg_opt = params.interpolation_min_foreground_fraction != null ? "--min_foreground_fraction ${params.interpolation_min_foreground_fraction}" : ""
     def ncc_opt = params.interpolation_min_ncc_improvement != null ? "--min_ncc_improvement ${params.interpolation_min_ncc_improvement}" : ""
+    def tissue_opt = params.interpolation_tissue_threshold != null ? "--tissue_threshold ${params.interpolation_tissue_threshold}" : ""
     """
     linum-interpolate-missing-slice ${slice_before} ${slice_after} \
         "slice_z${missing_slice_id}_interpolated.ome.zarr" \
@@ -1067,6 +1068,7 @@ process interpolate_missing_slice {
         ${slab_opt} \
         ${fg_opt} \
         ${ncc_opt} \
+        ${tissue_opt} \
         --slice_id ${missing_slice_id} \
         --diagnostics slice_z${missing_slice_id}_interpolated_diagnostics.json \
         --manifest_entry slice_z${missing_slice_id}_manifest.csv \

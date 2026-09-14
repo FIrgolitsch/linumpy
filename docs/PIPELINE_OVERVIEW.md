@@ -560,12 +560,13 @@ P_\alpha(\mathbf{x}) \;=\; (1 - \alpha)\, B_\text{before}(T^{\alpha}\mathbf{x}) 
 $$
 where the fractional affine $T^{\alpha}$ is built from the **matrix fractional power** $M^{\alpha}$ and a translation component $t_{\alpha} = (I - M^{\alpha})(I - M)^{-1}\,t$ (equivalently $(M^{\alpha} - I)(M - I)^{-1}\,t$). $M^{\alpha}$ is computed via `scipy.linalg.fractional_matrix_power` (Schur decomposition internally); the real part is kept and the max relative imaginary magnitude is tracked as a diagnostic (warning emitted above $10^{-3}$), and affines with $\det(M) \le 0$ are rejected upstream. When $I - M$ is near-singular (pure translation) the code falls back to the exact linear form $t_{\alpha} \approx \alpha\,t$.
 
-**Quality gates.** Hard skip (no volume) only when overlap NCC is below
+**Quality gates.** Hard skip (no volume) only when overlap tissue NCC is below
 `min_overlap_correlation` or no foreground planes exist. A warp that does
-not improve NCC, is implausible, or has $\det(M)\le 0$ morphs with identity
-($T=I$) using the two cut-adjacent planes. Affine registration is not used by
+not improve tissue NCC, is implausible, or has $\det(M)\le 0$ morphs with identity
+($T=I$) using the selected tissue planes. Affine registration is not used by
 default (rigid Euler); cropping unequal-Z neighbours keeps `vol_before[-1]`
-and `vol_after[0]`, not the top of both slabs.
+and `vol_after[0]`, not the top of both slabs. Empty crop-corner planes are
+skipped during plane search.
 
 ---
 

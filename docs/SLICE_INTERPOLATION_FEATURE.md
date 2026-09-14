@@ -106,10 +106,11 @@ flowchart TD
 In serial-block-face SOCT each slice is imaged *after* cutting. For a missing
 slice between `vol_before` (slice `N-1`) and `vol_after` (slice `N+1`):
 
-- `vol_before[-1]` = tissue surface exposed right **before** the missing
-  slice was cut away.
-- `vol_after[0]`   = tissue surface exposed right **after** the missing slice
-  was cut away.
+- `vol_before[-1]` is the intended cut face **when that plane has tissue**.
+  Plane search uses tissue NCC and a fixed intensity floor (`0.01`), so an
+  empty common-space cap (`vol_after[0]` agarose) is skipped and the matching
+  tissue plane is morphed instead.
+- `vol_after[0]` is the intended cut face **when that plane has tissue**.
 
 These two surfaces are separated only by the missing ~200 µm block and are
 the only directly observable evidence of its content. The 2D transform
@@ -133,15 +134,15 @@ For each output plane at fractional depth
 
 | Step | Contribution |
 |------|--------------|
-| 1  | Register `vol_after[0]` to `vol_before[-1]` (slab-averaged for robustness) to obtain `T`. |
-| 2a | Warp `vol_before[-1]` by `T**alpha` — identity at the top, full forward warp at the bottom. |
-| 2b | Warp `vol_after[0]` by `T**(alpha - 1)` — full inverse warp at the top, identity at the bottom. |
+| 1  | Register the best tissue pair (`ref_before`, `ref_after`) as a slab-average to obtain `T`. |
+| 2a | Warp `vol_before[ref_before]` by `T**alpha`. |
+| 2b | Warp `vol_after[ref_after]` by `T**(alpha - 1)`. |
 | 2c | Cross-fade with weight `alpha` on *after* and `1 - alpha` on *before* (gaussian feathered in XY, per-plane z-weighted). |
 
 Boundary conditions are **exact by construction**: the output's top plane
-equals `vol_before[-1]` and its bottom plane equals `vol_after[0]` (up to
-resampling error). Downstream pairwise registration therefore runs on real
-tissue rather than on a blurred average.
+equals `vol_before[ref_before]` and its bottom plane equals
+`vol_after[ref_after]` (up to resampling error). Downstream pairwise
+registration therefore runs on real tissue rather than on a blurred average.
 
 #### Why zmorph is scientifically preferred
 
@@ -224,12 +225,15 @@ an empty 400 µm hole that stacking cannot recover.
 
 ### Boundary plane selection
 
-`find_best_overlap_planes` searches the last `overlap_search_window` z-planes
-of `vol_before` against the first `overlap_search_window` planes of
-`vol_after` on the central ROI, after filtering by `min_foreground_fraction`
-to discard agarose-only planes. The best NCC pair is used as the registration
-reference. A minimum-correlation gate (`min_overlap_correlation`, default
-0.3) hard-skips when no pair is similar enough to share tissue.
+`find_best_overlap_planes` walks at most `overlap_search_window` z-planes
+inward from the cut (`vol_before` from the bottom, `vol_after` from the top),
+drops agarose-only planes (foreground fraction below
+`min_foreground_fraction` at `interpolation_tissue_threshold`), and keeps the
+tissue planes **closest to the cut**. Their tissue NCC is the gate
+(`min_overlap_correlation`); it is not used to pick a deeper plane that
+happens to correlate better. A per-plane percentile threshold is not used:
+common-space canvases are filled with tiny positives and would otherwise look
+like foreground.
 
 Slab averaging (`reference_slab_size`, default 3) averages the chosen plane
 with its immediate neighbours before running 2D registration, which makes
@@ -318,9 +322,13 @@ with the full trace:
   "fallback_reason": null,
   "ref_before": 47,
   "ref_after": 2,
+  "morph_z_before": 47,
+  "morph_z_after": 2,
+  "ncc_metric": "tissue",
   "pre_reg_ncc": 0.412,
   "post_reg_ncc": 0.687,
   "ncc_improvement": 0.275,
+  "unconstrained_affine_translation": [1.23, -0.87],
   "slab_before_range": [44, 50],
   "slab_after_range": [0, 5],
   "affine_matrix":   [[0.998, 0.011], [-0.011, 0.997]],
@@ -356,7 +364,8 @@ when reviewing the whole subject.
 | `interpolation_min_overlap_correlation` | `0.3` | NCC gate; below this zmorph hard-skips (no zarr) |
 | `interpolation_reference_slab_size` | `3` | planes averaged around the reference plane before registration |
 | `interpolation_min_foreground_fraction` | `0.1` | minimum foreground fraction for a candidate boundary plane |
-| `interpolation_min_ncc_improvement` | `0.05` | minimum post-reg NCC improvement to accept the warp; otherwise T=I |
+| `interpolation_tissue_threshold` | `0.01` | absolute intensity floor for tissue NCC / foreground filtering |
+| `interpolation_min_ncc_improvement` | `0.05` | minimum post-reg tissue-NCC improvement to accept the warp; otherwise T=I |
 | `interpolation_preview` | `false` | emit PNG previews next to each interpolated slice |
 
 ### Standalone script

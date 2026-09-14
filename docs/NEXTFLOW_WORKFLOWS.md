@@ -272,7 +272,8 @@ gaps are not interpolated (insufficient information) and remain as holes.
 | `interpolation_min_overlap_correlation` | `0.3` | Pre-registration NCC threshold below which zmorph falls back |
 | `interpolation_reference_slab_size` | `3` | Planes averaged around boundary reference plane |
 | `interpolation_min_foreground_fraction` | `0.1` | Minimum foreground fraction for a boundary plane |
-| `interpolation_min_ncc_improvement` | `0.05` | Min post-reg NCC improvement to accept the transform |
+| `interpolation_tissue_threshold` | `0.01` | Absolute intensity floor for tissue NCC / foreground |
+| `interpolation_min_ncc_improvement` | `0.05` | Min post-reg tissue-NCC improvement to accept the transform |
 
 When zmorph's quality gates fail the slot is left as a genuine gap (no zarr
 output); a manifest fragment and diagnostics JSON are still emitted. See

@@ -2,13 +2,14 @@
 
 Single strategy: :func:`interpolate_z_morph` -- z-aware morphing via fractional
 affine warps (``T**alpha``, :func:`scipy.linalg.fractional_matrix_power`).
-Reconstructs a synthetic slice that transitions along Z from ``vol_before[-1]``
-to ``vol_after[0]``, matching the physical geometry of serial sectioning.
+Reconstructs a synthetic slice that transitions along Z from the best
+tissue plane in ``vol_before`` to the best tissue plane in ``vol_after``,
+matching the physical geometry of serial sectioning.
 
-When the warp is implausible or does not improve NCC, the morph uses
-identity (``T = I``) and still emits a volume from the two cut-adjacent
-planes. Hard skip only when the neighbours do not share identifiable
-tissue (``no_foreground_planes``, ``low_overlap_ncc``).
+When the warp is implausible or does not improve tissue NCC, the morph uses
+identity (``T = I``) and still emits a volume from those two planes. Hard
+skip only when the neighbours do not share identifiable tissue
+(``no_foreground_planes``, ``low_overlap_ncc``).
 
 Downstream of a failed interpolation, the pipeline treats the slice as a
 genuine multi-slice gap: no zarr is produced, the manifest fragment records
@@ -36,47 +37,19 @@ from linumpy.registration.sitk import apply_transform, register_2d_images_sitk
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Normalization / NCC helpers
+# Tissue / foreground helpers
 # ---------------------------------------------------------------------------
 
 
-def _normalize_plane_for_ncc(plane: np.ndarray) -> np.ndarray:
-    """Return a zero-mean / unit-std plane suitable for normalised CC."""
-    crop = plane.astype(np.float32)
-    valid = crop > 0
-    if valid.any():
-        pmin = float(np.percentile(crop[valid], 5))
-        pmax = float(np.percentile(crop[valid], 95))
-        crop = np.clip((crop - pmin) / max(pmax - pmin, 1e-8), 0, 1)
-    return (crop - crop.mean()) / (crop.std() + 1e-8)
+def _foreground_fraction(plane: np.ndarray, threshold: float = 0.01) -> float:
+    """Fraction of pixels above a tissue threshold.
 
-
-def _ncc(a: np.ndarray, b: np.ndarray, margin_frac: float = 0.25) -> float:
-    """Normalised cross-correlation of two 2D images on their central ROI."""
-    if a.shape != b.shape:
-        raise ValueError(f"Shape mismatch in NCC: {a.shape} vs {b.shape}")
-    h, w = a.shape
-    margin = int(min(h, w) * margin_frac)
-    roi = (slice(margin, h - margin), slice(margin, w - margin))
-    an = _normalize_plane_for_ncc(a[roi])
-    bn = _normalize_plane_for_ncc(b[roi])
-    return float(np.mean(an * bn))
-
-
-def _foreground_fraction(plane: np.ndarray, threshold: float | None = None) -> float:
-    """Fraction of pixels above a background threshold.
-
-    When *threshold* is None, uses the 1st percentile of positive values as a
-    soft background estimate. This makes the function robust to common OCT
-    volumes that have a non-trivial dark offset.
+    A relative (per-plane percentile) threshold treats near-zero common-space
+    canvas as foreground, so plane selection and NCC run on agarose/noise.
+    Use a fixed intensity floor (stacking's tissue threshold, 0.01).
     """
     if plane.size == 0:
         return 0.0
-    if threshold is None:
-        positive = plane[plane > 0]
-        if positive.size == 0:
-            return 0.0
-        threshold = float(np.percentile(positive, 1))
     return float((plane > threshold).mean())
 
 
@@ -182,16 +155,27 @@ def interpolate_weighted(vol_before: np.ndarray, vol_after: np.ndarray, sigma: f
 # ---------------------------------------------------------------------------
 
 
-def _build_reference_slab(vol: np.ndarray, z_center: int, slab_size: int) -> np.ndarray:
-    """Mean-intensity projection over *slab_size* planes centred at *z_center*.
+def _build_reference_slab(
+    vol: np.ndarray,
+    z_center: int,
+    slab_size: int,
+    tissue_threshold: float = 0.01,
+    min_foreground_fraction: float = 0.1,
+) -> np.ndarray:
+    """Mean-intensity projection over *slab_size* tissue planes centred at *z_center*.
 
-    Clamps to the volume bounds. A 1-plane slab returns the plane itself.
+    Empty agarose neighbours are dropped so they do not dilute the registration
+    target. Falls back to the centre plane when no neighbour passes the
+    foreground filter. A 1-plane slab returns the plane itself.
     """
     nz = vol.shape[0]
     half = max(1, slab_size) // 2
     lo = max(0, z_center - half)
     hi = min(nz, z_center + half + 1)
-    return vol[lo:hi].mean(axis=0).astype(np.float32)
+    planes = [vol[z] for z in range(lo, hi) if _foreground_fraction(vol[z], tissue_threshold) >= min_foreground_fraction]
+    if not planes:
+        return vol[z_center].astype(np.float32)
+    return np.mean(np.stack(planes, axis=0), axis=0).astype(np.float32)
 
 
 def find_best_overlap_planes(
@@ -199,30 +183,34 @@ def find_best_overlap_planes(
     vol_after: np.ndarray,
     search_window: int = 5,
     min_foreground_fraction: float = 0.1,
+    tissue_threshold: float = 0.01,
 ) -> tuple[int, int, float]:
-    """Find the best-correlated plane pair at the volume boundary.
+    """Return the cut-adjacent tissue planes and their tissue NCC.
 
-    In serial sectioning the physically adjacent tissue is near the **bottom**
-    of *vol_before* and the **top** of *vol_after*. This function searches
-    the last ``search_window`` planes of *vol_before* against the first
-    ``search_window`` planes of *vol_after* using normalised cross-correlation
-    on the central ROI, skipping planes whose foreground fraction is below
-    ``min_foreground_fraction``.
+    The missing block sits between the deepest in-focus plane of *vol_before*
+    and the shallowest in-focus plane of *vol_after*. Empty agarose caps are
+    skipped by walking inward at most ``search_window`` planes; among the
+    remaining tissue planes we take the ones **closest to the cut**, not the
+    pair with max NCC. Max-NCC in this window can pick a deep-in-slice plane
+    that happens to look like the neighbour instead of the actual cut face.
 
-    Returns ``(ref_before, ref_after, best_corr)``. When no candidate pair
-    passes the foreground filter, the corner planes are returned with a
-    correlation of ``-inf``.
+    Returns ``(ref_before, ref_after, corr)``. When no candidate passes the
+    foreground filter, the crop corners are returned with correlation ``-inf``.
     """
+    from linumpy.registration.refinement import tissue_ncc
+
     nz_before = vol_before.shape[0]
     nz_after = vol_after.shape[0]
 
     before_zs = [
         z
         for z in range(max(0, nz_before - search_window), nz_before)
-        if _foreground_fraction(vol_before[z]) >= min_foreground_fraction
+        if _foreground_fraction(vol_before[z], tissue_threshold) >= min_foreground_fraction
     ]
     after_zs = [
-        z for z in range(min(search_window, nz_after)) if _foreground_fraction(vol_after[z]) >= min_foreground_fraction
+        z
+        for z in range(min(search_window, nz_after))
+        if _foreground_fraction(vol_after[z], tissue_threshold) >= min_foreground_fraction
     ]
 
     if not before_zs or not after_zs:
@@ -233,29 +221,10 @@ def find_best_overlap_planes(
         )
         return nz_before - 1, 0, float("-inf")
 
-    h, w = vol_before.shape[1], vol_before.shape[2]
-    margin = min(h, w) // 4
-    roi = (slice(margin, h - margin), slice(margin, w - margin))
-    # Normalise on the ROI (not the full plane) so the resulting arrays are
-    # zero-mean / unit-std over the region that actually goes into the NCC.
-    # Normalising on the full plane -- where OCT backgrounds are mostly zero --
-    # leaves the central tissue ROI with a strongly positive mean, which
-    # inflates `mean(a*b)` well beyond the [-1, 1] range expected for NCC.
-    before_norms = {z: _normalize_plane_for_ncc(vol_before[z][roi]) for z in before_zs}
-    after_norms = {z: _normalize_plane_for_ncc(vol_after[z][roi]) for z in after_zs}
-
-    best_corr = -np.inf
     ref_before = before_zs[-1]
     ref_after = after_zs[0]
-    for zb in before_zs:
-        for za in after_zs:
-            corr = float(np.mean(before_norms[zb] * after_norms[za]))
-            if corr > best_corr:
-                best_corr = corr
-                ref_before = zb
-                ref_after = za
-
-    return ref_before, ref_after, best_corr
+    corr = tissue_ncc(vol_before[ref_before], vol_after[ref_after], threshold=tissue_threshold)
+    return ref_before, ref_after, float(corr) if np.isfinite(corr) else float("-inf")
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +325,7 @@ def _gaussian_feather_blend(
     warped_after: np.ndarray,
     w_before: np.ndarray | None = None,
     w_after: np.ndarray | None = None,
+    tissue_threshold: float = 0.01,
 ) -> np.ndarray:
     """Per-plane distance-transform feather blend.
 
@@ -369,8 +339,10 @@ def _gaussian_feather_blend(
     only when the corresponding z-weight is non-zero.
     """
     nz, nx, ny = warped_before.shape
-    mask_before = warped_before > 0
-    mask_after = warped_after > 0
+    # Common-space canvases are filled with tiny positives; ``> 0`` treats the
+    # whole FOV rectangle as tissue and the XY feather never fires at seams.
+    mask_before = warped_before > tissue_threshold
+    mask_after = warped_after > tissue_threshold
 
     dist_before = np.zeros((nz, nx, ny), dtype=np.float32)
     dist_after = np.zeros((nz, nx, ny), dtype=np.float32)
@@ -445,19 +417,20 @@ def interpolate_z_morph(
     registration_method: str = "euler",
     allow_identity: bool = True,
     max_translation_frac: float = 0.08,
+    tissue_threshold: float = 0.01,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     """Z-aware morphing interpolation.
 
-    Registers the cut-adjacent boundary planes (rigid Euler by default) to
-    get ``T``, then for each output plane at fractional depth ``alpha ∈ [0, 1]``
-    warps the before-boundary by ``T**alpha`` and the after-boundary by
-    ``T**(alpha - 1)``, cross-fading with weight ``alpha``. Output top/bottom
-    planes match the boundary planes exactly.
+    Registers the best-correlated *tissue* boundary planes (rigid Euler by
+    default) to get ``T``, then for each output plane at fractional depth
+    ``alpha ∈ [0, 1]`` warps those planes by ``T**alpha`` / ``T**(alpha - 1)``
+    and cross-fades with weight ``alpha``. Output top/bottom planes match the
+    selected tissue planes exactly.
 
-    When the warp is implausible or does not improve NCC, ``T`` falls back to
-    identity (still only the two boundary surfaces — not a blend of interiors).
-    Hard skip only when the neighbours do not share identifiable tissue
-    (``no_foreground_planes``, ``low_overlap_ncc``).
+    When the warp is implausible or does not improve tissue NCC, ``T`` falls
+    back to identity (still only the two selected surfaces — not a blend of
+    interiors). Hard skip only when the neighbours do not share identifiable
+    tissue (``no_foreground_planes``, ``low_overlap_ncc``).
 
     See ``docs/SLICE_INTERPOLATION_FEATURE.md`` for the physical model, the
     rationale for the hard-skip behaviour, and parameter-tuning guidance.
@@ -485,19 +458,25 @@ def interpolate_z_morph(
         "min_foreground_fraction": min_foreground_fraction,
         "min_overlap_correlation": min_overlap_correlation,
         "min_ncc_improvement": min_ncc_improvement,
+        "tissue_threshold": tissue_threshold,
         "blend_method": blend_method,
         "registration_metric": metric,
         "max_iterations": max_iterations,
         "registration_method": registration_method,
         "allow_identity": allow_identity,
+        "ncc_metric": "tissue",
+        "used_identity_transform": False,
     }
 
     # -- Boundary plane/slab selection --------------------------------------
+    from linumpy.registration.refinement import tissue_ncc
+
     ref_before, ref_after, best_corr = find_best_overlap_planes(
         vol_before,
         vol_after,
         search_window=overlap_search_window,
         min_foreground_fraction=min_foreground_fraction,
+        tissue_threshold=tissue_threshold,
     )
     diag["ref_before"] = int(ref_before)
     diag["ref_after"] = int(ref_after)
@@ -523,8 +502,20 @@ def interpolate_z_morph(
     if not np.isfinite(best_corr) or best_corr < min_overlap_correlation:
         return _hard_skip("no_foreground_planes" if not np.isfinite(best_corr) else "low_overlap_ncc")
 
-    slab_before = _build_reference_slab(vol_before, ref_before, reference_slab_size)
-    slab_after = _build_reference_slab(vol_after, ref_after, reference_slab_size)
+    slab_before = _build_reference_slab(
+        vol_before,
+        ref_before,
+        reference_slab_size,
+        tissue_threshold=tissue_threshold,
+        min_foreground_fraction=min_foreground_fraction,
+    )
+    slab_after = _build_reference_slab(
+        vol_after,
+        ref_after,
+        reference_slab_size,
+        tissue_threshold=tissue_threshold,
+        min_foreground_fraction=min_foreground_fraction,
+    )
 
     fixed_2d = _prepare_2d(slab_after)
     moving_2d = _prepare_2d(slab_before)
@@ -542,8 +533,8 @@ def interpolate_z_morph(
         translation = np.array(affine_2d.GetTranslation())
         center = np.array(affine_2d.GetCenter())
         warped_slab_before = apply_transform(slab_before.astype(np.float32), transform_2d)
-        post_reg_ncc = _ncc(slab_after, warped_slab_before)
-        ncc_improvement = float(post_reg_ncc - best_corr)
+        post_reg_ncc = tissue_ncc(slab_after, warped_slab_before, threshold=tissue_threshold)
+        ncc_improvement = float(post_reg_ncc - best_corr) if np.isfinite(post_reg_ncc) else float("-inf")
         plausible = _transform_is_plausible(matrix, translation, (nx, ny), max_translation_frac=max_translation_frac)
         use_identity = (ncc_improvement < min_ncc_improvement) or (not plausible)
         identity_reason = None
@@ -566,6 +557,9 @@ def interpolate_z_morph(
 
     diag["post_reg_ncc"] = float(post_reg_ncc)
     diag["ncc_improvement"] = float(ncc_improvement)
+    diag["unconstrained_affine_matrix"] = matrix.tolist()
+    diag["unconstrained_affine_translation"] = translation.tolist()
+    diag["unconstrained_affine_determinant"] = float(np.linalg.det(matrix))
     diag["affine_matrix"] = matrix.tolist()
     diag["affine_translation"] = translation.tolist()
     diag["affine_determinant"] = float(np.linalg.det(matrix))
@@ -601,8 +595,13 @@ def interpolate_z_morph(
             return _hard_skip("affine_determinant_non_positive")
 
     # -- Build the morphed output ------------------------------------------
-    top_of_after = vol_after[0].astype(np.float32)
-    bottom_of_before = vol_before[-1].astype(np.float32)
+    # Morph the planes that actually share tissue, not the crop corners.
+    # After interface-crop, vol_after[0] can still be agarose while the
+    # matching cut face sits at ref_after (z51 on sub-22: plane 0 empty, plane 4 tissue).
+    src_before = vol_before[ref_before].astype(np.float32)
+    src_after = vol_after[ref_after].astype(np.float32)
+    diag["morph_z_before"] = int(ref_before)
+    diag["morph_z_after"] = int(ref_after)
 
     warped_before = np.zeros((nz_out, nx, ny), dtype=np.float32)
     warped_after = np.zeros((nz_out, nx, ny), dtype=np.float32)
@@ -619,7 +618,7 @@ def interpolate_z_morph(
         before_tform.SetMatrix(m_a.flatten().tolist())
         before_tform.SetTranslation(t_a.tolist())
         before_tform.SetCenter(center.tolist())
-        warped_before[z] = apply_transform(bottom_of_before, before_tform)
+        warped_before[z] = apply_transform(src_before, before_tform)
 
         # after contribution: warp by T**(alpha - 1) (alpha - 1 ∈ [-1, 0])
         m_a2, t_a2, imag_b = _fractional_affine_parts(matrix, translation, alpha - 1.0)
@@ -628,7 +627,7 @@ def interpolate_z_morph(
         after_tform.SetMatrix(m_a2.flatten().tolist())
         after_tform.SetTranslation(t_a2.tolist())
         after_tform.SetCenter(center.tolist())
-        warped_after[z] = apply_transform(top_of_after, after_tform)
+        warped_after[z] = apply_transform(src_after, after_tform)
 
         w_before_list.append(1.0 - alpha)
 
@@ -642,12 +641,22 @@ def interpolate_z_morph(
     if blend_method == "linear":
         result = w_before_arr.reshape(-1, 1, 1) * warped_before + w_after_arr.reshape(-1, 1, 1) * warped_after
     elif blend_method == "gaussian":
-        result = _gaussian_feather_blend(warped_before, warped_after, w_before=w_before_arr, w_after=w_after_arr)
+        result = _gaussian_feather_blend(
+            warped_before,
+            warped_after,
+            w_before=w_before_arr,
+            w_after=w_after_arr,
+            tissue_threshold=tissue_threshold,
+        )
     else:
         raise ValueError(f"Unknown blend_method: {blend_method}")
 
+    if result.shape[0] > 1:
+        result[0] = src_before
+        result[-1] = src_after
+
     # Quality stats at the two boundaries (should be near-perfect)
-    diag["top_boundary_residual_mean"] = float(np.abs(result[0] - bottom_of_before).mean())
-    diag["bottom_boundary_residual_mean"] = float(np.abs(result[-1] - top_of_after).mean())
+    diag["top_boundary_residual_mean"] = float(np.abs(result[0] - src_before).mean())
+    diag["bottom_boundary_residual_mean"] = float(np.abs(result[-1] - src_after).mean())
 
     return result, diag

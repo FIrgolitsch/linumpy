@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from linumpy.mosaic.interpolation import (
+    _foreground_fraction,
     _fractional_affine_parts,
     _matrix_fractional_power,
     crop_to_cut_adjacent_z,
@@ -174,7 +175,7 @@ def test_find_best_overlap_planes_returns_valid_pair():
 
 
 def test_interpolate_z_morph_boundary_planes_match_sources():
-    """Top of z-morph output should match bottom of vol_before, bottom → top of vol_after."""
+    """Output top/bottom match the selected morph planes, not necessarily crop corners."""
     before = _make_structured_vol(seed=3)
     after = _make_structured_vol(seed=4)
     vol, diag = interpolate_z_morph(before, after, max_iterations=50, min_overlap_correlation=0.0, min_ncc_improvement=-10.0)
@@ -343,13 +344,14 @@ def test_ground_truth_zmorph_matches_boundaries_exactly():
     if diag["method_used"] != "zmorph" or vol is None:
         pytest.skip(f"zmorph fell back ({diag['fallback_reason']}); skipping boundary assertion")
 
-    # Output top plane ≡ deepest plane of vol_before (identity warp).
-    # Output bottom plane ≡ top plane of vol_after  (identity warp).
+    # Output top/bottom match the selected tissue planes (identity warp at the ends).
     # apply_transform uses a non-zero default fill value, so the outermost
     # 2-pixel border can differ slightly; compare the interior only.
     interior = (slice(2, -2), slice(2, -2))
-    np.testing.assert_allclose(vol[0][interior], before[-1][interior], atol=1e-3)
-    np.testing.assert_allclose(vol[-1][interior], after[0][interior], atol=1e-3)
+    src_before = before[diag["morph_z_before"]]
+    src_after = after[diag["morph_z_after"]]
+    np.testing.assert_allclose(vol[0][interior], src_before[interior], atol=1e-3)
+    np.testing.assert_allclose(vol[-1][interior], src_after[interior], atol=1e-3)
 
 
 def test_ground_truth_zmorph_vs_average_ssim():
@@ -386,3 +388,88 @@ def test_ground_truth_zmorph_vs_average_ssim():
     # metric. Only enforce a loose sanity floor.
     assert ssim_zm > 0.05, f"zmorph SSIM pathologically low: {ssim_zm}"
     assert ssim_avg > 0.2, f"average SSIM too low: {ssim_avg}"
+
+
+def test_foreground_fraction_ignores_dim_canvas():
+    """Common-space agarose (~1e-4) must not count as tissue."""
+    plane = np.full((32, 32), 1e-4, dtype=np.float32)
+    plane[8:12, 8:12] = 0.5
+    assert _foreground_fraction(plane) == pytest.approx(16 / 1024)
+    assert _foreground_fraction(np.full((32, 32), 1e-4, dtype=np.float32)) == 0.0
+
+
+def test_find_best_overlap_planes_prefers_cut_nearest_not_max_ncc():
+    """A deeper matching blob must not beat the first tissue plane at the cut."""
+    ny, nx = 64, 64
+    yy, xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
+    blob = np.exp(-((yy - ny * 0.4) ** 2 + (xx - nx * 0.55) ** 2) / (2.0 * (ny / 5.0) ** 2))
+    tissue = (0.2 + 0.7 * blob).astype(np.float32)
+    other = np.roll(tissue, 8, axis=1)
+    canvas = np.full((ny, nx), 1e-4, dtype=np.float32)
+    before = np.stack([canvas, canvas, canvas, canvas, tissue], axis=0)
+    after = np.stack([canvas, other, canvas, canvas, tissue], axis=0)
+    _ref_before, ref_after, _corr = find_best_overlap_planes(before, after, search_window=5)
+    assert ref_after == 1
+
+
+def test_find_best_overlap_planes_skips_empty_cut_face():
+    """Empty after[0] must not win; pick the plane that actually has tissue."""
+    ny, nx = 64, 64
+    yy, xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
+    blob = np.exp(-((yy - ny * 0.4) ** 2 + (xx - nx * 0.55) ** 2) / (2.0 * (ny / 5.0) ** 2))
+    tissue = (0.2 + 0.7 * blob).astype(np.float32)
+    canvas = np.full((ny, nx), 1e-4, dtype=np.float32)
+    before = np.stack([canvas, canvas, canvas, canvas, tissue], axis=0)
+    after = np.stack([canvas, canvas, canvas, canvas, tissue], axis=0)
+    _ref_before, ref_after, corr = find_best_overlap_planes(before, after, search_window=5)
+    assert ref_after == 4
+    assert np.isfinite(corr)
+    assert corr > 0.9
+
+
+def test_zmorph_morphs_tissue_plane_not_empty_cut_face():
+    """Identity morph of empty after[0] is the sub-22 z50 failure mode."""
+    ny, nx = 64, 64
+    yy, xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
+    blob = np.exp(-((yy - ny * 0.4) ** 2 + (xx - nx * 0.55) ** 2) / (2.0 * (ny / 5.0) ** 2))
+    tissue = (0.2 + 0.7 * blob).astype(np.float32)
+    canvas = np.full((ny, nx), 1e-4, dtype=np.float32)
+    before = np.stack([canvas, canvas, canvas, canvas, tissue], axis=0)
+    after = np.stack([canvas, canvas, canvas, canvas, tissue], axis=0)
+
+    vol, diag = interpolate_z_morph(
+        before,
+        after,
+        max_iterations=20,
+        min_overlap_correlation=0.0,
+        min_ncc_improvement=-10.0,
+        overlap_search_window=5,
+        allow_identity=True,
+    )
+    assert vol is not None
+    assert diag["morph_z_after"] == 4
+    assert diag["morph_z_before"] == 4
+    interior = (slice(2, -2), slice(2, -2))
+    np.testing.assert_allclose(vol[-1][interior], tissue[interior], atol=1e-2)
+    assert float(vol[-1].max()) > 0.5
+
+
+def test_diagnostics_keep_unconstrained_when_identity():
+    """Identity fallback must not erase the rejected warp from diagnostics."""
+    before = _make_structured_vol(shape=(4, 64, 64), seed=1)
+    after = np.roll(before, 20, axis=2)
+    vol, diag = interpolate_z_morph(
+        before,
+        after,
+        max_iterations=80,
+        min_overlap_correlation=0.0,
+        min_ncc_improvement=-10.0,
+        max_translation_frac=0.04,
+        allow_identity=True,
+    )
+    assert vol is not None
+    unconstrained = np.asarray(diag["unconstrained_affine_translation"], dtype=np.float64)
+    assert "unconstrained_affine_matrix" in diag
+    if diag.get("used_identity_transform"):
+        assert np.linalg.norm(unconstrained) > 1.0
+        np.testing.assert_allclose(diag["affine_translation"], [0.0, 0.0], atol=1e-8)

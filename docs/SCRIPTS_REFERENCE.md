@@ -652,6 +652,7 @@ linum-interpolate-missing-slice <slice_before.ome.zarr> <slice_after.ome.zarr> <
     [--min_overlap_correlation <0-1>] \
     [--reference_slab_size <n>] \
     [--min_foreground_fraction <0-1>] \
+    [--tissue_threshold <val>] \
     [--min_ncc_improvement <val>] \
     [--manifest <fragment.csv>] \
     [--diagnostics <diag.json>]
