@@ -228,7 +228,9 @@ an empty 400 µm hole that stacking cannot recover.
 `find_best_overlap_planes` walks at most `overlap_search_window` z-planes
 inward from the cut (`vol_before` from the bottom, `vol_after` from the top),
 drops agarose-only planes (foreground fraction below
-`min_foreground_fraction` at `interpolation_tissue_threshold`), and keeps the
+`min_foreground_fraction` **inside the tissue bounding box**, not the full
+common-space canvas; planes with fewer than
+`interpolation_foreground_min_voxels` tissue voxels are empty), and keeps the
 tissue planes **closest to the cut**. Their tissue NCC is the gate
 (`min_overlap_correlation`); it is not used to pick a deeper plane that
 happens to correlate better. A per-plane percentile threshold is not used:
@@ -363,7 +365,8 @@ when reviewing the whole subject.
 | `interpolation_overlap_search_window` | `5` | z-planes scanned at each boundary for the reference pair |
 | `interpolation_min_overlap_correlation` | `0.3` | NCC gate; below this zmorph hard-skips (no zarr) |
 | `interpolation_reference_slab_size` | `3` | planes averaged around the reference plane before registration |
-| `interpolation_min_foreground_fraction` | `0.1` | minimum foreground fraction for a candidate boundary plane |
+| `interpolation_min_foreground_fraction` | `0.1` | minimum tissue occupancy inside the tissue bbox |
+| `interpolation_foreground_min_voxels` | `100` | min tissue voxels for a plane to count as foreground |
 | `interpolation_tissue_threshold` | `0.01` | absolute intensity floor for tissue NCC / foreground filtering |
 | `interpolation_min_ncc_improvement` | `0.05` | minimum post-reg tissue-NCC improvement to accept the warp; otherwise T=I |
 | `interpolation_preview` | `false` | emit PNG previews next to each interpolated slice |

@@ -1054,6 +1054,7 @@ process interpolate_missing_slice {
     def fg_opt = params.interpolation_min_foreground_fraction != null ? "--min_foreground_fraction ${params.interpolation_min_foreground_fraction}" : ""
     def ncc_opt = params.interpolation_min_ncc_improvement != null ? "--min_ncc_improvement ${params.interpolation_min_ncc_improvement}" : ""
     def tissue_opt = params.interpolation_tissue_threshold != null ? "--tissue_threshold ${params.interpolation_tissue_threshold}" : ""
+    def fg_vox_opt = params.interpolation_foreground_min_voxels != null ? "--foreground_min_voxels ${params.interpolation_foreground_min_voxels}" : ""
     """
     linum-interpolate-missing-slice ${slice_before} ${slice_after} \
         "slice_z${missing_slice_id}_interpolated.ome.zarr" \
@@ -1069,6 +1070,7 @@ process interpolate_missing_slice {
         ${fg_opt} \
         ${ncc_opt} \
         ${tissue_opt} \
+        ${fg_vox_opt} \
         --slice_id ${missing_slice_id} \
         --diagnostics slice_z${missing_slice_id}_interpolated_diagnostics.json \
         --manifest_entry slice_z${missing_slice_id}_manifest.csv \

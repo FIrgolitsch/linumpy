@@ -125,7 +125,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.1,
         help="Minimum fraction of foreground pixels required for a\n"
-        "candidate boundary plane to be considered. [default: %(default)s]",
+        "candidate boundary plane to be considered. Measured inside the\n"
+        "tissue bbox, not the full common-space canvas. [default: %(default)s]",
+    )
+    p.add_argument(
+        "--foreground_min_voxels",
+        type=int,
+        default=100,
+        help="Minimum tissue voxels (above --tissue_threshold) for a plane\nto count as foreground. [default: %(default)s]",
     )
     p.add_argument(
         "--tissue_threshold",
@@ -526,6 +533,7 @@ def main() -> None:
             reference_slab_size=args.reference_slab_size,
             min_foreground_fraction=args.min_foreground_fraction,
             tissue_threshold=args.tissue_threshold,
+            foreground_min_voxels=args.foreground_min_voxels,
             min_ncc_improvement=args.min_ncc_improvement,
             registration_method=args.registration_method,
             allow_identity=args.allow_identity,

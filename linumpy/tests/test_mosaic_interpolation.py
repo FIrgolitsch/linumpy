@@ -392,10 +392,18 @@ def test_ground_truth_zmorph_vs_average_ssim():
 
 def test_foreground_fraction_ignores_dim_canvas():
     """Common-space agarose (~1e-4) must not count as tissue."""
-    plane = np.full((32, 32), 1e-4, dtype=np.float32)
-    plane[8:12, 8:12] = 0.5
-    assert _foreground_fraction(plane) == pytest.approx(16 / 1024)
-    assert _foreground_fraction(np.full((32, 32), 1e-4, dtype=np.float32)) == 0.0
+    plane = np.full((64, 64), 1e-4, dtype=np.float32)
+    plane[20:36, 20:36] = 0.5
+    assert _foreground_fraction(plane) > 0.9
+    assert _foreground_fraction(np.full((64, 64), 1e-4, dtype=np.float32)) == 0.0
+
+
+def test_foreground_fraction_cs_padding_does_not_kill_small_section():
+    """z51-style remnant (~5% of CS canvas) is still a valid cut face."""
+    plane = np.full((502, 303), 1e-4, dtype=np.float32)
+    plane[200:280, 100:180] = 0.2
+    assert float((plane > 0.01).mean()) < 0.1
+    assert _foreground_fraction(plane) > 0.5
 
 
 def test_find_best_overlap_planes_prefers_cut_nearest_not_max_ncc():
@@ -425,6 +433,31 @@ def test_find_best_overlap_planes_skips_empty_cut_face():
     assert ref_after == 4
     assert np.isfinite(corr)
     assert corr > 0.9
+
+
+def test_zmorph_accepts_small_cs_section():
+    """A ~5% CS remnant (z51) must not hard-skip as no_foreground_planes."""
+    ny, nx = 128, 128
+    canvas = np.full((ny, nx), 1e-4, dtype=np.float32)
+    tissue = canvas.copy()
+    yy, xx = np.mgrid[30:50, 30:50].astype(np.float32)
+    blob = np.exp(-((yy - 40.0) ** 2 + (xx - 40.0) ** 2) / (2.0 * 6.0**2))
+    tissue[30:50, 30:50] = 0.15 + 0.6 * blob
+    before = np.stack([canvas, canvas, canvas, tissue], axis=0)
+    after = np.stack([canvas, tissue, canvas, canvas], axis=0)
+    assert float((after[1] > 0.01).mean()) < 0.1
+    vol, diag = interpolate_z_morph(
+        before,
+        after,
+        max_iterations=20,
+        min_overlap_correlation=0.0,
+        min_ncc_improvement=-10.0,
+        overlap_search_window=5,
+        allow_identity=True,
+    )
+    assert vol is not None
+    assert diag.get("interpolation_failed", False) is False
+    assert diag["morph_z_after"] == 1
 
 
 def test_zmorph_morphs_tissue_plane_not_empty_cut_face():

@@ -41,16 +41,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _foreground_fraction(plane: np.ndarray, threshold: float = 0.01) -> float:
-    """Fraction of pixels above a tissue threshold.
+def _foreground_fraction(
+    plane: np.ndarray,
+    threshold: float = 0.01,
+    min_voxels: int = 100,
+) -> float:
+    """Fraction of tissue pixels inside the tissue bounding box.
 
-    A relative (per-plane percentile) threshold treats near-zero common-space
-    canvas as foreground, so plane selection and NCC run on agarose/noise.
-    Use a fixed intensity floor (stacking's tissue threshold, 0.01).
+    Common-space canvases are mostly padding. A posterior remnant like z51 is
+    only ~5% of the full plane, so a canvas-wide fraction fails a 0.1 gate
+    even when thousands of tissue voxels are present. Measure occupancy inside
+    the tight bbox of voxels above ``threshold``. Speckle below ``min_voxels``
+    (same floor as ``tissue_ncc``) counts as empty.
     """
     if plane.size == 0:
         return 0.0
-    return float((plane > threshold).mean())
+    mask = plane > threshold
+    if int(mask.sum()) < min_voxels:
+        return 0.0
+    ys, xs = np.where(mask)
+    bbox = plane[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    return float((bbox > threshold).mean())
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +195,7 @@ def find_best_overlap_planes(
     search_window: int = 5,
     min_foreground_fraction: float = 0.1,
     tissue_threshold: float = 0.01,
+    foreground_min_voxels: int = 100,
 ) -> tuple[int, int, float]:
     """Return the cut-adjacent tissue planes and their tissue NCC.
 
@@ -205,12 +217,12 @@ def find_best_overlap_planes(
     before_zs = [
         z
         for z in range(max(0, nz_before - search_window), nz_before)
-        if _foreground_fraction(vol_before[z], tissue_threshold) >= min_foreground_fraction
+        if _foreground_fraction(vol_before[z], tissue_threshold, min_voxels=foreground_min_voxels) >= min_foreground_fraction
     ]
     after_zs = [
         z
         for z in range(min(search_window, nz_after))
-        if _foreground_fraction(vol_after[z], tissue_threshold) >= min_foreground_fraction
+        if _foreground_fraction(vol_after[z], tissue_threshold, min_voxels=foreground_min_voxels) >= min_foreground_fraction
     ]
 
     if not before_zs or not after_zs:
@@ -418,6 +430,7 @@ def interpolate_z_morph(
     allow_identity: bool = True,
     max_translation_frac: float = 0.08,
     tissue_threshold: float = 0.01,
+    foreground_min_voxels: int = 100,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     """Z-aware morphing interpolation.
 
@@ -459,6 +472,7 @@ def interpolate_z_morph(
         "min_overlap_correlation": min_overlap_correlation,
         "min_ncc_improvement": min_ncc_improvement,
         "tissue_threshold": tissue_threshold,
+        "foreground_min_voxels": int(foreground_min_voxels),
         "blend_method": blend_method,
         "registration_metric": metric,
         "max_iterations": max_iterations,
@@ -477,6 +491,7 @@ def interpolate_z_morph(
         search_window=overlap_search_window,
         min_foreground_fraction=min_foreground_fraction,
         tissue_threshold=tissue_threshold,
+        foreground_min_voxels=foreground_min_voxels,
     )
     diag["ref_before"] = int(ref_before)
     diag["ref_after"] = int(ref_after)
