@@ -10,6 +10,7 @@ plus ``linumpy.stack_alignment.io`` (shifts loading) and
 
 import json
 import logging
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,11 @@ def load_registration_transforms(
     transforms_dir : Path
         Directory containing registration outputs (subdirs per slice)
     slice_ids : list
-        List of slice IDs to load transforms for
+        List of slice IDs to load transforms for. When consecutive IDs in
+        this list jump by more than 1 (a missing-slice gap), the far
+        neighbour's pairwise transform is discarded: that registration was
+        estimated across ~400 µm of non-overlapping tissue and is not a
+        valid XY/rotation correction.
     skip_error_status : bool
         If True, discard transforms whose pairwise_registration_metrics.json
         reports overall_status == 'error'.  These are typically registrations
@@ -69,7 +74,21 @@ def load_registration_transforms(
     all_pairwise_translations = {}
     use_metric_gating = load_min_zcorr > 0 and load_max_rotation > 0
 
-    for slice_id in slice_ids[1:]:  # First slice has no transform
+    for prev_id, slice_id in pairwise(slice_ids):
+        # First slice has no transform. A non-unit ID step means the pair
+        # jumped a missing slice (e.g. z49→z51); that .tfm is a gap-bridge
+        # explosion, not a cut-adjacent refinement.
+        id_step = int(slice_id) - int(prev_id)
+        if id_step > 1:
+            logger.warning(
+                "Slice %s: skipping transform (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
+                slice_id,
+                prev_id,
+                id_step,
+            )
+            transforms[slice_id] = None
+            continue
+
         # Find transform directory for this slice
         # Pattern: slice_z{id}_* or similar
         matching_dirs = list(transforms_dir.glob(f"*z{slice_id:02d}*")) + list(transforms_dir.glob(f"*z{slice_id}*"))
@@ -257,7 +276,16 @@ def accumulate_pairwise_translations(
     pairwise_translations = {}
     n_from_metrics = 0
     n_zcorr_skipped = 0
-    for slice_id in available_ids[1:]:
+    for prev_id, slice_id in pairwise(available_ids):
+        id_step = int(slice_id) - int(prev_id)
+        if id_step > 1:
+            logger.warning(
+                "Slice %s: skipping pairwise translation (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
+                slice_id,
+                prev_id,
+                id_step,
+            )
+            continue
         if slice_id in all_pairwise_translations:
             tx, ty, zcorr = all_pairwise_translations[slice_id]
             # Apply separate zcorr threshold for translations

@@ -94,6 +94,26 @@ def test_load_registration_transforms_missing_dir_is_none(tmp_path: Path):
     assert pairwise == {}
 
 
+def test_load_registration_transforms_skips_id_step_gap(tmp_path: Path):
+    """z49→z51 has no shared cut face; do not apply that pairwise .tfm."""
+    metrics = {
+        "overall_status": "ok",
+        "metrics": {
+            "registration_confidence": {"value": 1.0},
+            "translation_x": {"value": 200.0},
+            "translation_y": {"value": 0.0},
+            "z_correlation": {"value": 0.9},
+            "rotation": {"value": 5.0},
+        },
+    }
+    _write_transform_dir(tmp_path, 51, metrics)
+
+    transforms, pairwise = load_registration_transforms(tmp_path, [49, 51])
+
+    assert transforms[51] is None
+    assert 51 not in pairwise
+
+
 # ---------------------------------------------------------------------------
 # accumulate_pairwise_translations
 # ---------------------------------------------------------------------------
@@ -158,3 +178,17 @@ def test_accumulate_pairwise_translations_drift_cap_clamps_magnitude():
 
     ox, oy = accumulated[1]
     assert abs(np.sqrt(ox**2 + oy**2) - 5.0) < 1e-9
+
+
+def test_accumulate_pairwise_translations_skips_id_step_gap():
+    """A leftover z49→z51 translation must not shift z51 on the canvas."""
+    available_ids = [49, 51]
+    all_pairwise_translations = {51: (200.0, 0.0, 0.9)}
+
+    accumulated = accumulate_pairwise_translations(
+        available_ids,
+        registration_transforms={51: None},
+        all_pairwise_translations=all_pairwise_translations,
+    )
+
+    assert accumulated[51] == (0.0, 0.0)

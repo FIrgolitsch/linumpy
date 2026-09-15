@@ -28,10 +28,12 @@ survives to the final quality report.
   decisions, see {doc}`SLICE_CONFIG_FEATURE`.
   Successful interpolations stamp `interpolated=true`; failures stamp
   `interpolation_failed=true` plus the specific `fallback_reason`.
-- Downstream propagation: `linum-register-pairwise` automatically marks
-  any transform touching an interpolated slice as `reliable=0` so stacking
-  can down-weight it. For hard-skipped slices there is no zarr at all, so
-  pairwise simply bridges the two surviving neighbours directly.
+- Downstream: pairwise is **not** run across a hard-skipped gap
+  (`id_step > 1`, e.g. z49→z51). Stacking places the far neighbour with
+  motor XY and `expected_z_overlap(..., id_step=2)` (empty Z, not glued).
+  The excluded slice's pixels never enter common-space, zmorph, or the
+  stack. When interpolation *succeeds*, pairwise touching the synthetic
+  zarr is marked `reliable=0` so stacking can down-weight it.
 
 **Important limitation**: interpolation only works for **single missing
 slices**. When two or more consecutive slices are missing there is not enough
@@ -308,6 +310,14 @@ forces the resulting `pairwise_registration_metrics.json` to
 `linum-stack-slices-motor` reads that flag via the `reliable` column and
 down-weights those transforms during accumulation. Interpolated slices
 therefore never masquerade as measured data in the stacked volume.
+
+When interpolation hard-skips, there is no synthetic zarr and the two
+surviving neighbours are **not** pairwise-registered to each other.
+`Helpers.isConsecutiveSlicePair` drops that pair, and
+`load_registration_transforms` / `accumulate_pairwise_translations`
+also discard any leftover gap-bridge `.tfm` (id step > 1). Stacking uses
+motor XY plus the physics-based Z gap. The excluded mosaic is never an
+input to zmorph: `interpolate_z_morph` only sees the two neighbours.
 
 ---
 

@@ -339,6 +339,7 @@ workflow {
         .map { list -> list.size() > 1 ? list.subList(1, list.size()) : [] }
         .flatten()
     pairs = fixed_slices.merge(moving_slices)
+        .filter { fixed, moving -> Helpers.isConsecutiveSlicePair(fixed, moving) }
 
     register_pairwise(pairs)
 
@@ -367,6 +368,7 @@ workflow {
         // Key pairs by moving zarr basename (= transform dir name)
         refine_pairs_keyed = refine_fixed
             .merge(refine_moving)
+            .filter { fixed, moving -> Helpers.isConsecutiveSlicePair(fixed, moving) }
             .map { fixed, moving -> tuple(moving.getName().replace('.ome.zarr', ''), fixed, moving) }
         // Key auto transform dirs by dir name
         auto_transforms_keyed = register_pairwise.out
@@ -1272,6 +1274,7 @@ process stack {
     def manual_fp = Helpers.manualTransformsFingerprint(params)
     """
     # manual_transforms_fingerprint ${manual_fp}
+    # gap_bridge_skip_id_step 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

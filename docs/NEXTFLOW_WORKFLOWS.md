@@ -1156,7 +1156,9 @@ string changes.
 zmorph's quality gates reject the interpolation it emits a manifest fragment
 with `interpolation_failed=true` and no zarr; `finalise_interpolation`
 stamps that into `slice_config_final.csv` and the slot stays a genuine gap
-in the stacked volume. See {doc}`SLICE_INTERPOLATION_FEATURE`
+in the stacked volume. Pairwise registration is not run across that gap
+(`Helpers.isConsecutiveSlicePair`); stacking uses motor XY and
+`expected_z_overlap(..., id_step=2)`. See {doc}`SLICE_INTERPOLATION_FEATURE`
 for the full policy.
 
 ### `finalise_interpolation` is published-only
