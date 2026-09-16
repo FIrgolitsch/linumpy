@@ -195,13 +195,19 @@ def test_accumulate_pairwise_translations_skips_id_step_gap():
     assert accumulated[51] == (0.0, 0.0)
 
 
-def test_common_space_xy_policy_blocks_accumulation():
-    accumulate, rotation_only = common_space_xy_policy(no_xy_shift=True, accumulate_translations=True, rotation_only=False)
+def test_common_space_xy_policy_skips_pairwise_rigid():
+    accumulate, apply_tfm, rotation_only = common_space_xy_policy(
+        no_xy_shift=True, accumulate_translations=True, rotation_only=False
+    )
     assert accumulate is False
+    assert apply_tfm is False
     assert rotation_only is True
 
 
 def test_common_space_xy_policy_accumulates_without_common_space():
-    accumulate, rotation_only = common_space_xy_policy(no_xy_shift=False, accumulate_translations=True, rotation_only=False)
+    accumulate, apply_tfm, rotation_only = common_space_xy_policy(
+        no_xy_shift=False, accumulate_translations=True, rotation_only=False
+    )
     assert accumulate is True
+    assert apply_tfm is True
     assert rotation_only is True

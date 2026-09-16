@@ -24,18 +24,19 @@ def common_space_xy_policy(
     no_xy_shift: bool,
     accumulate_translations: bool,
     rotation_only: bool,
-) -> tuple[bool, bool]:
-    """Return ``(accumulate_xy, rotation_only)`` after common-space constraints.
+) -> tuple[bool, bool, bool]:
+    """Return ``(accumulate_xy, apply_pairwise_rigid, rotation_only)``.
 
     Common-space slices (``no_xy_shift``) already sit on the motor canvas.
-    Accumulating 2-D pairwise translations — often tens of pixels from a
-    single mismatched-depth plane — shears every slab into a staircase.
-    Pairwise stays rotation-only; seam XY is the overlap blend refine.
+    Accumulating 2-D pairwise translations shears the stack; applying
+    rotation without those translations spins each slab around its own
+    centre and shreds axial/coronal anatomy. Skip both; seam XY is the
+    overlap blend refine.
     """
     if no_xy_shift:
-        return False, True
+        return False, False, True
     accumulate = bool(accumulate_translations)
-    return accumulate, bool(rotation_only or accumulate)
+    return accumulate, True, bool(rotation_only or accumulate)
 
 
 def load_registration_transforms(

@@ -524,15 +524,15 @@ def main() -> None:
     # Translations are moved from the transforms into cumsum_px so that:
     # 1. The output canvas is sized to accommodate the cumulative shifts
     # 2. Transforms only apply rotation (no content lost at slice edges)
-    accumulate_xy, default_rotation_only = common_space_xy_policy(
+    accumulate_xy, apply_pairwise_rigid, default_rotation_only = common_space_xy_policy(
         args.no_xy_shift, args.accumulate_translations, args.rotation_only
     )
-    if args.accumulate_translations and not accumulate_xy:
+    if args.no_xy_shift and (args.accumulate_translations or args.transforms_dir):
         logger.warning(
-            "Ignoring --accumulate_translations with --no_xy_shift: common-space "
-            "slices already have motor XY. Accumulating 2-D pairwise translations "
-            "shears the stack into a staircase. Pairwise is rotation-only; seam XY "
-            "uses overlap blend refinement."
+            "Skipping pairwise rigid XY/rotation with --no_xy_shift: common-space "
+            "slices already have motor XY. Unpaired rotation shreds axial/coronal "
+            "anatomy; accumulating 2-D translations shears the stack. Seam XY uses "
+            "overlap blend refinement."
         )
     if accumulate_xy and (registration_transforms or all_pairwise_translations):
         # Save motor baseline for targeted smoothing later
@@ -940,7 +940,7 @@ def main() -> None:
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
 
         # Apply registration transform (rotation/small translation refinement) if available
-        if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
+        if apply_pairwise_rigid and slice_id in registration_transforms and registration_transforms[slice_id] is not None:
             transform, _, _, confidence = registration_transforms[slice_id]
             # Adaptive degradation: skip, force rotation-only, or apply full transform
             # based on the per-registration confidence score.
