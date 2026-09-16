@@ -1281,6 +1281,7 @@ process stack {
     # paste_tissue_no_blend 1
     # no_cascade_slice_scale 1
     # stack_keep_cut_face 1
+    # cs_no_accum_pairwise_xy 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

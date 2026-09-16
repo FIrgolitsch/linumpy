@@ -47,6 +47,7 @@ from linumpy.mosaic.stacking import (
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
+    common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
 )
@@ -523,7 +524,17 @@ def main() -> None:
     # Translations are moved from the transforms into cumsum_px so that:
     # 1. The output canvas is sized to accommodate the cumulative shifts
     # 2. Transforms only apply rotation (no content lost at slice edges)
-    if args.accumulate_translations and (registration_transforms or all_pairwise_translations):
+    accumulate_xy, default_rotation_only = common_space_xy_policy(
+        args.no_xy_shift, args.accumulate_translations, args.rotation_only
+    )
+    if args.accumulate_translations and not accumulate_xy:
+        logger.warning(
+            "Ignoring --accumulate_translations with --no_xy_shift: common-space "
+            "slices already have motor XY. Accumulating 2-D pairwise translations "
+            "shears the stack into a staircase. Pairwise is rotation-only; seam XY "
+            "uses overlap blend refinement."
+        )
+    if accumulate_xy and (registration_transforms or all_pairwise_translations):
         # Save motor baseline for targeted smoothing later
         motor_baseline = {sid: cumsum_px[sid] for sid in cumsum_px}
 
@@ -950,7 +961,7 @@ def main() -> None:
                         args.confidence_high,
                     )
                 else:
-                    use_rotation_only = args.rotation_only or args.accumulate_translations
+                    use_rotation_only = default_rotation_only
                 override_rot = smoothed_rotations.get(slice_id)  # None if no smoothing
                 vol = apply_transform_to_volume(
                     vol,

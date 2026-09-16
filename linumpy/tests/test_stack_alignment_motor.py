@@ -8,6 +8,7 @@ import SimpleITK as sitk
 
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
+    common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
 )
@@ -192,3 +193,15 @@ def test_accumulate_pairwise_translations_skips_id_step_gap():
     )
 
     assert accumulated[51] == (0.0, 0.0)
+
+
+def test_common_space_xy_policy_blocks_accumulation():
+    accumulate, rotation_only = common_space_xy_policy(no_xy_shift=True, accumulate_translations=True, rotation_only=False)
+    assert accumulate is False
+    assert rotation_only is True
+
+
+def test_common_space_xy_policy_accumulates_without_common_space():
+    accumulate, rotation_only = common_space_xy_policy(no_xy_shift=False, accumulate_translations=True, rotation_only=False)
+    assert accumulate is True
+    assert rotation_only is True

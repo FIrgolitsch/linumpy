@@ -20,6 +20,24 @@ import SimpleITK as sitk
 logger = logging.getLogger(__name__)
 
 
+def common_space_xy_policy(
+    no_xy_shift: bool,
+    accumulate_translations: bool,
+    rotation_only: bool,
+) -> tuple[bool, bool]:
+    """Return ``(accumulate_xy, rotation_only)`` after common-space constraints.
+
+    Common-space slices (``no_xy_shift``) already sit on the motor canvas.
+    Accumulating 2-D pairwise translations — often tens of pixels from a
+    single mismatched-depth plane — shears every slab into a staircase.
+    Pairwise stays rotation-only; seam XY is the overlap blend refine.
+    """
+    if no_xy_shift:
+        return False, True
+    accumulate = bool(accumulate_translations)
+    return accumulate, bool(rotation_only or accumulate)
+
+
 def load_registration_transforms(
     transforms_dir: Path,
     slice_ids: Any,
