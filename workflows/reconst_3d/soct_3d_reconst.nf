@@ -1264,11 +1264,14 @@ process stack {
     // only Helpers.groovy) so they participate in the Nextflow task hash.
     def overlap_z_gain_flag = params.stack_overlap_z_gain
         ? " --overlap_z_gain --overlap_z_gain_threshold ${params.stack_overlap_z_gain_threshold} --overlap_z_gain_min_overlap ${params.stack_overlap_z_gain_min_overlap} --overlap_z_gain_clamp_lo ${params.stack_overlap_z_gain_clamp_lo} --overlap_z_gain_clamp_hi ${params.stack_overlap_z_gain_clamp_hi}"
-        : ""
+        : " --no-overlap_z_gain"
+    // Explicit --blend/--no-blend so a subject-config false cannot cache-hit a
+    // hashed task that still mixed overlap (focused_franklin hit d5/49159b).
+    def blend_flag = params.stack_blend_enabled ? " --blend" : " --no-blend"
     // In the hashed script block so a default-only Python change cannot cache-hit.
     def blend_tissue_flag = " --blend_tissue_threshold ${params.stack_overlap_z_gain_threshold}"
     def blend_refine_flag = " --blend_refinement_px ${params.blend_refinement_px} --blend_refinement_ncc_min_improve ${params.blend_refinement_ncc_min_improve}"
-    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_tissue_flag + blend_refine_flag
+    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def manual_fp = Helpers.manualTransformsFingerprint(params)
@@ -1317,6 +1320,7 @@ process correct_bias_field {
     def hm_perz_flag = params.bias_histogram_match_per_zplane ? "--histogram_match_per_zplane" : "--no-histogram_match_per_zplane"
     def tissue_thresh_flag = params.bias_tissue_threshold != null ? "--tissue_threshold ${params.bias_tissue_threshold}" : ""
     def zprofile_flag = params.bias_zprofile_smooth_sigma != null ? "--zprofile_smooth_sigma ${params.bias_zprofile_smooth_sigma}" : ""
+    def zprofile_eq_flag = params.bias_zprofile_equalize ? "--zprofile_equalize" : "--no-zprofile_equalize"
     def zero_mask_flag = params.bias_zero_outside_mask ? "--zero_outside_mask" : "--no-zero_outside_mask"
     def zero_mask_mode_flag = "--zero_mask_mode ${params.bias_zero_mask_mode}"
     def zero_mask_dilate_flag = "--zero_mask_dilate_px ${params.bias_zero_mask_dilate_px}"
@@ -1335,6 +1339,7 @@ process correct_bias_field {
         ${hm_perz_flag} \
         ${tissue_thresh_flag} \
         ${zprofile_flag} \
+        ${zprofile_eq_flag} \
         ${zero_mask_flag} \
         ${zero_mask_mode_flag} \
         ${zero_mask_dilate_flag} \

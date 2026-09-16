@@ -323,3 +323,18 @@ def test_apply_zprofile_smoothing_reduces_z_jitter():
     result = apply_zprofile_smoothing(vol, mask, sigma=2.0)
     s_after = step(result)
     assert s_after < 0.3 * s_before
+
+
+def test_apply_zprofile_smoothing_equalize_flattens_sawtooth():
+    """Serial-section sawtooth in plane means is removed by equalize=True."""
+    n_z = 40
+    vol = np.ones((n_z, 16, 16), dtype=np.float32) * 0.4
+    for z in range(n_z):
+        vol[z] *= 1.0 + 0.5 * np.sin(2 * np.pi * z / 8.0)
+    mask = np.ones_like(vol, dtype=bool)
+    out = apply_zprofile_smoothing(vol, mask, sigma=0.0, equalize=True)
+    means = out.mean(axis=(1, 2))
+    assert float(means.std() / means.mean()) < 0.02
+
+
+# ---------------------------------------------------------------------------

@@ -143,6 +143,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "Typical: 2.0-4.0.  Eliminates the ~1-2%% inter-slice steps HM cannot\n"
         "remove while preserving the smooth depth attenuation profile. [%(default)s]",
     )
+    p.add_argument(
+        "--zprofile_equalize",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Map every Z-plane's tissue mean to the global median mean.\n"
+        "Removes serial-section sawtooth without per-Z histogram matching.\n"
+        "Overrides --zprofile_smooth_sigma. [%(default)s]",
+    )
 
     # Background masking (zero out agarose)
     p.add_argument(
@@ -309,9 +317,18 @@ def main() -> None:
         ).astype(np.float32)
 
     # Z-profile smoothing: remove residual per-Z jitter that HM cannot fully fix
-    if args.zprofile_smooth_sigma > 0:
-        logger.info("Z-profile gain smoothing (sigma=%g)\u2026", args.zprofile_smooth_sigma)
-        vol = apply_zprofile_smoothing(vol, mask, sigma=args.zprofile_smooth_sigma).astype(np.float32)
+    if args.zprofile_equalize or args.zprofile_smooth_sigma > 0:
+        logger.info(
+            "Z-profile gain smoothing (sigma=%g, equalize=%s)\u2026",
+            args.zprofile_smooth_sigma,
+            args.zprofile_equalize,
+        )
+        vol = apply_zprofile_smoothing(
+            vol,
+            mask,
+            sigma=args.zprofile_smooth_sigma,
+            equalize=args.zprofile_equalize,
+        ).astype(np.float32)
 
     # Resolve spline distance defaults
     per_section_spline = args.spline_distance_mm if args.spline_distance_mm is not None else 2.0

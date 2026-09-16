@@ -178,7 +178,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # Blending
-    p.add_argument("--blend", action="store_true", help="Blend overlapping regions using a cosine (Hann) ramp")
+    p.add_argument(
+        "--blend",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Blend overlapping regions using a cosine (Hann) ramp. When off,\n"
+        "the incoming slice overwrites the overlap (no ghost mix).",
+    )
     p.add_argument(
         "--blend_depth", type=int, default=None, help="Number of z-slices to blend. Auto-derived from overlap when None."
     )

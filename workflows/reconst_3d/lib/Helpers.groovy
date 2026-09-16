@@ -251,9 +251,7 @@ class Helpers {
 
     static String stackBlendingArgs(Map params) {
         def opts = ''
-        if (params.stack_blend_enabled) opts += ' --blend'
-        // blend_refinement flags are appended in soct_3d_reconst.nf (process
-        // stack) so they participate in the Nextflow task hash.
+        // --blend / --no-blend is set in soct_3d_reconst.nf so it is in the task hash.
         if (params.stack_blend_z_refine_vox > 0) opts += " --blend_z_refine_vox ${params.stack_blend_z_refine_vox}"
         if (params.blend_z_refine_min_confidence > 0) opts += " --blend_z_refine_min_confidence ${params.blend_z_refine_min_confidence}"
         // overlap z-gain flags are appended in soct_3d_reconst.nf (process

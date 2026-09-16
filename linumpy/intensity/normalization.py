@@ -420,6 +420,7 @@ def apply_zprofile_smoothing(
     mask: np.ndarray,
     sigma: float,
     min_tissue_voxels: int = 100,
+    equalize: bool = False,
 ) -> np.ndarray:
     """Remove residual per-Z-plane intensity jitter via a smoothed scalar gain.
 
@@ -428,11 +429,13 @@ def apply_zprofile_smoothing(
     per-Z multiplicative gain `target / observed` to align each plane's tissue
     mean to the smoothed trend.  Background voxels (~mask) are left unchanged.
 
-    The correction is bounded in magnitude by the smoothed-vs-observed ratio
-    and acts only on the high-frequency component of the Z-profile, so the
-    smooth depth attenuation and large-scale anatomical variation are
-    preserved.  Best applied after `apply_histogram_matching` to clean up the
-    residual ~1-2% inter-slice step that HM cannot remove.
+    When ``equalize`` is true the target is the median tissue mean of all
+    valid planes (a flat Z profile). That removes serial-section sawtooth
+    (~200 µm) without per-plane histogram matching, which stretches XY tile
+    seams into slice lines.
+
+    The correction is a scalar per Z, so in-plane structure is unchanged.
+    Best applied after any section-wise matching.
 
     Parameters
     ----------
@@ -443,8 +446,11 @@ def apply_zprofile_smoothing(
     sigma : float
         Gaussian smoothing sigma in Z-plane units.  Larger = preserves more
         depth structure but removes less jitter.  2.0-4.0 works well in practice.
+        Ignored when ``equalize`` is true.  0 disables smoothing (unless equalize).
     min_tissue_voxels : int
         Z-planes with fewer tissue voxels are left unchanged (no reliable mean).
+    equalize : bool
+        If true, map every valid plane's tissue mean to the global median mean.
 
     Returns
     -------
@@ -459,7 +465,7 @@ def apply_zprofile_smoothing(
     vol = to_cpu(vol)
     mask = to_cpu(mask)
 
-    if sigma <= 0:
+    if sigma <= 0 and not equalize:
         return vol
     n_z = vol.shape[0]
     z_means = np.full(n_z, np.nan, dtype=np.float64)
@@ -471,7 +477,10 @@ def apply_zprofile_smoothing(
     if valid.sum() < 3:
         return vol
     target = z_means.copy()
-    target[valid] = gaussian_filter1d(z_means[valid], sigma=sigma)
+    if equalize:
+        target[valid] = float(np.median(z_means[valid]))
+    else:
+        target[valid] = gaussian_filter1d(z_means[valid], sigma=sigma)
     gains = np.where(valid, target / np.clip(z_means, 1e-6, None), 1.0).astype(np.float32)
 
     out = vol.astype(np.float32, copy=True)
