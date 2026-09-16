@@ -1001,28 +1001,10 @@ def main() -> None:
                 existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
-                # Intensity matching. Default: scalar median scale on the incoming
-                # slice (clamped [0.5, 2]). That dims a brighter next-slice top to
-                # the previous slice's attenuated bottom. --overlap_z_gain instead
-                # boosts the previous slab from the Z-end overlap fit and skips this.
-                if not args.overlap_z_gain:
-                    existing_valid = existing > 0
-                    moving_valid = moving_overlap > 0
-                    both_valid = existing_valid & moving_valid
-
-                    if np.sum(both_valid) > 1000:  # Need enough pixels for reliable statistics
-                        existing_median = np.median(existing[both_valid])
-                        moving_median = np.median(moving_overlap[both_valid])
-
-                        if moving_median > 1e-6 and existing_median > 1e-6:
-                            scale = existing_median / moving_median
-                            # Clamp scale to prevent extreme corrections
-                            scale = np.clip(scale, 0.5, 2.0)
-                            if abs(scale - 1.0) > 0.01:
-                                # Apply scaling to the entire shifted volume, not just overlap
-                                shifted = shifted * scale
-                                moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
-                                logger.debug("Slice %s: intensity scale=%.3f", slice_id, scale)
+                # Do not scale the incoming slab to the previous overlap median.
+                # That match is chained (each slice is dimmed to the last dim
+                # face) and collapses contrast along Z. Hann already ramps
+                # previous-deep → incoming-top on both-tissue voxels.
 
                 # Keep-if-better XY residual on overlap AIPs. Shift the whole
                 # incoming volume so unique-Z planes move with the blend zone.
