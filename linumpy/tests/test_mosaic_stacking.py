@@ -17,6 +17,7 @@ from linumpy.mosaic.stacking import (
     fit_overlap_log_ratio,
     overlap_z_gain_curve,
     overlap_z_profiles,
+    paste_tissue,
     refine_z_blend_overlap,
 )
 
@@ -146,6 +147,16 @@ def test_blend_overlap_z_does_not_mix_tissue_with_agarose():
     moving = np.full((6, 8, 8), 0.005, dtype=np.float32)
     result = blend_overlap_z(fixed, moving, tissue_threshold=0.01)
     np.testing.assert_allclose(result, 1.0)
+
+
+def test_paste_tissue_does_not_punch_holes():
+    """Incoming zeros must not erase existing tissue (no-blend overlap)."""
+    existing = np.ones((4, 6, 6), dtype=np.float32)
+    incoming = np.zeros((4, 6, 6), dtype=np.float32)
+    incoming[:, :3, :] = 2.0
+    out = paste_tissue(existing, incoming, threshold=0.01)
+    np.testing.assert_allclose(out[:, :3, :], 2.0)
+    np.testing.assert_allclose(out[:, 3:, :], 1.0)
 
 
 def test_expected_z_overlap_consecutive_and_gap():

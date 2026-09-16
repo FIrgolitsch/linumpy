@@ -41,6 +41,7 @@ from linumpy.mosaic.stacking import (
     expected_z_overlap,
     find_z_overlap,
     overlap_z_gain_curve,
+    paste_tissue,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -971,11 +972,18 @@ def main() -> None:
         # Determine Z range for this slice
         z_start = z_cursor - overlap
         z_end = z_start + shifted.shape[0]
+        if z_start < 0:
+            shifted = shifted[-z_start:]
+            z_start = 0
 
         # Ensure we don't exceed output bounds
         if z_end > output_shape[0]:
             z_end = output_shape[0]
             shifted = shifted[: z_end - z_start]
+
+        if shifted.shape[0] == 0 or z_start >= z_end:
+            logger.warning("Slice %s: empty Z range after clip, skipping", slice_id)
+            continue
 
         if args.blend and blend_overlap > 0 and z_start < z_cursor:
             # Blend the region [z_cursor - blend_overlap, z_cursor].
@@ -1050,10 +1058,16 @@ def main() -> None:
 
                 # New contribution (always shifted[overlap:] to preserve z-spacing)
                 if z_end > z_cursor:
-                    output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = shifted[max(0, overlap) :]
+                    new_z = shifted[max(0, overlap) :]
+                    existing_new = np.array(output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
+                    output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
+                        existing_new, new_z, threshold=args.blend_tissue_threshold
+                    )
         else:
-            # No blending - just write to specific region
-            output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = shifted
+            existing = np.array(output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
+            output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
+                existing, shifted, threshold=args.blend_tissue_threshold
+            )
 
         z_cursor = z_end
 

@@ -404,6 +404,26 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
     return blended
 
 
+def paste_tissue(
+    existing: np.ndarray,
+    incoming: np.ndarray,
+    threshold: float = 0.01,
+) -> np.ndarray:
+    """Paste incoming tissue over ``existing`` without punching holes.
+
+    Voxels where ``incoming`` is above ``threshold`` replace ``existing``.
+    Background incoming voxels leave whatever was already in the stack, so a
+    no-blend overlap write cannot zero out the previous slice's tissue.
+    """
+    if existing.shape != incoming.shape:
+        msg = f"paste_tissue shape mismatch {existing.shape} vs {incoming.shape}"
+        raise ValueError(msg)
+    out = np.array(existing, dtype=np.float32, copy=True)
+    valid = incoming > float(threshold)
+    out[valid] = incoming[valid]
+    return out
+
+
 def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "none") -> np.ndarray:
     """Blend overlapping XY regions for motor-only stacking.
 
