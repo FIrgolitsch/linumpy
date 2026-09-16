@@ -302,7 +302,7 @@ Computes small corrections (rotation, sub-pixel translation) between consecutive
 | `registration_max_translation` | `200.0` | Optimizer bound on translation (pixels) |
 | `registration_max_rotation` | `5.0` | Optimizer bound on rotation (degrees) |
 | `registration_initial_alignment` | `'both'` | Initial alignment before refinement: `none`, `com`, `gradient`, or `both` |
-| `moving_slice_first_index` | `4` | Starting Z-index in the moving volume |
+| `moving_slice_first_index` | `4` | Pairwise 2-D Euler template plane in the moving volume (not a stacking crop) |
 | `registration_slicing_interval_mm` | `0.200` | Physical slice thickness (mm) |
 | `registration_allowed_drifting_mm` | `0.100` | Z-search range (mm) |
 
@@ -314,6 +314,7 @@ and correlation or physics-based Z-matching.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `stack_moving_z_first_index` | `0` | Discarded leading Z planes on each moving slab before Hann/paste. 0 after `crop_interface` so the cut face enters the overlap. Do not reuse `moving_slice_first_index` |
 | `stack_blend_enabled` | `true` | Blend overlapping regions between slices |
 | `blend_refinement_px` | `0` | Keep-if-better XY residual on the Z-blend overlap AIP (pixels). Translation-only SimpleITK; applied to the whole incoming slice when tissue NCC rises. Identity if unconstrained magnitude exceeds this bound. 0 = disabled |
 | `blend_refinement_ncc_min_improve` | `1e-4` | Minimum tissue-NCC gain required to accept a Z-blend XY shift |

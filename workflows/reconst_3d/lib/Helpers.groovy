@@ -263,7 +263,10 @@ class Helpers {
         def opts = ''
         opts += " --slicing_interval_mm ${params.registration_slicing_interval_mm}"
         opts += " --search_range_mm ${params.registration_allowed_drifting_mm}"
-        opts += " --moving_z_first_index ${params.moving_slice_first_index}"
+        // Pairwise moving_slice_first_index is a 2-D Euler template plane.
+        // Do not reuse it as a stacking crop — that drops the incoming cut face.
+        def stackMz = (params.stack_moving_z_first_index != null) ? params.stack_moving_z_first_index : 0
+        opts += " --moving_z_first_index ${stackMz}"
         if (params.use_expected_z_overlap) opts += ' --use_expected_overlap'
         if (params.z_overlap_min_corr > 0) opts += " --z_overlap_min_corr ${params.z_overlap_min_corr}"
         if (params.analyze_shifts) opts += ' --output_z_matches z_matches.csv'

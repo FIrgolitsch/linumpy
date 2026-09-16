@@ -8,6 +8,7 @@ from linumpy.mosaic.stacking import (
     apply_xy_shift,
     blend_overlap_xy,
     blend_overlap_z,
+    crop_moving_volume,
     enforce_z_consistency,
     estimate_overlap_z_gain_fit,
     estimate_z_blend_xy_shift,
@@ -164,6 +165,29 @@ def test_expected_z_overlap_consecutive_and_gap():
     assert expected_z_overlap(29, 4, 20, id_step=2) == -15
 
 
+def test_expected_z_overlap_keeps_cut_face_when_crop_is_zero():
+    """Pairwise template index 4 must not shorten physics overlap."""
+    nz, interval = 43, 20
+    with_template_crop = expected_z_overlap(nz, 4, interval, id_step=1)
+    without_crop = expected_z_overlap(nz, 0, interval, id_step=1)
+    assert without_crop == nz - interval
+    assert without_crop - with_template_crop == 4
+
+
+def test_crop_moving_volume_default_preserves_cut_face():
+    vol = np.arange(20, dtype=np.float32).reshape(5, 2, 2)
+    out = crop_moving_volume(vol, 0)
+    np.testing.assert_array_equal(out, vol)
+    np.testing.assert_allclose(out[0], vol[0])
+
+
+def test_crop_moving_volume_drops_leading_planes_when_requested():
+    vol = np.arange(20, dtype=np.float32).reshape(5, 2, 2)
+    out = crop_moving_volume(vol, 4)
+    assert out.shape[0] == 1
+    np.testing.assert_array_equal(out, vol[4:])
+
+
 def test_enforce_z_consistency_preserves_id_gap():
     matches = [
         {"fixed_id": 47, "moving_id": 48, "overlap_voxels": 21, "blend_overlap_voxels": 21},
@@ -226,6 +250,18 @@ def test_extract_overlap_rois_uses_z_ends_only():
     assert f.shape[0] == 3
     np.testing.assert_allclose(f, 2.0)
     np.testing.assert_allclose(m, 3.0)
+
+
+def test_extract_overlap_rois_cut_face_enters_overlap_when_crop_is_zero():
+    fixed = np.zeros((10, 8, 8), dtype=np.float32)
+    moving = np.zeros((10, 8, 8), dtype=np.float32)
+    fixed[-4:] = 2.0
+    moving[:4] = 5.0
+    rois = extract_overlap_rois(fixed, moving, overlap=4, moving_z_start=0)
+    assert rois is not None
+    f, m = rois
+    np.testing.assert_allclose(f, 2.0)
+    np.testing.assert_allclose(m, 5.0)
 
 
 def test_overlap_z_profiles_ignore_xy_only_one_slice():

@@ -35,6 +35,7 @@ from linumpy.mosaic.stacking import (
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
+    crop_moving_volume,
     enforce_z_consistency,
     estimate_overlap_z_gain_fit,
     estimate_z_blend_xy_shift,
@@ -174,8 +175,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--moving_z_first_index",
         type=int,
-        default=8,
-        help="Starting Z-index in moving volume to skip noisy data [%(default)s]",
+        default=0,
+        help="Discarded leading Z planes on each moving slab before overlap/Hann.\n"
+        "Not the pairwise --moving_z_index (2-D Euler template plane).\n"
+        "After crop_interface this must be 0 so the cut face is stacked.\n"
+        "[%(default)s]",
     )
 
     # Blending
@@ -627,10 +631,10 @@ def main() -> None:
 
         if args.use_expected_overlap:
             # Expected overlap from known slicing interval and volume depth.
-            # ALWAYS use the physical default moving_z (moving_z_first_index),
-            # NOT the registration-derived value.  Registration-derived moving_z
-            # can vary between slices and cause inconsistent Z-spacing even when
-            # the user has explicitly requested physics-based expected overlap.
+            # ALWAYS use the stacking crop (moving_z_first_index), NOT the
+            # pairwise template stored in offsets.txt (moving_z_index). That
+            # index only selects a 2-D Euler plane; using it as a crop throws
+            # away the incoming cut face and shortens Hann by the same amount.
             moving_z = args.moving_z_first_index
             interval_voxels = int(args.slicing_interval_mm / res_z_mm)
             id_step = max(1, int(slice_id) - int(prev_id))
@@ -704,10 +708,11 @@ def main() -> None:
                     args.blend_z_refine_min_confidence,
                 )
         elif fixed_z is not None:
-            # We have registration-derived indices
-            # fixed_z: Z-index in prev_vol where overlap starts
-            # moving_z: Z-index in vol where overlap starts (skipping noisy initial slices)
-            # The overlap depth is: prev_vol.shape[0] - fixed_z
+            # Registration-derived Z: overlap starts at the 2-D template match
+            # in the previous slab (fixed_z). offsets moving_z is that template
+            # plane and is used as the crop so moving[template] lines up with
+            # fixed[fixed_z]. Production stacking uses --use_expected_overlap
+            # instead, which does not take this branch.
             prev_nz = prev_vol.shape[0]
             overlap = max(0, prev_nz - fixed_z)
             blend_overlap = overlap
@@ -914,9 +919,9 @@ def main() -> None:
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         vol = np.array(vol[:]).astype(np.float32)
 
-        # Skip initial noisy z-slices in moving volume
+        # Optional discarded-plane crop. Pairwise moving_z_index is not this.
         if moving_z_start > 0:
-            vol = vol[moving_z_start:]
+            vol = crop_moving_volume(vol, moving_z_start)
             logger.debug("Slice %s: skipped first %s z-slices", slice_id, moving_z_start)
 
         # After crop, z=0 is the interface with the previous slab — keep gain=1

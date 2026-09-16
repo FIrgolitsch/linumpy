@@ -469,7 +469,7 @@ linum-stack-slices-motor <slices_dir> <shifts_file> <output.ome.zarr> \
     [--search_range_mm 0.100] \
     [--use_expected_overlap] \
     [--z_overlap_min_corr 0.5] \
-    [--moving_z_first_index 8] \
+    [--moving_z_first_index 0] \
     [--blend] \
     [--blend_depth] \
     [--blend_refinement_px 0] \
@@ -506,6 +506,7 @@ linum-stack-slices-motor <slices_dir> <shifts_file> <output.ome.zarr> \
 | `--skip_error_transforms` | off | Skip transforms flagged `overall_status="error"` |
 | `--skip_warning_transforms` | off | Skip transforms flagged `overall_status="warning"` |
 | `--no_xy_shift` | off | Ignore XY shifts from motor CSV (stack without XY displacement) |
+| `--moving_z_first_index` | `0` | Discarded leading Z on each moving slab. Not the pairwise `--moving_z_index`. 0 after crop_interface |
 | `--slice_config` | — | CSV to filter which slices are included / motor-only |
 | `--load_max_rotation` | — | Metric-based gate: skip transforms with rotation above this threshold |
 | `--blend_refinement_px` | `0` | Keep-if-better XY residual on the Z-blend overlap AIP (max pixels; 0 = off) |
@@ -735,7 +736,7 @@ linum-register-pairwise <fixed.ome.zarr> <moving.ome.zarr> <output_dir> \
 |--------|---------|-------------|
 | `--slicing_interval_mm` | `0.200` | Expected physical slice thickness in mm |
 | `--search_range_mm` | `0.100` | Z search range around expected overlap |
-| `--moving_z_index` | `0` | Starting Z-index in the moving volume |
+| `--moving_z_index` | `0` | 2-D Euler template plane in the moving volume (not a stacking crop) |
 | `--enable_rotation` | on | Enable rotation in the transform (use `--no-enable_rotation` to disable) |
 | `--max_rotation_deg` | `5.0` | Maximum rotation to consider (degrees) |
 | `--max_translation_px` | `20.0` | Maximum translation per axis (pixels) |

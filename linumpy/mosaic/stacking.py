@@ -107,9 +107,26 @@ def expected_z_overlap(vol_nz: int, moving_z: int, interval_voxels: int, id_step
     ``id_step`` is the slice-index delta (1 for consecutive IDs). When a
     slice is missing, ``id_step=2`` uses two intervals so neighbors are not
     glued together. Negative overlap means empty voxels between slabs.
+
+    ``moving_z`` is a discarded-plane count on the incoming slab, not the
+    pairwise 2-D Euler template index. After ``crop_interface`` it should be
+    0 so the cut face enters the overlap.
     """
     step = max(1, int(id_step))
     return int(vol_nz) - int(moving_z or 0) - int(interval_voxels) * step
+
+
+def crop_moving_volume(vol: np.ndarray, moving_z_start: int = 0) -> np.ndarray:
+    """Drop leading Z planes from a moving slab before Hann/paste.
+
+    ``moving_z_start`` is a discarded-plane count, not the pairwise
+    ``moving_z_index`` (2-D Euler template). After ``crop_interface``, pass 0
+    so the incoming cut face participates in the overlap.
+    """
+    mz = max(0, int(moving_z_start or 0))
+    if mz <= 0:
+        return vol
+    return vol[mz:]
 
 
 def find_z_overlap(

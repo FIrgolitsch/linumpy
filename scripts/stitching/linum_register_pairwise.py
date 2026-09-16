@@ -56,7 +56,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     z_group.add_argument(
         "--search_range_mm", type=float, default=0.100, help="Search range around expected Z in mm [%(default)s]"
     )
-    z_group.add_argument("--moving_z_index", type=int, default=0, help="Z-index in moving volume to align [%(default)s]")
+    z_group.add_argument(
+        "--moving_z_index",
+        type=int,
+        default=0,
+        help="2-D Euler template plane in the moving volume [%(default)s].\n"
+        "Not a stacking crop; linum-stack-slices-motor uses --moving_z_first_index.",
+    )
 
     # Refinement
     ref_group = p.add_argument_group("Refinement")
