@@ -527,13 +527,6 @@ def main() -> None:
     accumulate_xy, apply_pairwise_rigid, default_rotation_only = common_space_xy_policy(
         args.no_xy_shift, args.accumulate_translations, args.rotation_only
     )
-    if args.no_xy_shift and (args.accumulate_translations or args.transforms_dir):
-        logger.warning(
-            "Skipping pairwise rigid XY/rotation with --no_xy_shift: common-space "
-            "slices already have motor XY. Unpaired rotation shreds axial/coronal "
-            "anatomy; accumulating 2-D translations shears the stack. Seam XY uses "
-            "overlap blend refinement."
-        )
     if accumulate_xy and (registration_transforms or all_pairwise_translations):
         # Save motor baseline for targeted smoothing later
         motor_baseline = {sid: cumsum_px[sid] for sid in cumsum_px}

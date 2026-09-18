@@ -27,16 +27,16 @@ def common_space_xy_policy(
 ) -> tuple[bool, bool, bool]:
     """Return ``(accumulate_xy, apply_pairwise_rigid, rotation_only)``.
 
-    Common-space slices (``no_xy_shift``) already sit on the motor canvas.
-    Accumulating 2-D pairwise translations shears the stack; applying
-    rotation without those translations spins each slab around its own
-    centre and shreds axial/coronal anatomy. Skip both; seam XY is the
-    overlap blend refine.
+    ``no_xy_shift`` only skips motor-grid XY (already baked into common-space
+    slices). Pairwise translations still accumulate as canvas offsets and
+    pairwise rigid is still applied — that is the 8b7730d stacking path.
     """
-    if no_xy_shift:
-        return False, False, True
     accumulate = bool(accumulate_translations)
-    return accumulate, True, bool(rotation_only or accumulate)
+    apply_tfm = True
+    rot_only = bool(rotation_only or accumulate)
+    # no_xy_shift only drops motor XY in the assembler; pairwise still applies.
+    _ = no_xy_shift
+    return accumulate, apply_tfm, rot_only
 
 
 def load_registration_transforms(
