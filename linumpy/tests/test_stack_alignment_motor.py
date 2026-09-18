@@ -1,6 +1,7 @@
 """Tests for linumpy.stack_alignment.motor_stack."""
 
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -193,6 +194,32 @@ def test_accumulate_pairwise_translations_skips_id_step_gap():
     )
 
     assert accumulated[51] == (0.0, 0.0)
+
+
+def test_accumulate_pairwise_translations_smooths_slice_jitter():
+    available_ids = list(range(9))
+    all_pairwise_translations = {i: (40.0 if i % 2 == 0 else -40.0, 0.0, 0.9) for i in available_ids[1:]}
+
+    raw = accumulate_pairwise_translations(
+        available_ids,
+        registration_transforms={},
+        all_pairwise_translations=all_pairwise_translations,
+        translation_min_zcorr=0.0,
+    )
+    smoothed = accumulate_pairwise_translations(
+        available_ids,
+        registration_transforms={},
+        all_pairwise_translations=all_pairwise_translations,
+        translation_min_zcorr=0.0,
+        translation_smooth_sigma=3.0,
+    )
+
+    def max_step(acc: dict) -> float:
+        ids = sorted(acc)
+        return max(abs(acc[b][0] - acc[a][0]) for a, b in pairwise(ids))
+
+    assert abs(max_step(raw) - 40.0) < 1e-9
+    assert max_step(smoothed) < 15.0
 
 
 def test_common_space_xy_policy_accumulates_on_common_space():

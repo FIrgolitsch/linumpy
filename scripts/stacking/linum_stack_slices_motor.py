@@ -131,7 +131,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Gaussian smoothing sigma (in slices) for accumulated pairwise\n"
         "translations. Smooths only the pairwise-accumulated component,\n"
         "preserving motor baseline positions. Applied before drift cap.\n"
-        "Typical values: 3-7 slices. 0 = disabled. [%(default)s]",
+        "Typical values: 5-8 slices. 0 = disabled. [%(default)s]",
     )
     p.add_argument(
         "--skip_error_transforms",

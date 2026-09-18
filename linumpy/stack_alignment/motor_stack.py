@@ -383,11 +383,17 @@ def accumulate_pairwise_translations(
                 cumulative_ty,
             )
         accumulated_offsets[slice_id] = (cumulative_tx, cumulative_ty)
+    step_mags = [float(np.hypot(*pairwise_translations[sid])) for sid in available_ids[1:] if sid in pairwise_translations]
+    walk_mags = [float(np.hypot(ox, oy)) for ox, oy in accumulated_offsets.values()]
     logger.info(
-        "Accumulated translations for %s slices (final cumulative: tx=%.2f, ty=%.2f)",
+        "Accumulated translations for %s slices (final cumulative: tx=%.2f, ty=%.2f; "
+        "pairwise mag median=%.1f max=%.1f; walk peak=%.1f px)",
         n_accumulated,
         cumulative_tx,
         cumulative_ty,
+        float(np.median(step_mags)) if step_mags else 0.0,
+        float(np.max(step_mags)) if step_mags else 0.0,
+        float(np.max(walk_mags)) if walk_mags else 0.0,
     )
     if confidence_weight_translations:
         logger.info("Confidence-weighted accumulation enabled")
@@ -399,22 +405,36 @@ def accumulate_pairwise_translations(
     acc_x = np.array([accumulated_offsets[sid][0] for sid in ids_list])
     acc_y = np.array([accumulated_offsets[sid][1] for sid in ids_list])
 
+    def _max_slice_step(xs: np.ndarray, ys: np.ndarray) -> float:
+        if len(xs) < 2:
+            return 0.0
+        return float(np.max(np.hypot(np.diff(xs), np.diff(ys))))
+
+    max_step_raw = _max_slice_step(acc_x, acc_y)
+    if translation_smooth_sigma <= 0:
+        logger.warning(
+            "Accumulating pairwise XY with translation_smooth_sigma=0 (max slice step %.1f px). "
+            "Unsmoothed pairwise translations staircase orthogonal views.",
+            max_step_raw,
+        )
+
     if translation_smooth_sigma > 0 and len(acc_x) >= 3:
         from scipy.ndimage import gaussian_filter1d
 
-        acc_x_smooth = gaussian_filter1d(acc_x, sigma=translation_smooth_sigma)
-        acc_y_smooth = gaussian_filter1d(acc_y, sigma=translation_smooth_sigma)
+        acc_x_smooth = gaussian_filter1d(acc_x, sigma=translation_smooth_sigma, mode="nearest")
+        acc_y_smooth = gaussian_filter1d(acc_y, sigma=translation_smooth_sigma, mode="nearest")
 
-        max_correction = float(np.max(np.sqrt((acc_x_smooth - acc_x) ** 2 + (acc_y_smooth - acc_y) ** 2)))
+        max_correction = float(np.max(np.hypot(acc_x_smooth - acc_x, acc_y_smooth - acc_y)))
+        max_step_smooth = _max_slice_step(acc_x_smooth, acc_y_smooth)
         logger.info(
-            "Gaussian-smoothed accumulated translations (sigma=%.1f, max correction: %.1f px)",
+            "Gaussian-smoothed accumulated translations (sigma=%.1f, max correction: %.1f px, max slice step %.1f -> %.1f px)",
             translation_smooth_sigma,
             max_correction,
+            max_step_raw,
+            max_step_smooth,
         )
         for j, sid in enumerate(ids_list):
             accumulated_offsets[sid] = (float(acc_x_smooth[j]), float(acc_y_smooth[j]))
-        acc_x = acc_x_smooth
-        acc_y = acc_y_smooth
 
     # Cumulative drift cap: clamp total drift from motor baseline (safety valve).
     # Now operates on smoothed values, so it only triggers for genuine large trends.
