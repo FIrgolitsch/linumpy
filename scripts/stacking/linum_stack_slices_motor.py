@@ -1042,8 +1042,8 @@ def main() -> None:
                             cval=0.0,
                         )
                         moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
-                        logger.debug(
-                            "Slice %s: z-blend XY refinement dy=%.2f dx=%.2f mag=%.2f px",
+                        logger.info(
+                            "Slice %s: z-blend XY dy=%.2f dx=%.2f mag=%.2f px",
                             slice_id,
                             dy,
                             dx,

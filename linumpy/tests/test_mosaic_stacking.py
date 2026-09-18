@@ -401,22 +401,26 @@ def test_estimate_z_blend_xy_shift_keeps_when_ncc_does_not_rise(monkeypatch):
     assert (dy, dx, mag) == (0.0, 0.0, 0.0)
 
 
-def test_estimate_z_blend_xy_shift_keeps_when_over_bound(monkeypatch):
+def test_estimate_z_blend_xy_shift_clamps_over_bound(monkeypatch):
+    """A shift past the cap is clamped, not dropped to identity."""
     blob = _gaussian_blob()
     existing = _stack_aip(blob)
     moving = _stack_aip(np.roll(blob, 3, axis=0))
+    captured: dict = {}
 
     def fake_register(*_args, **kwargs):
+        captured["bound_mode"] = kwargs.get("bound_mode")
         diag = kwargs.get("diagnostics")
         if diag is not None:
-            diag["rejected"] = True
-            diag["unconstrained_tx"] = 20.0
-            diag["unconstrained_ty"] = 0.0
-        return 0.0, 0.0, 0.0, 0.0
+            diag["rejected"] = False
+        return 0.0, -3.0, 0.0, 0.0
 
     monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
     dy, dx, mag = estimate_z_blend_xy_shift(existing, moving, 10.0)
-    assert (dy, dx, mag) == (0.0, 0.0, 0.0)
+    assert captured["bound_mode"] == "scale"
+    assert dy == pytest.approx(-3.0)
+    assert dx == pytest.approx(0.0)
+    assert mag == pytest.approx(3.0)
 
 
 def test_refine_z_blend_overlap_shifts_slab_when_accepted(monkeypatch):

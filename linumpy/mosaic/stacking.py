@@ -485,8 +485,10 @@ def estimate_z_blend_xy_shift(
     """Keep-if-better XY residual for the Z-blend overlap.
 
     Estimates a translation-only shift from overlap AIPs (mean along Z).
-    Returns ``(dy, dx, magnitude)``. Identity ``(0, 0, 0)`` when the
-    optimizer exceeds ``max_refinement_px`` or tissue NCC does not rise.
+    Returns ``(dy, dx, magnitude)``. Translation is clamped to
+    ``max_refinement_px`` (not rejected): a 12 px optimum becomes 10 px
+    instead of identity, which left a double edge at every seam.
+    Identity only when tissue NCC does not rise.
     """
     from linumpy.registration.refinement import register_refinement, tissue_ncc
 
@@ -509,14 +511,12 @@ def estimate_z_blend_xy_shift(
         max_translation_px=max_refinement_px,
         fixed_mask=(fixed_2d > tissue_threshold),
         moving_mask=(moving_2d > tissue_threshold),
-        bound_mode="reject",
-        shrink_factors=[1],
-        smoothing_sigmas=[0],
+        bound_mode="scale",
         diagnostics=diag,
     )
     if diag.get("rejected"):
-        logger.debug(
-            "Z-blend refinement rejected: unconstrained mag=%.2f px > max %s px",
+        logger.info(
+            "Z-blend XY rejected: unconstrained mag=%.2f px > max %s px",
             float(np.hypot(diag.get("unconstrained_tx", 0.0), diag.get("unconstrained_ty", 0.0))),
             max_refinement_px,
         )
@@ -532,16 +532,19 @@ def estimate_z_blend_xy_shift(
     shifted_2d = ndi_shift(moving_2d, [dy, dx], order=1, mode="constant", cval=0.0)
     ncc_after = tissue_ncc(fixed_2d, shifted_2d, threshold=tissue_threshold)
     if not np.isfinite(ncc_after) or (ncc_after - ncc_before) < ncc_min_improve:
-        logger.debug(
-            "Z-blend refinement rejected: tissue NCC %.4f -> %.4f",
+        logger.info(
+            "Z-blend XY skipped: tissue NCC %.4f -> %.4f (dy=%.2f dx=%.2f)",
             ncc_before,
             ncc_after,
+            dy,
+            dx,
         )
         return 0.0, 0.0, 0.0
-    logger.debug(
-        "Z-blend refinement accepted: dy=%.2f dx=%.2f NCC %.4f -> %.4f",
+    logger.info(
+        "Z-blend XY accepted: dy=%.2f dx=%.2f mag=%.2f px  NCC %.4f -> %.4f",
         dy,
         dx,
+        magnitude,
         ncc_before,
         ncc_after,
     )

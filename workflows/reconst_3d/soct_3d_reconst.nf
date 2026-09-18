@@ -1283,6 +1283,7 @@ process stack {
     # stack_keep_cut_face 1
     # cs_no_accum_pairwise_xy 1
     # cs_skip_pairwise_rigid 1
+    # overlap_xy_clamp 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
