@@ -412,9 +412,8 @@ def accumulate_pairwise_translations(
 
     max_step_raw = _max_slice_step(acc_x, acc_y)
     if translation_smooth_sigma <= 0:
-        logger.warning(
-            "Accumulating pairwise XY with translation_smooth_sigma=0 (max slice step %.1f px). "
-            "Unsmoothed pairwise translations staircase orthogonal views.",
+        logger.debug(
+            "No Gaussian smoothing of accumulated XY (max slice step %.1f px)",
             max_step_raw,
         )
 

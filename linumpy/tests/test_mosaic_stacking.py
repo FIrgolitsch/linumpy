@@ -423,6 +423,28 @@ def test_estimate_z_blend_xy_shift_clamps_over_bound(monkeypatch):
     assert mag == pytest.approx(3.0)
 
 
+def test_estimate_z_blend_xy_shift_uses_cut_face_planes(monkeypatch):
+    """Score last planes of previous vs first of incoming, not the interior AIP."""
+    blob = _gaussian_blob()
+    existing = np.full((6, 64, 64), 0.2, dtype=np.float32)
+    moving = np.full((6, 64, 64), 0.2, dtype=np.float32)
+    existing[-2:] = blob
+    moving[:2] = np.roll(blob, 3, axis=0)
+    captured: dict = {}
+
+    def fake_register(fixed_2d, *_args, **kwargs):
+        captured["fixed"] = np.asarray(fixed_2d)
+        diag = kwargs.get("diagnostics")
+        if diag is not None:
+            diag["rejected"] = False
+        return 0.0, -3.0, 0.0, 0.0
+
+    monkeypatch.setattr("linumpy.registration.refinement.register_refinement", fake_register)
+    monkeypatch.setattr("linumpy.mosaic.stacking._phase_offset", lambda *_a, **_k: None)
+    estimate_z_blend_xy_shift(existing, moving, 10.0, interface_planes=2)
+    np.testing.assert_allclose(captured["fixed"], blob, atol=1e-5)
+
+
 def test_refine_z_blend_overlap_shifts_slab_when_accepted(monkeypatch):
     from linumpy.registration.refinement import tissue_ncc
 

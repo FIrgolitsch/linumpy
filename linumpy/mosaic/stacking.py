@@ -475,32 +475,74 @@ def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "
     return existing
 
 
+def _cut_face_aips(
+    existing: np.ndarray,
+    moving_overlap: np.ndarray,
+    tissue_threshold: float,
+    interface_planes: int = 4,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """AIPs of the contacting faces, not the full overlap mean.
+
+    Pairwise Euler is estimated at ``moving_z_index`` (plane 4), so averaging
+    the whole overlap AIP scores that interior match. The staircase lives at
+    the cut: last planes of the previous slab vs first planes of the incoming.
+    Falls back to the full overlap mean when the interface has too little tissue.
+    """
+    n = min(max(1, int(interface_planes)), existing.shape[0], moving_overlap.shape[0])
+    fixed_2d = np.mean(existing[-n:], axis=0).astype(np.float32)
+    moving_2d = np.mean(moving_overlap[:n], axis=0).astype(np.float32)
+    valid = (fixed_2d > tissue_threshold) & (moving_2d > tissue_threshold)
+    if int(np.sum(valid)) < 1000:
+        fixed_2d = np.mean(existing, axis=0).astype(np.float32)
+        moving_2d = np.mean(moving_overlap, axis=0).astype(np.float32)
+        valid = (fixed_2d > tissue_threshold) & (moving_2d > tissue_threshold)
+    return fixed_2d, moving_2d, valid
+
+
+def _phase_offset(fixed_2d: np.ndarray, moving_2d: np.ndarray, max_refinement_px: float) -> tuple[float, float] | None:
+    """Phase-correlation (dy, dx) clamped to ``max_refinement_px``."""
+    from skimage.registration import phase_cross_correlation
+
+    shift, _, _ = phase_cross_correlation(fixed_2d, moving_2d, upsample_factor=10)
+    dy, dx = float(shift[0]), float(shift[1])
+    mag = float(np.hypot(dy, dx))
+    if mag < 0.1:
+        return None
+    if max_refinement_px > 0 and mag > max_refinement_px:
+        scale = max_refinement_px / mag
+        dy, dx = dy * scale, dx * scale
+    return dy, dx
+
+
 def estimate_z_blend_xy_shift(
     existing: np.ndarray,
     moving_overlap: np.ndarray,
     max_refinement_px: float,
     ncc_min_improve: float = 1e-4,
     tissue_threshold: float = 0.01,
+    interface_planes: int = 4,
 ) -> tuple[float, float, float]:
-    """Keep-if-better XY residual for the Z-blend overlap.
+    """Keep-if-better XY residual for the Z-blend cut face.
 
-    Estimates a translation-only shift from overlap AIPs (mean along Z).
+    Estimates a translation-only shift from the contacting-face AIPs.
     Returns ``(dy, dx, magnitude)``. Translation is clamped to
-    ``max_refinement_px`` (not rejected): a 12 px optimum becomes 10 px
-    instead of identity, which left a double edge at every seam.
-    Identity only when tissue NCC does not rise.
+    ``max_refinement_px``. Identity when tissue NCC does not rise.
     """
     from linumpy.registration.refinement import register_refinement, tissue_ncc
 
-    fixed_2d = np.mean(existing, axis=0).astype(np.float32)
-    moving_2d = np.mean(moving_overlap, axis=0).astype(np.float32)
-    valid = (fixed_2d > tissue_threshold) & (moving_2d > tissue_threshold)
+    fixed_2d, moving_2d, valid = _cut_face_aips(existing, moving_overlap, tissue_threshold, interface_planes=interface_planes)
     if int(np.sum(valid)) < 1000:
         return 0.0, 0.0, 0.0
 
     ncc_before = tissue_ncc(fixed_2d, moving_2d, threshold=tissue_threshold)
     if not np.isfinite(ncc_before):
         return 0.0, 0.0, 0.0
+
+    initial_offset = None
+    try:
+        initial_offset = _phase_offset(fixed_2d, moving_2d, max_refinement_px)
+    except ValueError, RuntimeError, np.linalg.LinAlgError:
+        logger.debug("Cut-face phase correlation failed", exc_info=True)
 
     diag: dict[str, Any] = {}
     tx, ty, _rot, _metric = register_refinement(
@@ -511,6 +553,7 @@ def estimate_z_blend_xy_shift(
         max_translation_px=max_refinement_px,
         fixed_mask=(fixed_2d > tissue_threshold),
         moving_mask=(moving_2d > tissue_threshold),
+        initial_offset=initial_offset,
         bound_mode="scale",
         diagnostics=diag,
     )
@@ -541,7 +584,7 @@ def estimate_z_blend_xy_shift(
         )
         return 0.0, 0.0, 0.0
     logger.info(
-        "Z-blend XY accepted: dy=%.2f dx=%.2f mag=%.2f px  NCC %.4f -> %.4f",
+        "Z-blend XY accepted: dy=%.2f dx=%.2f mag=%.2f px  NCC %.4f -> %.4f (cut-face)",
         dy,
         dx,
         magnitude,

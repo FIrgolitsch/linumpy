@@ -198,10 +198,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--blend_refinement_px",
         type=float,
         default=0,
-        help="Keep-if-better XY residual on the Z-blend overlap AIP\n"
-        "(translation-only SimpleITK). Applied to the whole incoming slice\n"
-        "when tissue NCC rises; identity if the unconstrained shift exceeds\n"
-        "this bound (pixels). 0 disables. [%(default)s]",
+        help="Keep-if-better XY residual on the cut-face overlap AIP\n"
+        "(last planes of previous vs first of incoming, translation-only).\n"
+        "Applied to the whole incoming slice when tissue NCC rises.\n"
+        "Shift is clamped to this bound (pixels). 0 disables. [%(default)s]",
     )
     p.add_argument(
         "--blend_refinement_ncc_min_improve",
