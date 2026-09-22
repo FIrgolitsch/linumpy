@@ -580,6 +580,7 @@ def estimate_z_blend_xy_shift(
     ncc_min_improve: float = 1e-4,
     tissue_threshold: float = 0.01,
     interface_planes: int = 4,
+    ncc_min_absolute: float = 0.2,
 ) -> tuple[float, float, float]:
     """Keep-if-better XY residual for the Z-blend cut face.
 
@@ -633,7 +634,7 @@ def estimate_z_blend_xy_shift(
 
     shifted_2d = ndi_shift(moving_2d, [dy, dx], order=1, mode="constant", cval=0.0)
     ncc_after = tissue_ncc(fixed_2d, shifted_2d, threshold=tissue_threshold)
-    if not np.isfinite(ncc_after) or (ncc_after - ncc_before) < ncc_min_improve:
+    if not np.isfinite(ncc_after) or (ncc_after - ncc_before) < ncc_min_improve or ncc_after < ncc_min_absolute:
         logger.info(
             "Z-blend XY skipped: tissue NCC %.4f -> %.4f (dy=%.2f dx=%.2f)",
             ncc_before,
@@ -651,6 +652,47 @@ def estimate_z_blend_xy_shift(
         ncc_after,
     )
     return dy, dx, magnitude
+
+
+def seam_overlap_gain(
+    existing: np.ndarray,
+    moving: np.ndarray,
+    tissue_threshold: float = 0.01,
+    gain_lo: float = 0.7,
+    gain_hi: float = 1.4,
+) -> float:
+    """Scale that matches incoming overlap tissue to the slice already in the stack.
+
+    Returns 1 when there is too little shared tissue. The gain is clamped so a
+    seam match cannot halve or double the slab.
+    """
+    both = (existing > tissue_threshold) & (moving > tissue_threshold)
+    if int(np.sum(both)) < 1000:
+        return 1.0
+    med_fixed = float(np.median(existing[both]))
+    med_moving = float(np.median(moving[both]))
+    if med_moving < 1e-6:
+        return 1.0
+    return float(np.clip(med_fixed / med_moving, gain_lo, gain_hi))
+
+
+def apply_seam_gain(vol: np.ndarray, z0: int, depth: int, gain: float, ramp: int = 6) -> np.ndarray:
+    """Apply ``gain`` on the overlap and fade it back to 1 over the next planes."""
+    if abs(gain - 1.0) < 0.02 or depth < 1:
+        return vol
+    out = vol.copy()
+    z1 = min(out.shape[0], z0 + depth)
+    tissue = out[z0:z1] > 0
+    out[z0:z1][tissue] *= gain
+    for i in range(ramp):
+        z = z1 + i
+        if z >= out.shape[0]:
+            break
+        weight = 1.0 - (i + 1) / (ramp + 1)
+        plane_gain = 1.0 + (gain - 1.0) * weight
+        mask = out[z] > 0
+        out[z][mask] *= plane_gain
+    return out
 
 
 def refine_z_blend_overlap(

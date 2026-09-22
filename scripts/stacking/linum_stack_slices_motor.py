@@ -33,6 +33,7 @@ from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
+    apply_seam_gain,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
@@ -45,6 +46,7 @@ from linumpy.mosaic.stacking import (
     overlap_z_gain_curve,
     paste_tissue,
     rigid_euler_pad,
+    seam_overlap_gain,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -211,6 +213,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=1e-4,
         help="Minimum tissue-NCC gain required to accept a Z-blend XY shift.\n"
         "Rejected shifts keep the pairwise/manual overlay. [%(default)s]",
+    )
+    p.add_argument(
+        "--blend_refinement_ncc_min_absolute",
+        type=float,
+        default=0.2,
+        help="Reject a cut-face XY shift unless tissue NCC after the shift\n"
+        "is at least this. Stops a few-pixel jog on a bad match. [%(default)s]",
     )
     p.add_argument(
         "--blend_z_refine_vox",
@@ -1072,14 +1081,22 @@ def main() -> None:
                 # face) and collapses contrast along Z. Hann already ramps
                 # previous-deep → incoming-top on both-tissue voxels.
 
-                # Keep-if-better XY residual on overlap AIPs. Shift the whole
-                # incoming volume so unique-Z planes move with the blend zone.
-                if args.blend_refinement_px > 0 and slice_id not in manual_slice_ids:
+                gain = seam_overlap_gain(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
+                if abs(gain - 1.0) >= 0.02:
+                    shifted = apply_seam_gain(shifted, s_blend_start, overlap_depth, gain)
+                    moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
+                    logger.info("Slice %s: seam gain %.3f", slice_id, gain)
+
+                # A few pixels of cut-face residual, including on manuals.
+                # The manuals set the slab; this only closes an edge the Hann
+                # would otherwise leave as a hard line. Bound stays tight.
+                if args.blend_refinement_px > 0:
                     dy, dx, ref_mag = estimate_z_blend_xy_shift(
                         existing,
                         moving_overlap,
                         args.blend_refinement_px,
                         ncc_min_improve=args.blend_refinement_ncc_min_improve,
+                        ncc_min_absolute=args.blend_refinement_ncc_min_absolute,
                     )
                     if ref_mag > 0:
                         from scipy.ndimage import shift as ndi_shift

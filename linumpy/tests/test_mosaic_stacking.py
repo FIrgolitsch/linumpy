@@ -21,6 +21,7 @@ from linumpy.mosaic.stacking import (
     overlap_z_profiles,
     paste_tissue,
     refine_z_blend_overlap,
+    seam_overlap_gain,
 )
 
 
@@ -104,6 +105,18 @@ def test_apply_rigid_euler_padded_shifts_without_clipping():
     assert peak[0] == 16 + pad_y
     assert peak[1] == 16 - 8 + pad_x
     assert padded.shape[2] > 32
+
+
+def test_seam_overlap_gain_matches_medians():
+    existing = np.full((4, 32, 32), 2.0, dtype=np.float32)
+    moving = np.full((4, 32, 32), 1.0, dtype=np.float32)
+    assert seam_overlap_gain(existing, moving) == pytest.approx(1.4)
+
+
+def test_seam_overlap_gain_is_one_without_shared_tissue():
+    existing = np.zeros((4, 8, 8), dtype=np.float32)
+    moving = np.ones((4, 8, 8), dtype=np.float32)
+    assert seam_overlap_gain(existing, moving) == 1.0
 
 
 def test_apply_xy_shift_fully_outside_canvas():
