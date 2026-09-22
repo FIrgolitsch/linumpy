@@ -116,6 +116,28 @@ def test_load_registration_transforms_skips_id_step_gap(tmp_path: Path):
     assert 51 not in pairwise
 
 
+def test_load_registration_transforms_keeps_manual_across_gap(tmp_path: Path):
+    """A hand-aligned z51 transform is the gap correction; do not drop it."""
+    metrics = {
+        "source": "manual",
+        "overall_status": "ok",
+        "metrics": {
+            "registration_confidence": {"value": 1.0},
+            "translation_x": {"value": -74.0},
+            "translation_y": {"value": -64.0},
+            "z_correlation": {"value": 0.0},
+            "rotation": {"value": -1.0},
+        },
+    }
+    _write_transform_dir(tmp_path, 51, metrics)
+
+    transforms, pairwise = load_registration_transforms(tmp_path, [49, 51])
+
+    assert transforms[51] is not None
+    assert abs(pairwise[51][0] - (-74.0)) < 1e-9
+    assert abs(pairwise[51][1] - (-64.0)) < 1e-9
+
+
 # ---------------------------------------------------------------------------
 # accumulate_pairwise_translations
 # ---------------------------------------------------------------------------
@@ -194,6 +216,22 @@ def test_accumulate_pairwise_translations_skips_id_step_gap():
     )
 
     assert accumulated[51] == (0.0, 0.0)
+
+
+def test_accumulate_pairwise_translations_keeps_manual_gap():
+    """z51's manual delta is added on top of z49, not discarded."""
+    available_ids = [49, 51]
+    all_pairwise_translations = {51: (-74.0, -64.0, 0.0)}
+
+    accumulated = accumulate_pairwise_translations(
+        available_ids,
+        registration_transforms={51: None},
+        all_pairwise_translations=all_pairwise_translations,
+        translation_min_zcorr=0.0,
+        keep_gap_slice_ids={51},
+    )
+
+    assert accumulated[51] == (-74.0, -64.0)
 
 
 def test_accumulate_pairwise_translations_smooths_slice_jitter():

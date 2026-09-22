@@ -540,6 +540,7 @@ def main() -> None:
             translation_smooth_sigma=args.translation_smooth_sigma,
             max_cumulative_drift_px=args.max_cumulative_drift_px,
             translation_min_zcorr=args.translation_min_zcorr,
+            keep_gap_slice_ids=manual_override_ids,
         )
 
         # Apply accumulated (and optionally smoothed/capped) offsets to cumsum_px.

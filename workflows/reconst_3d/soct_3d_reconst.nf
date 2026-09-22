@@ -1282,8 +1282,7 @@ process stack {
     # no_cascade_slice_scale 1
     # stack_keep_cut_face 1
     # restore_accum_pairwise_xy 1
-    # overlap_xy_clamp 1
-    # cutface_seam_xy 1
+    # manual_gap_chain 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

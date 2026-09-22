@@ -19,6 +19,19 @@ import SimpleITK as sitk
 
 logger = logging.getLogger(__name__)
 
+_MANUAL_SOURCES = frozenset({"manual", "manual_refined"})
+
+
+def _transform_source(transform_dir: Path) -> str | None:
+    metrics_files = list(transform_dir.glob("pairwise_registration_metrics.json"))
+    if not metrics_files:
+        return None
+    try:
+        with Path(metrics_files[0]).open() as f:
+            return json.load(f).get("source")
+    except OSError, json.JSONDecodeError, TypeError, AttributeError:
+        return None
+
 
 def common_space_xy_policy(
     no_xy_shift: bool,
@@ -95,22 +108,34 @@ def load_registration_transforms(
 
     for prev_id, slice_id in pairwise(slice_ids):
         # First slice has no transform. A non-unit ID step means the pair
-        # jumped a missing slice (e.g. z49→z51); that .tfm is a gap-bridge
-        # explosion, not a cut-adjacent refinement.
+        # jumped a missing slice (e.g. z49→z51). An automated .tfm across
+        # that gap is not a cut-adjacent refinement. A manual transform is:
+        # the user aligned this slice to the neighbour they could see, and
+        # stacking adds that delta on top of the previous corrected position.
+        matching_dirs = list(transforms_dir.glob(f"slice_z{slice_id:02d}")) + list(
+            transforms_dir.glob(f"slice_z{slice_id:02d}_*")
+        )
+        if not matching_dirs:
+            matching_dirs = list(transforms_dir.glob(f"*z{slice_id:02d}*"))
+
         id_step = int(slice_id) - int(prev_id)
         if id_step > 1:
-            logger.warning(
-                "Slice %s: skipping transform (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
+            source = _transform_source(matching_dirs[0]) if matching_dirs else None
+            if source not in _MANUAL_SOURCES:
+                logger.warning(
+                    "Slice %s: skipping transform (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
+                    slice_id,
+                    prev_id,
+                    id_step,
+                )
+                transforms[slice_id] = None
+                continue
+            logger.info(
+                "Slice %s: keeping manual transform across gap (prev=%s, id_step=%s)",
                 slice_id,
                 prev_id,
                 id_step,
             )
-            transforms[slice_id] = None
-            continue
-
-        # Find transform directory for this slice
-        # Pattern: slice_z{id}_* or similar
-        matching_dirs = list(transforms_dir.glob(f"*z{slice_id:02d}*")) + list(transforms_dir.glob(f"*z{slice_id}*"))
 
         if not matching_dirs:
             logger.warning("No transform found for slice %s", slice_id)
@@ -249,6 +274,7 @@ def accumulate_pairwise_translations(
     translation_smooth_sigma: float = 0.0,
     max_cumulative_drift_px: float = 0.0,
     translation_min_zcorr: float = 0.2,
+    keep_gap_slice_ids: set | None = None,
 ) -> dict:
     """Accumulate pairwise registration translations into per-slice cumulative offsets.
 
@@ -282,6 +308,10 @@ def accumulate_pairwise_translations(
     translation_min_zcorr : float
         Minimum z_correlation required to use a slice's translation.
         0 = use all translations regardless of quality.
+    keep_gap_slice_ids : set or None
+        Slice IDs whose translation is a manual correction. Those are
+        accumulated even across a missing-slice gap and are not dropped
+        for low z-correlation.
 
     Returns
     -------
@@ -297,7 +327,7 @@ def accumulate_pairwise_translations(
     n_zcorr_skipped = 0
     for prev_id, slice_id in pairwise(available_ids):
         id_step = int(slice_id) - int(prev_id)
-        if id_step > 1:
+        if id_step > 1 and slice_id not in (keep_gap_slice_ids or ()):
             logger.warning(
                 "Slice %s: skipping pairwise translation (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
                 slice_id,
@@ -305,10 +335,20 @@ def accumulate_pairwise_translations(
                 id_step,
             )
             continue
+        if id_step > 1:
+            logger.info(
+                "Slice %s: manual gap translation applied on top of corrected slice %s (id_step=%s)",
+                slice_id,
+                prev_id,
+                id_step,
+            )
         if slice_id in all_pairwise_translations:
             tx, ty, zcorr = all_pairwise_translations[slice_id]
-            # Apply separate zcorr threshold for translations
-            if translation_min_zcorr > 0 and zcorr < translation_min_zcorr:
+            manual_ids = keep_gap_slice_ids or set()
+            # Apply separate zcorr threshold for translations. Manual
+            # corrections are the alignment the user checked; do not drop
+            # them because the automated z-correlation is low.
+            if translation_min_zcorr > 0 and zcorr < translation_min_zcorr and slice_id not in manual_ids:
                 logger.debug(
                     "Slice %s: skipping translation (zcorr=%.3f < %s)",
                     slice_id,
