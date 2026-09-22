@@ -294,13 +294,12 @@ class Helpers {
     }
 
     /**
-     * Skipped when refine_manual_transforms baked manual corrections into
-     * the transforms directory; passing them again would double-apply.
+     * Manual directory is always passed when set. The stack keeps a refined
+     * transform (source manual / manual_refined) and only uses the raw manual
+     * to fill slices the refine step did not emit (a gap such as z51).
      */
     static String stackManualOverrideArg(Map params) {
-        return (params.manual_transforms_dir && !params.refine_manual_transforms)
-            ? " --manual_transforms_dir ${params.manual_transforms_dir}"
-            : ''
+        return params.manual_transforms_dir ? " --manual_transforms_dir ${params.manual_transforms_dir}" : ''
     }
 
     /**

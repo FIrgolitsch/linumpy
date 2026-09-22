@@ -5,6 +5,7 @@ import pytest
 
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
+    apply_rigid_euler_padded,
     apply_xy_shift,
     blend_overlap_xy,
     blend_overlap_z,
@@ -88,6 +89,21 @@ def test_apply_xy_shift_negative_clips_src():
     assert cropped is not None
     assert dst[0] == 0  # clamped to canvas start
     assert cropped.shape[1] == 8  # 2 rows clipped
+
+
+def test_apply_rigid_euler_padded_shifts_without_clipping():
+    import SimpleITK as sitk
+
+    vol = np.zeros((1, 32, 32), dtype=np.float32)
+    vol[0, 16, 16] = 1.0
+    tfm = sitk.Euler3DTransform()
+    tfm.SetCenter([16.0, 16.0, 0.0])
+    tfm.SetTranslation([8.0, 0.0, 0.0])
+    padded, pad_x, pad_y = apply_rigid_euler_padded(vol, tfm)
+    peak = np.unravel_index(int(np.argmax(padded[0])), padded[0].shape)
+    assert peak[0] == 16 + pad_y
+    assert peak[1] == 16 - 8 + pad_x
+    assert padded.shape[2] > 32
 
 
 def test_apply_xy_shift_fully_outside_canvas():

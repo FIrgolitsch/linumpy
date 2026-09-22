@@ -231,6 +231,43 @@ def _overlap_aips(fixed_vol: np.ndarray, moving_vol: np.ndarray, overlap_px: int
     return fixed_aip, moving_aip
 
 
+def _invert_rigid_2d(
+    tx: float,
+    ty: float,
+    rot_deg: float,
+    cx: float,
+    cy: float,
+) -> tuple[float, float, float, float, float]:
+    """Inverse of a planar Euler about ``(cx, cy)``."""
+    theta = np.radians(rot_deg)
+    cos_t = float(np.cos(theta))
+    sin_t = float(np.sin(theta))
+    # R^{-1} = [[c, s], [-s, c]]; translation of the inverse is -R^{-1} t.
+    inv_tx = -(cos_t * tx + sin_t * ty)
+    inv_ty = -(-sin_t * tx + cos_t * ty)
+    return inv_tx, inv_ty, -rot_deg, cx, cy
+
+
+def _reexpress_about(
+    tx: float,
+    ty: float,
+    rot_deg: float,
+    cx: float,
+    cy: float,
+    new_cx: float,
+    new_cy: float,
+) -> tuple[float, float, float]:
+    """Re-express a planar Euler about a different centre."""
+    theta = np.radians(rot_deg)
+    cos_t = float(np.cos(theta))
+    sin_t = float(np.sin(theta))
+    dx = new_cx - cx
+    dy = new_cy - cy
+    rx = cos_t * dx - sin_t * dy
+    ry = sin_t * dx + cos_t * dy
+    return rx + cx + tx - new_cx, ry + cy + ty - new_cy, rot_deg
+
+
 def _accept_residual(ncc_before: float, ncc_after: float, min_improve: float) -> bool:
     """Keep a residual only when tissue NCC strictly improved."""
     if not np.isfinite(ncc_before) or not np.isfinite(ncc_after):
@@ -259,6 +296,7 @@ def _write_metrics(
     unconstrained_tx: float | None = None,
     unconstrained_ty: float | None = None,
     unconstrained_rot_deg: float | None = None,
+    fixed_slice_id: int | None = None,
 ) -> None:
     """Write pairwise_registration_metrics.json with source='manual_refined'."""
     mag = float(np.sqrt(tx**2 + ty**2))
@@ -276,6 +314,7 @@ def _write_metrics(
             "registration_error": {"value": 0.0},
         },
         "overall_status": "ok",
+        "fixed_slice_id": fixed_slice_id,
         "refinement": {
             "delta_tx": delta_tx,
             "delta_ty": delta_ty,
@@ -366,16 +405,38 @@ def main() -> None:
     man_tx, man_ty, man_rot, man_cx, man_cy = _load_manual_transform(manual_tfm_path)
     logger.info("z%d: manual tx=%.1f ty=%.1f rot=%.3f deg", slice_id, man_tx, man_ty, man_rot)
 
-    # Warp moving AIP with the manual transform so the residual starts near identity
+    # The manual aligns this slice to the original fixed slice. The stack
+    # then moves that fixed slice by its own Euler. Polish the residual
+    # against that corrected fixed pose, and fold it back into the moving
+    # manual so the saved delta stays in the original-neighbour frame.
+    final_center = [fixed_aip.shape[1] / 2.0, fixed_aip.shape[0] / 2.0]
+    fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy = 0.0, 0.0, 0.0, final_center[0], final_center[1]
+    fixed_id_match = re.search(r"z(\d+)", fixed_zarr.name)
+    fixed_slice_id = int(fixed_id_match.group(1)) if fixed_id_match is not None else None
+    if args.manual_transforms_dir and fixed_slice_id is not None:
+        fixed_manual = Path(args.manual_transforms_dir) / f"slice_z{fixed_slice_id:02d}" / "transform.tfm"
+        if fixed_manual.exists():
+            fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy = _load_manual_transform(fixed_manual)
+            logger.info(
+                "z%d: residual target is corrected z%d (tx=%.1f ty=%.1f rot=%.3f)",
+                slice_id,
+                fixed_slice_id,
+                fixed_tx,
+                fixed_ty,
+                fixed_rot,
+            )
+
     warped_moving = _warp_moving(moving_aip, man_tx, man_ty, man_rot, man_cx, man_cy)
-    ncc_before = tissue_ncc(fixed_aip, warped_moving)
-    mask_f = fixed_aip > 0.01
-    mask_m = warped_moving > 0.01
+    fixed_target = _warp_moving(fixed_aip, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
+    moving_on_fixed = _warp_moving(warped_moving, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
+    ncc_before = tissue_ncc(fixed_target, moving_on_fixed)
+    mask_f = fixed_target > 0.01
+    mask_m = moving_on_fixed > 0.01
 
     diag: dict = {}
     delta_tx, delta_ty, delta_rot, _metric = register_refinement(
-        fixed_aip,
-        warped_moving,
+        fixed_target,
+        moving_on_fixed,
         enable_rotation=True,
         max_rotation_deg=args.max_rotation_deg,
         max_translation_px=args.max_translation_px,
@@ -405,8 +466,8 @@ def main() -> None:
     else:
         cx = fixed_aip.shape[1] / 2.0
         cy = fixed_aip.shape[0] / 2.0
-        refined_moving = _warp_moving(warped_moving, delta_tx, delta_ty, delta_rot, cx, cy)
-        ncc_after = tissue_ncc(fixed_aip, refined_moving)
+        refined_moving = _warp_moving(moving_on_fixed, delta_tx, delta_ty, delta_rot, cx, cy)
+        ncc_after = tissue_ncc(fixed_target, refined_moving)
         if not _accept_residual(ncc_before, ncc_after, args.ncc_min_improve):
             reject_reason = "ncc"
             delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0
@@ -419,17 +480,47 @@ def main() -> None:
         else:
             logger.info("z%d: accepted residual, tissue NCC %.4f -> %.4f", slice_id, ncc_before, ncc_after)
 
-    # Compose manual o delta about the AIP centre (same frame as the residual).
-    final_center = [fixed_aip.shape[1] / 2.0, fixed_aip.shape[0] / 2.0]
-    final_tx, final_ty, final_rot = _compose_rigid_2d(
+    # Residual was measured in the corrected-fixed frame. Fold it back:
+    # inv(fixed) ∘ delta ∘ fixed ∘ manual, which is manual ∘ delta when the
+    # fixed Euler is identity.
+    fixed_about_tx, fixed_about_ty, fixed_about_rot = _reexpress_about(
+        fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy, final_center[0], final_center[1]
+    )
+    chained_tx, chained_ty, chained_rot = _compose_rigid_2d(
         man_tx,
         man_ty,
         man_rot,
         man_cx,
         man_cy,
+        fixed_about_tx,
+        fixed_about_ty,
+        fixed_about_rot,
+        final_center[0],
+        final_center[1],
+    )
+    with_delta_tx, with_delta_ty, with_delta_rot = _compose_rigid_2d(
+        chained_tx,
+        chained_ty,
+        chained_rot,
+        final_center[0],
+        final_center[1],
         delta_tx,
         delta_ty,
         delta_rot,
+        final_center[0],
+        final_center[1],
+    )
+    inv_tx, inv_ty, inv_rot, _inv_cx, _inv_cy = _invert_rigid_2d(fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
+    inv_tx, inv_ty, inv_rot = _reexpress_about(inv_tx, inv_ty, inv_rot, fixed_cx, fixed_cy, final_center[0], final_center[1])
+    final_tx, final_ty, final_rot = _compose_rigid_2d(
+        with_delta_tx,
+        with_delta_ty,
+        with_delta_rot,
+        final_center[0],
+        final_center[1],
+        inv_tx,
+        inv_ty,
+        inv_rot,
         final_center[0],
         final_center[1],
     )
@@ -466,6 +557,7 @@ def main() -> None:
         unconstrained_tx=diag.get("unconstrained_tx"),
         unconstrained_ty=diag.get("unconstrained_ty"),
         unconstrained_rot_deg=diag.get("unconstrained_rot_deg"),
+        fixed_slice_id=fixed_slice_id,
     )
     logger.info("z%d: done", slice_id)
 

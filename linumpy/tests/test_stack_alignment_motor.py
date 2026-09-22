@@ -59,7 +59,7 @@ def test_load_registration_transforms_basic(tmp_path: Path):
     }
     _write_transform_dir(tmp_path, 1, metrics)
 
-    transforms, pairwise = load_registration_transforms(tmp_path, [0, 1])
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [0, 1])
 
     assert transforms[1] is not None
     _tfm, fixed_z, moving_z, confidence = transforms[1]
@@ -82,7 +82,7 @@ def test_load_registration_transforms_metric_gating_rejects_low_zcorr(tmp_path: 
     }
     _write_transform_dir(tmp_path, 1, metrics)
 
-    transforms, pairwise = load_registration_transforms(tmp_path, [0, 1], load_min_zcorr=0.5, load_max_rotation=1.0)
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [0, 1], load_min_zcorr=0.5, load_max_rotation=1.0)
 
     assert transforms[1] is None
     # Translation is still recovered for accumulation even though the
@@ -91,7 +91,7 @@ def test_load_registration_transforms_metric_gating_rejects_low_zcorr(tmp_path: 
 
 
 def test_load_registration_transforms_missing_dir_is_none(tmp_path: Path):
-    transforms, pairwise = load_registration_transforms(tmp_path, [0, 1])
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [0, 1])
     assert transforms[1] is None
     assert pairwise == {}
 
@@ -110,7 +110,7 @@ def test_load_registration_transforms_skips_id_step_gap(tmp_path: Path):
     }
     _write_transform_dir(tmp_path, 51, metrics)
 
-    transforms, pairwise = load_registration_transforms(tmp_path, [49, 51])
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [49, 51])
 
     assert transforms[51] is None
     assert 51 not in pairwise
@@ -131,11 +131,33 @@ def test_load_registration_transforms_keeps_manual_across_gap(tmp_path: Path):
     }
     _write_transform_dir(tmp_path, 51, metrics)
 
-    transforms, pairwise = load_registration_transforms(tmp_path, [49, 51])
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [49, 51])
 
     assert transforms[51] is not None
     assert abs(pairwise[51][0] - (-74.0)) < 1e-9
     assert abs(pairwise[51][1] - (-64.0)) < 1e-9
+
+
+def test_load_registration_transforms_rejects_manual_aligned_to_other_slice(tmp_path: Path):
+    """A z51 manual authored against z50 is not a z49→z51 step."""
+    metrics = {
+        "source": "manual",
+        "fixed_slice_id": 50,
+        "overall_status": "ok",
+        "metrics": {
+            "registration_confidence": {"value": 1.0},
+            "translation_x": {"value": -74.0},
+            "translation_y": {"value": -64.0},
+            "z_correlation": {"value": 1.0},
+            "rotation": {"value": -1.0},
+        },
+    }
+    _write_transform_dir(tmp_path, 51, metrics)
+
+    transforms, pairwise, _sources = load_registration_transforms(tmp_path, [49, 51])
+
+    assert transforms[51] is None
+    assert 51 not in pairwise
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +209,22 @@ def test_accumulate_pairwise_translations_boundary_exclusion():
 
     # 10.0 >= 0.95 * 10.0 boundary -> excluded (zeroed).
     assert accumulated[1] == (0.0, 0.0)
+
+
+def test_accumulate_pairwise_translations_keeps_manual_over_boundary():
+    available_ids = [0, 1]
+    all_pairwise_translations = {1: (100.0, 0.0, 0.9)}
+
+    accumulated = accumulate_pairwise_translations(
+        available_ids,
+        registration_transforms={1: (None, None, None, 0.2)},
+        all_pairwise_translations=all_pairwise_translations,
+        max_pairwise_translation=50.0,
+        confidence_weight_translations=True,
+        keep_gap_slice_ids={1},
+    )
+
+    assert accumulated[1] == (100.0, 0.0)
 
 
 def test_accumulate_pairwise_translations_drift_cap_clamps_magnitude():

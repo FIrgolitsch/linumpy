@@ -86,7 +86,7 @@ class TestLoadRegistrationTransforms:
         }
         self._write_transform_dir(tmp_path, metrics)
 
-        transforms, pairwise = mod.load_registration_transforms(tmp_path, [0, 1])
+        transforms, pairwise, _sources = mod.load_registration_transforms(tmp_path, [0, 1])
 
         assert transforms[1] is not None
         _tfm, fixed_z, moving_z, confidence = transforms[1]
@@ -97,7 +97,7 @@ class TestLoadRegistrationTransforms:
 
     def test_missing_transform_dir_returns_none(self, tmp_path: Path):
         mod = _load_module()
-        transforms, pairwise = mod.load_registration_transforms(tmp_path, [0, 1])
+        transforms, pairwise, _sources = mod.load_registration_transforms(tmp_path, [0, 1])
         assert transforms[1] is None
         assert pairwise == {}
 
@@ -105,6 +105,6 @@ class TestLoadRegistrationTransforms:
         mod = _load_module()
         self._write_transform_dir(tmp_path, {"overall_status": "error", "metrics": {}})
 
-        transforms, _pairwise = mod.load_registration_transforms(tmp_path, [0, 1], skip_error_status=True)
+        transforms, _pairwise, _sources = mod.load_registration_transforms(tmp_path, [0, 1], skip_error_status=True)
 
         assert transforms[1] is None

@@ -22,15 +22,27 @@ logger = logging.getLogger(__name__)
 _MANUAL_SOURCES = frozenset({"manual", "manual_refined"})
 
 
-def _transform_source(transform_dir: Path) -> str | None:
+def _manual_gap_record(transform_dir: Path) -> tuple[str | None, int | None]:
+    """Return ``(source, fixed_slice_id)`` from a transform directory."""
     metrics_files = list(transform_dir.glob("pairwise_registration_metrics.json"))
     if not metrics_files:
-        return None
+        return None, None
     try:
-        with Path(metrics_files[0]).open() as f:
-            return json.load(f).get("source")
+        with Path(metrics_files[0]).open() as handle:
+            data = json.load(handle)
     except OSError, json.JSONDecodeError, TypeError, AttributeError:
-        return None
+        return None, None
+    source = data.get("source")
+    partner = data.get("fixed_slice_id")
+    if partner is None:
+        alignment = data.get("manual_alignment")
+        if isinstance(alignment, dict):
+            partner = alignment.get("fixed_slice_id")
+    try:
+        partner_id = int(partner) if partner is not None else None
+    except TypeError, ValueError:
+        partner_id = None
+    return source, partner_id
 
 
 def common_space_xy_policy(
@@ -59,7 +71,7 @@ def load_registration_transforms(
     skip_warning_status: bool = False,
     load_min_zcorr: float = 0.0,
     load_max_rotation: float = 0.0,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict]:
     """
     Load pairwise registration transforms from directory.
 
@@ -93,17 +105,18 @@ def load_registration_transforms(
 
     Returns
     -------
-    tuple[dict, dict]
+        tuple[dict, dict, dict]
         First dict: mapping from slice_id to (transform, fixed_z, moving_z, confidence)
         or None for gated/missing slices.
         Second dict: mapping from slice_id to (tx, ty, zcorr) for ALL slices
         that have metrics, regardless of whether the transform was accepted.
-        This allows translation accumulation to use translations from slices
-        whose transforms were gated out (e.g. bad rotation but valid translation).
+        Third dict: mapping from slice_id to metrics ``source`` (``manual``,
+        ``manual_refined``, or None).
     """
     transforms_dir = Path(transforms_dir)
     transforms = {}
     all_pairwise_translations = {}
+    sources: dict[int, str | None] = {}
     use_metric_gating = load_min_zcorr > 0 and load_max_rotation > 0
 
     for prev_id, slice_id in pairwise(slice_ids):
@@ -120,13 +133,22 @@ def load_registration_transforms(
 
         id_step = int(slice_id) - int(prev_id)
         if id_step > 1:
-            source = _transform_source(matching_dirs[0]) if matching_dirs else None
+            source, partner = _manual_gap_record(matching_dirs[0]) if matching_dirs else (None, None)
             if source not in _MANUAL_SOURCES:
                 logger.warning(
                     "Slice %s: skipping transform (gap-bridge over missing slice(s); prev=%s, id_step=%s)",
                     slice_id,
                     prev_id,
                     id_step,
+                )
+                transforms[slice_id] = None
+                continue
+            if partner is not None and partner != int(prev_id):
+                logger.warning(
+                    "Slice %s: manual was aligned to z%s, not z%s; not applying it across this gap",
+                    slice_id,
+                    partner,
+                    prev_id,
                 )
                 transforms[slice_id] = None
                 continue
@@ -180,6 +202,7 @@ def load_registration_transforms(
                 except KeyError, TypeError, ValueError:
                     metrics_zcorr = 0.0
                 all_pairwise_translations[slice_id] = (metrics_tx, metrics_ty, metrics_zcorr)
+                sources[slice_id] = metrics_data.get("source")
 
                 if use_metric_gating:
                     # Metric-based gating: accept based on z_correlation and rotation
@@ -243,7 +266,7 @@ def load_registration_transforms(
             logger.warning("Could not load transform for slice %s: %s", slice_id, e)
             transforms[slice_id] = None
 
-    return transforms, all_pairwise_translations
+    return transforms, all_pairwise_translations, sources
 
 
 def compute_output_shape(_slice_files: Any, cumsum_px: Any, first_vol_shape: Any) -> Any:
@@ -309,9 +332,9 @@ def accumulate_pairwise_translations(
         Minimum z_correlation required to use a slice's translation.
         0 = use all translations regardless of quality.
     keep_gap_slice_ids : set or None
-        Slice IDs whose translation is a manual correction. Those are
-        accumulated even across a missing-slice gap and are not dropped
-        for low z-correlation.
+        Manual slice IDs. Their translation is accumulated across a
+        missing-slice gap, and is not dropped for low z-correlation,
+        confidence weighting, or the automated boundary cap.
 
     Returns
     -------
@@ -325,6 +348,7 @@ def accumulate_pairwise_translations(
     pairwise_translations = {}
     n_from_metrics = 0
     n_zcorr_skipped = 0
+    manual_ids = keep_gap_slice_ids or set()
     for prev_id, slice_id in pairwise(available_ids):
         id_step = int(slice_id) - int(prev_id)
         if id_step > 1 and slice_id not in (keep_gap_slice_ids or ()):
@@ -344,7 +368,6 @@ def accumulate_pairwise_translations(
             )
         if slice_id in all_pairwise_translations:
             tx, ty, zcorr = all_pairwise_translations[slice_id]
-            manual_ids = keep_gap_slice_ids or set()
             # Apply separate zcorr threshold for translations. Manual
             # corrections are the alignment the user checked; do not drop
             # them because the automated z-correlation is low.
@@ -381,7 +404,7 @@ def accumulate_pairwise_translations(
         for slice_id in list(pairwise_translations.keys()):
             tx, ty = pairwise_translations[slice_id]
             mag = np.sqrt(tx**2 + ty**2)
-            if mag >= boundary:
+            if mag >= boundary and slice_id not in manual_ids:
                 logger.warning(
                     "Slice %s: excluding boundary translation tx=%.1f, ty=%.1f (mag=%.1f >= %.1f)",
                     slice_id,
@@ -404,7 +427,7 @@ def accumulate_pairwise_translations(
         if slice_id in pairwise_translations:
             tx, ty = pairwise_translations[slice_id]
             # Confidence-weighted accumulation: attenuate low-confidence translations
-            if confidence_weight_translations:
+            if confidence_weight_translations and slice_id not in manual_ids:
                 confidence = 1.0
                 if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
                     confidence = registration_transforms[slice_id][3]

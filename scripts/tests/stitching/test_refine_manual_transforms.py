@@ -243,6 +243,18 @@ def test_compose_rigid_2d_reduces_to_sum_when_centres_match():
     assert rot == pytest_approx(man_rot + delta_rot)
 
 
+def test_folding_identity_fixed_keeps_manual_then_delta():
+    """inv(I) ∘ delta ∘ I ∘ manual equals manual then delta."""
+    module = _load_script_module()
+    center = (40.0, 50.0)
+    man = (3.0, -2.0, 1.5, center[0], center[1])
+    delta = (0.4, -0.2, 0.1)
+    chained = module._compose_rigid_2d(*man, 0.0, 0.0, 0.0, center[0], center[1])
+    with_delta = module._compose_rigid_2d(*chained, center[0], center[1], *delta, center[0], center[1])
+    direct = module._compose_rigid_2d(*man, *delta, center[0], center[1])
+    assert np.allclose(with_delta, direct, atol=1e-6)
+
+
 # Local approx helper to avoid importing pytest.approx at module scope.
 def pytest_approx(expected, rel=1e-6, abs_=1e-6):
     import pytest

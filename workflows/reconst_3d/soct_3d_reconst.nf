@@ -1162,6 +1162,7 @@ process refine_manual_transforms {
     def manual_fp = Helpers.manualTransformsFingerprint(params)
     """
     # manual_transforms_fingerprint ${manual_fp}
+    # refine_against_corrected_fixed 1
     dirname=\$(basename ${moving_vol} .ome.zarr)
     linum-refine-manual-transforms ${fixed_vol} ${moving_vol} auto_transforms \$dirname \
         --max_translation_px ${params.refine_max_translation_px} \
@@ -1283,6 +1284,7 @@ process stack {
     # stack_keep_cut_face 1
     # restore_accum_pairwise_xy 1
     # manual_gap_chain 1
+    # manual_euler_one_rigid 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

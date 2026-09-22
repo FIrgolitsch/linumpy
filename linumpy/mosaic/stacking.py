@@ -324,6 +324,65 @@ def apply_transform_to_volume(
     return result
 
 
+def rigid_euler_pad(transform: Any, ny: int, nx: int) -> tuple[int, int, float, float, float]:
+    """Return ``(pad_x, pad_y, angle_rad, tx, ty)`` for a saved Euler."""
+    params = list(transform.GetParameters())
+    if transform.GetDimension() == 3 and len(params) >= 5:
+        angle = float(params[2])
+        tx = float(params[3])
+        ty = float(params[4])
+    else:
+        angle = float(params[0]) if params else 0.0
+        tx = float(params[1]) if len(params) > 1 else 0.0
+        ty = float(params[2]) if len(params) > 2 else 0.0
+    diagonal = float(np.hypot(ny, nx))
+    rot_pad = int(np.ceil(diagonal * abs(np.sin(angle)))) + 2
+    pad_x = int(np.ceil(abs(tx))) + rot_pad
+    pad_y = int(np.ceil(abs(ty))) + rot_pad
+    return pad_x, pad_y, angle, tx, ty
+
+
+def apply_rigid_euler_padded(
+    vol: np.ndarray,
+    transform: Any,
+) -> tuple[np.ndarray, int, int]:
+    """Resample a volume with the saved Euler, padding so the translation is not clipped.
+
+    Returns ``(padded_volume, pad_x, pad_y)``. The original voxel ``(0, 0)``
+    lands at ``(pad_y, pad_x)`` in the padded array when the Euler is identity,
+    so the caller subtracts ``(pad_x, pad_y)`` from the canvas origin.
+    """
+    import SimpleITK as sitk
+
+    pad_x, pad_y, angle, tx, ty = rigid_euler_pad(transform, int(vol.shape[1]), int(vol.shape[2]))
+    if transform.GetDimension() == 3:
+        center = transform.GetCenter()
+        center_2d = [float(center[0]), float(center[1])]
+    else:
+        center_2d = [vol.shape[2] / 2.0, vol.shape[1] / 2.0]
+
+    tfm_2d = sitk.Euler2DTransform()
+    tfm_2d.SetCenter(center_2d)
+    tfm_2d.SetAngle(angle)
+    tfm_2d.SetTranslation([tx, ty])
+
+    ny, nx = int(vol.shape[1]), int(vol.shape[2])
+    ref = sitk.Image([nx + 2 * pad_x, ny + 2 * pad_y], sitk.sitkFloat32)
+    ref.SetOrigin((-float(pad_x), -float(pad_y)))
+    ref.SetSpacing((1.0, 1.0))
+
+    padded = np.zeros((vol.shape[0], ny + 2 * pad_y, nx + 2 * pad_x), dtype=np.float32)
+    for z in range(vol.shape[0]):
+        sitk_img = sitk.GetImageFromArray(vol[z].astype(np.float32))
+        resampler = sitk.ResampleImageFilter()
+        resampler.SetReferenceImage(ref)
+        resampler.SetTransform(tfm_2d)
+        resampler.SetInterpolator(sitk.sitkLinear)
+        resampler.SetDefaultPixelValue(0.0)
+        padded[z] = sitk.GetArrayFromImage(resampler.Execute(sitk_img))
+    return padded, pad_x, pad_y
+
+
 def apply_xy_shift(vol: np.ndarray, dx_px: float, dy_px: float, output_shape: tuple[int, int]) -> tuple:
     """Compute destination region for placing a shifted volume.
 

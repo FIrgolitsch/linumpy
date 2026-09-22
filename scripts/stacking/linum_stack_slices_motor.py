@@ -32,6 +32,7 @@ from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
+    apply_rigid_euler_padded,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
@@ -43,6 +44,7 @@ from linumpy.mosaic.stacking import (
     find_z_overlap,
     overlap_z_gain_curve,
     paste_tissue,
+    rigid_euler_pad,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -454,11 +456,12 @@ def main() -> None:
     # Load registration transforms if provided
     registration_transforms = {}
     all_pairwise_translations = {}
+    transform_sources: dict[int, str | None] = {}
     if args.transforms_dir:
         transforms_dir = Path(args.transforms_dir)
         if transforms_dir.exists():
             logger.info("Loading registration transforms from %s", transforms_dir)
-            registration_transforms, all_pairwise_translations = load_registration_transforms(
+            registration_transforms, all_pairwise_translations, transform_sources = load_registration_transforms(
                 transforms_dir,
                 available_ids,
                 skip_error_status=args.skip_error_transforms,
@@ -498,7 +501,7 @@ def main() -> None:
         manual_dir = Path(args.manual_transforms_dir)
         if manual_dir.exists():
             logger.info("Loading manual transforms from %s", manual_dir)
-            manual_transforms, manual_pairwise_translations = load_registration_transforms(
+            manual_transforms, manual_pairwise_translations, manual_sources = load_registration_transforms(
                 manual_dir,
                 available_ids,
                 skip_error_status=False,
@@ -508,17 +511,27 @@ def main() -> None:
             )
             n_manual = 0
             for sid, tfm in manual_transforms.items():
-                if tfm is not None:
-                    registration_transforms[sid] = tfm
-                    manual_override_ids.add(sid)
-                    n_manual += 1
-                    logger.info("  Manual override: slice z%d", sid)
+                if tfm is None:
+                    continue
+                # Refined outputs already carry source manual / manual_refined.
+                # Do not replace those with the raw manual. Fill gaps (z51)
+                # and override automated pairs.
+                if transform_sources.get(sid) in ("manual", "manual_refined"):
+                    continue
+                registration_transforms[sid] = tfm
+                transform_sources[sid] = manual_sources.get(sid) or "manual"
+                manual_override_ids.add(sid)
+                n_manual += 1
+                logger.info("  Manual override: slice z%d", sid)
             for sid, pairwise in manual_pairwise_translations.items():
-                all_pairwise_translations[sid] = pairwise
+                if sid in manual_override_ids:
+                    all_pairwise_translations[sid] = pairwise
             if n_manual > 0:
                 logger.info("Applied %s manual transform overrides", n_manual)
         else:
             logger.warning("Manual transforms directory not found: %s", manual_dir)
+
+    manual_slice_ids = {sid for sid, src in transform_sources.items() if src in ("manual", "manual_refined")}
 
     # Accumulate translations cumulatively if requested
     # Translations are moved from the transforms into cumsum_px so that:
@@ -540,7 +553,7 @@ def main() -> None:
             translation_smooth_sigma=args.translation_smooth_sigma,
             max_cumulative_drift_px=args.max_cumulative_drift_px,
             translation_min_zcorr=args.translation_min_zcorr,
-            keep_gap_slice_ids=manual_override_ids,
+            keep_gap_slice_ids=manual_slice_ids,
         )
 
         # Apply accumulated (and optionally smoothed/capped) offsets to cumsum_px.
@@ -550,6 +563,18 @@ def main() -> None:
             ox, oy = accumulated_offsets[sid]
             base_dx, base_dy = motor_baseline[sid]
             cumsum_px[sid] = (base_dx - ox, base_dy - oy)
+
+        # A manual Euler is resampled whole (center, angle, translation).
+        # Take this slice's own translation back off the canvas so it is not
+        # applied twice; the canvas keeps the running sum through the
+        # previous slice, which is what lands this slice on that neighbour.
+        if args.translation_smooth_sigma <= 0:
+            for sid in manual_slice_ids:
+                if sid not in all_pairwise_translations or sid not in cumsum_px:
+                    continue
+                own_tx, own_ty, _zcorr = all_pairwise_translations[sid]
+                dx, dy = cumsum_px[sid]
+                cumsum_px[sid] = (dx + own_tx, dy + own_ty)
 
         # Center accumulated offsets around the middle slice to prevent
         # asymmetric drift expanding the canvas in one direction.
@@ -576,7 +601,9 @@ def main() -> None:
     smoothed_rotations = {}
     if args.smooth_window > 0 and registration_transforms:
         ids_with_tfm = [
-            sid for sid in available_ids if sid in registration_transforms and registration_transforms[sid] is not None
+            sid
+            for sid in available_ids
+            if sid in registration_transforms and registration_transforms[sid] is not None and sid not in manual_slice_ids
         ]
         if ids_with_tfm:
             angle_ids = sorted(ids_with_tfm)
@@ -866,6 +893,33 @@ def main() -> None:
     overlaps = [m["overlap_voxels"] for m in z_matches]
     logger.info("Z-overlap: mean=%.1f, std=%.1f voxels", np.mean(overlaps), np.std(overlaps))
 
+    # Manual Eulers are padded. Shift each canvas origin by that pad and
+    # grow the output so the translated tissue is not clipped.
+    manual_pads: dict[int, tuple[int, int]] = {}
+    for sid in manual_slice_ids:
+        tfm_tuple = registration_transforms.get(sid)
+        if tfm_tuple is None or sid not in cumsum_px:
+            continue
+        pad_x, pad_y, _angle, _tx, _ty = rigid_euler_pad(tfm_tuple[0], int(first_vol.shape[1]), int(first_vol.shape[2]))
+        manual_pads[sid] = (pad_x, pad_y)
+        dx, dy = cumsum_px[sid]
+        cumsum_px[sid] = (dx - pad_x, dy - pad_y)
+    if manual_pads:
+        min_x = min(dx for dx, _dy in cumsum_px.values())
+        min_y = min(dy for _dx, dy in cumsum_px.values())
+        shift_x = min(0.0, min_x)
+        shift_y = min(0.0, min_y)
+        cumsum_px = {sid: (dx - shift_x, dy - shift_y) for sid, (dx, dy) in cumsum_px.items()}
+        max_x = 0.0
+        max_y = 0.0
+        for sid, (dx, dy) in cumsum_px.items():
+            pad_x, pad_y = manual_pads.get(sid, (0, 0))
+            max_x = max(max_x, dx + first_vol.shape[2] + 2 * pad_x)
+            max_y = max(max_y, dy + first_vol.shape[1] + 2 * pad_y)
+        out_nx = int(np.ceil(max_x))
+        out_ny = int(np.ceil(max_y))
+        logger.info("Expanded canvas for manual Euler padding: %s x %s", out_ny, out_nx)
+
     # Second pass: assemble volume
     logger.info("Assembling volume: %s x %s x %s", total_z, out_ny, out_nx)
     output_shape = (total_z, out_ny, out_nx)
@@ -936,9 +990,11 @@ def main() -> None:
         # Apply registration transform (rotation/small translation refinement) if available
         if apply_pairwise_rigid and slice_id in registration_transforms and registration_transforms[slice_id] is not None:
             transform, _, _, confidence = registration_transforms[slice_id]
-            # Adaptive degradation: skip, force rotation-only, or apply full transform
-            # based on the per-registration confidence score.
-            if args.confidence_low is not None and confidence < args.confidence_low:
+            is_manual = slice_id in manual_slice_ids
+            if is_manual:
+                vol, _pad_x, _pad_y = apply_rigid_euler_padded(vol, transform)
+                logger.debug("Applied manual Euler to slice %s", slice_id)
+            elif args.confidence_low is not None and confidence < args.confidence_low:
                 logger.warning(
                     "Slice %s: skipping transform (confidence=%.2f < confidence_low=%.2f)",
                     slice_id,
@@ -956,7 +1012,7 @@ def main() -> None:
                     )
                 else:
                     use_rotation_only = default_rotation_only
-                override_rot = smoothed_rotations.get(slice_id)  # None if no smoothing
+                override_rot = smoothed_rotations.get(slice_id)
                 vol = apply_transform_to_volume(
                     vol,
                     transform,
@@ -1018,7 +1074,7 @@ def main() -> None:
 
                 # Keep-if-better XY residual on overlap AIPs. Shift the whole
                 # incoming volume so unique-Z planes move with the blend zone.
-                if args.blend_refinement_px > 0:
+                if args.blend_refinement_px > 0 and slice_id not in manual_slice_ids:
                     dy, dx, ref_mag = estimate_z_blend_xy_shift(
                         existing,
                         moving_overlap,
