@@ -110,7 +110,7 @@ def test_apply_rigid_euler_padded_shifts_without_clipping():
 def test_seam_overlap_gain_matches_medians():
     existing = np.full((4, 32, 32), 2.0, dtype=np.float32)
     moving = np.full((4, 32, 32), 1.0, dtype=np.float32)
-    assert seam_overlap_gain(existing, moving) == pytest.approx(2.0)
+    assert seam_overlap_gain(existing, moving) == pytest.approx(1.4)
 
 
 def test_seam_overlap_gain_is_one_without_shared_tissue():

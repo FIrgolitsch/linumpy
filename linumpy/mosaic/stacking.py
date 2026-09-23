@@ -658,8 +658,8 @@ def seam_overlap_gain(
     existing: np.ndarray,
     moving: np.ndarray,
     tissue_threshold: float = 0.01,
-    gain_lo: float = 0.4,
-    gain_hi: float = 2.5,
+    gain_lo: float = 0.7,
+    gain_hi: float = 1.4,
 ) -> float:
     """Scale that matches incoming overlap tissue to the slice already in the stack.
 

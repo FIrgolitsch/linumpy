@@ -145,6 +145,17 @@ def download_template_ras_aligned(resolution: int, cache: bool = True, cache_dir
     return vol
 
 
+def _rigid_yaw_exceeds(
+    initial_parameters: Sequence,
+    final_parameters: Sequence,
+    max_delta_deg: float = 40.0,
+) -> bool:
+    """Return whether any Euler angle left the start by more than ``max_delta_deg``."""
+    initial = np.degrees(np.array(initial_parameters[:3], dtype=float))
+    final = np.degrees(np.array(final_parameters[:3], dtype=float))
+    return bool(np.max(np.abs(final - initial)) > max_delta_deg)
+
+
 def register_3d_rigid_to_allen(
     moving_image: np.ndarray,
     moving_spacing: tuple,
@@ -457,8 +468,24 @@ def register_3d_rigid_to_allen(
 
         registration_method.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(registration_method))
 
+    # Execute may update the initial transform in place. Keep a copy so a
+    # runaway yaw can be discarded: a ~90° turn about superior swaps the
+    # coronal and sagittal planes and rotates the axial view.
+    initial_parameters = list(initial_transform.GetParameters())
+    initial_fixed_parameters = list(initial_transform.GetFixedParameters())
+
     # Execute registration
     final_transform = registration_method.Execute(fixed_image, moving_image_sitk)
+
+    if _rigid_yaw_exceeds(initial_parameters, list(final_transform.GetParameters())):
+        if verbose:
+            print(
+                "Rejecting registration: rotation left the initial orientation "
+                "by more than 40°. Keeping the orientation-only pose."
+            )
+        final_transform = sitk.Euler3DTransform()
+        final_transform.SetFixedParameters(initial_fixed_parameters)
+        final_transform.SetParameters(initial_parameters)
 
     stop_condition = registration_method.GetOptimizerStopConditionDescription()
     error = registration_method.GetMetricValue()

@@ -1286,7 +1286,7 @@ process stack {
     # manual_gap_chain 1
     # manual_euler_one_rigid 1
     # seam_snap_8 1
-    # seam_gain_wide 1
+    # seam_gain_clamped 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
@@ -1396,6 +1396,7 @@ process align_to_ras {
     def orientation_preview_arg = params.ras_orientation_preview ? "--orientation-preview ${subject_name}_ras_orientation_preview.png" : ""
     def ras_pyramid_opts = Helpers.pyramidArgs(params, '--n-levels')
     """
+    # ras_reject_yaw 1
     linum-align-to-ras ${stacked_zarr} ${subject_name}_ras.ome.zarr \
         --allen-resolution ${params.allen_resolution} \
         --metric ${params.allen_metric} \

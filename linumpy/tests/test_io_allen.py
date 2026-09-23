@@ -235,9 +235,9 @@ class TestRealAllenTemplateOrientation:
         assert left == pytest.approx(right, rel=0.10), f"L/R asymmetry too large: L={left} R={right}"
 
 
-# ---------------------------------------------------------------------------
-# register_3d_rigid_to_allen -- end-to-end self-registration
-# ---------------------------------------------------------------------------
+def test_rigid_yaw_exceeds_detects_plane_swap():
+    assert allen._rigid_yaw_exceeds([0, 0, 0, 0, 0, 0], [0, 0, np.deg2rad(102), 0, 0, 0])
+    assert not allen._rigid_yaw_exceeds([0, 0, 0, 0, 0, 0], [0, 0, np.deg2rad(12), 1, 0, 0])
 
 
 def _make_synthetic_brain(shape=(24, 24, 24), spacing=(0.2, 0.2, 0.2)):
