@@ -477,6 +477,23 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
     if np.any(moving_only):
         blended[moving_only] = moving_region[moving_only]
 
+    # A one-sided rim is a hard line: the other slice's tissue is a few
+    # pixels away, so the Z Hann never sees it. Mix that rim with the
+    # nearby tissue from the other slice. Interior overlap stays sharp.
+    if np.any(fixed_only) or np.any(moving_only):
+        from scipy.ndimage import gaussian_filter
+
+        sigma = (0.0, 1.5, 1.5)
+        fixed_weight = gaussian_filter(fixed_valid.astype(np.float32), sigma=sigma)
+        moving_weight = gaussian_filter(moving_valid.astype(np.float32), sigma=sigma)
+        fixed_mean = gaussian_filter(np.where(fixed_valid, fixed_region, 0.0).astype(np.float32), sigma=sigma)
+        moving_mean = gaussian_filter(np.where(moving_valid, moving_region, 0.0).astype(np.float32), sigma=sigma)
+        fixed_mean = fixed_mean / np.maximum(fixed_weight, 1e-6)
+        moving_mean = moving_mean / np.maximum(moving_weight, 1e-6)
+        rim = (fixed_weight > 0.05) & (moving_weight > 0.05) & ~both_valid
+        if np.any(rim):
+            blended[rim] = ((1.0 - alphas) * fixed_mean + alphas * moving_mean)[rim]
+
     return blended
 
 

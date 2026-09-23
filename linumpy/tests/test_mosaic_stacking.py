@@ -171,6 +171,19 @@ def test_blend_overlap_z_single_slice():
     assert result.shape == (1, 8, 8)
 
 
+def test_blend_overlap_z_softens_a_shifted_edge():
+    """A two-pixel lateral offset is feathered instead of left as a hard rim."""
+    fixed = np.zeros((4, 32, 32), dtype=np.float32)
+    moving = np.zeros((4, 32, 32), dtype=np.float32)
+    fixed[:, 8:24, 8:20] = 2.0
+    moving[:, 8:24, 12:24] = 4.0
+    result = blend_overlap_z(fixed, moving)
+    # Column 10 is fixed-only, two pixels from the moving slab. Feathering
+    # pulls moving intensity in, so it is no longer a flat 2.
+    gap = result[2, 16, 10]
+    assert gap > 2.05
+
+
 def test_blend_overlap_z_does_not_mix_tissue_with_agarose():
     """Dim agarose must not Hann-average with tissue."""
     fixed = np.ones((6, 8, 8), dtype=np.float32)
