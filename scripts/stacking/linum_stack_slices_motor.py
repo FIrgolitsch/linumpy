@@ -51,9 +51,11 @@ from linumpy.mosaic.stacking import (
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
+    clear_euler_translation,
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
+    zero_if_over,
 )
 from linumpy.stack_alignment.units import center_shifts, convert_shifts_to_pixels
 
@@ -104,6 +106,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "failures (hitting the optimizer boundary) and excluded from\n"
         "accumulation. Set to registration_max_translation. 0 = disabled.\n"
         "[%(default)s]",
+    )
+    p.add_argument(
+        "--max_slice_step_px",
+        type=float,
+        default=0,
+        help="Drop a pairwise slab translation, including a manual, when its\n"
+        "magnitude exceeds this (pixels). The Euler translation is cleared\n"
+        "with it so the slice is not still shifted at resample time. 0 =\n"
+        "disabled. This does not change the Z blend. [%(default)s]",
     )
     p.add_argument(
         "--confidence_weight_translations",
@@ -541,6 +552,30 @@ def main() -> None:
             logger.warning("Manual transforms directory not found: %s", manual_dir)
 
     manual_slice_ids = {sid for sid, src in transform_sources.items() if src in ("manual", "manual_refined")}
+
+    # A step this large is a translation gap (z42→z43 is ~160 px). It is not
+    # applied to the slab. Smaller steps stay; the Z blend does not use this.
+    if args.max_slice_step_px > 0:
+        n_dropped = 0
+        for sid, (tx, ty, zcorr) in list(all_pairwise_translations.items()):
+            kept_tx, kept_ty = zero_if_over(tx, ty, args.max_slice_step_px)
+            if (kept_tx, kept_ty) == (float(tx), float(ty)):
+                continue
+            logger.warning(
+                "Slice %s: not applying slab translation tx=%.1f ty=%.1f (mag %.1f > %.1f px)",
+                sid,
+                tx,
+                ty,
+                float(np.hypot(tx, ty)),
+                args.max_slice_step_px,
+            )
+            all_pairwise_translations[sid] = (kept_tx, kept_ty, zcorr)
+            tfm_tuple = registration_transforms.get(sid)
+            if tfm_tuple is not None:
+                clear_euler_translation(tfm_tuple[0])
+            n_dropped += 1
+        if n_dropped:
+            logger.info("Dropped %s slab translations over %.1f px", n_dropped, args.max_slice_step_px)
 
     # Accumulate translations cumulatively if requested
     # Translations are moved from the transforms into cumsum_px so that:

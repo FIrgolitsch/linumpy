@@ -9,9 +9,11 @@ import SimpleITK as sitk
 
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
+    clear_euler_translation,
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
+    zero_if_over,
 )
 
 # ---------------------------------------------------------------------------
@@ -305,6 +307,24 @@ def test_common_space_xy_policy_accumulates_on_common_space():
     assert accumulate is True
     assert apply_tfm is True
     assert rotation_only is True
+
+
+def test_zero_if_over_drops_the_z42_step_and_keeps_a_small_one():
+    assert zero_if_over(-56.3, -154.6, 140) == (0.0, 0.0)
+    assert zero_if_over(-114.3, -114.2, 140) == (0.0, 0.0)
+    assert zero_if_over(-5.0, -3.2, 140) == (-5.0, -3.2)
+    assert zero_if_over(-114.3, -114.2, 0) == (-114.3, -114.2)
+
+
+def test_clear_euler_translation_keeps_angle():
+    tfm = sitk.Euler3DTransform()
+    tfm.SetRotation(0.0, 0.0, -0.002)
+    tfm.SetTranslation((-114.3, -114.2, 0.0))
+    clear_euler_translation(tfm)
+    params = list(tfm.GetParameters())
+    assert params[3] == 0.0
+    assert params[4] == 0.0
+    assert abs(params[2] - (-0.002)) < 1e-9
 
 
 def test_common_space_xy_policy_accumulates_without_common_space():

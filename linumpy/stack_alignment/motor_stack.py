@@ -22,6 +22,32 @@ logger = logging.getLogger(__name__)
 _MANUAL_SOURCES = frozenset({"manual", "manual_refined"})
 
 
+def zero_if_over(tx: float, ty: float, max_px: float) -> tuple[float, float]:
+    """Drop a translation whose magnitude exceeds ``max_px``.
+
+    ``max_px <= 0`` leaves the translation unchanged. This is a placement
+    limit, not a blend.
+    """
+    tx_f, ty_f = float(tx), float(ty)
+    if max_px <= 0:
+        return tx_f, ty_f
+    if float(np.hypot(tx_f, ty_f)) > max_px:
+        return 0.0, 0.0
+    return tx_f, ty_f
+
+
+def clear_euler_translation(transform: Any) -> None:
+    """Zero the in-plane translation of a saved Euler. Angle and center stay."""
+    params = [float(v) for v in transform.GetParameters()]
+    if transform.GetDimension() == 3 and len(params) >= 5:
+        params[3] = 0.0
+        params[4] = 0.0
+    elif len(params) >= 3:
+        params[1] = 0.0
+        params[2] = 0.0
+    transform.SetParameters(params)
+
+
 def _manual_gap_record(transform_dir: Path) -> tuple[str | None, int | None]:
     """Return ``(source, fixed_slice_id)`` from a transform directory."""
     metrics_files = list(transform_dir.glob("pairwise_registration_metrics.json"))
