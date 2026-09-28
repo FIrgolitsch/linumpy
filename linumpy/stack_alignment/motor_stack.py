@@ -229,8 +229,10 @@ def load_registration_transforms(
                     metrics_zcorr = 0.0
                 all_pairwise_translations[slice_id] = (metrics_tx, metrics_ty, metrics_zcorr)
                 sources[slice_id] = metrics_data.get("source")
-
-                if use_metric_gating:
+                # A manual was checked in the align tool. Low z_correlation
+                # is not a reason to drop it (z43 is source manual, zcorr
+                # 0.207, and the gate was deleting that Euler).
+                if sources[slice_id] not in _MANUAL_SOURCES and use_metric_gating:
                     # Metric-based gating: accept based on z_correlation and rotation
                     try:
                         zcorr = float(metrics_data["metrics"]["z_correlation"]["value"])
@@ -258,7 +260,7 @@ def load_registration_transforms(
                         rot_deg,
                         status,
                     )
-                else:
+                elif sources[slice_id] not in _MANUAL_SOURCES:
                     should_skip = (status == "error" and skip_error_status) or (status == "warning" and skip_warning_status)
                     if should_skip:
                         logger.warning(

@@ -71,6 +71,32 @@ def test_load_registration_transforms_basic(tmp_path: Path):
     assert pairwise[1] == (2.0, -1.0, 0.6)
 
 
+def test_load_registration_transforms_keeps_manual_below_zcorr_gate(tmp_path: Path):
+    """z43 is a checked manual with zcorr 0.207. The 0.3 gate must not drop it."""
+    metrics = {
+        "source": "manual",
+        "overall_status": "ok",
+        "metrics": {
+            "registration_confidence": {"value": 1.0},
+            "translation_x": {"value": -115.5},
+            "translation_y": {"value": -114.3},
+            "z_correlation": {"value": 0.207},
+            "rotation": {"value": 0.06},
+        },
+    }
+    _write_transform_dir(tmp_path, 43, metrics)
+
+    transforms, pairwise, _sources = load_registration_transforms(
+        tmp_path,
+        [42, 43],
+        load_min_zcorr=0.3,
+        load_max_rotation=8.0,
+    )
+
+    assert transforms[43] is not None
+    assert abs(pairwise[43][0] - (-115.5)) < 1e-6
+
+
 def test_load_registration_transforms_metric_gating_rejects_low_zcorr(tmp_path: Path):
     metrics = {
         "overall_status": "ok",
