@@ -1287,7 +1287,7 @@ process stack {
     # manual_gap_chain 1
     # manual_euler_one_rigid 1
     # seam_snap_8 1
-    # seam_feather 1
+    # seam_feather_8px 1
     # drop_slab_step_over_140 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
