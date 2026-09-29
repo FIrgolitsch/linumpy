@@ -33,7 +33,6 @@ from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
-    apply_seam_gain,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
@@ -43,10 +42,10 @@ from linumpy.mosaic.stacking import (
     estimate_z_blend_xy_shift,
     expected_z_overlap,
     find_z_overlap,
+    flatten_slice_z_profile,
     overlap_z_gain_curve,
     paste_tissue,
     rigid_euler_pad,
-    seam_overlap_gain,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -275,6 +274,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
+    )
+    p.add_argument(
+        "--flatten_z_profile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Scale each slice along Z so its tissue median is flat.\n"
+        "Removes the bright stripe each cut face paints into a coronal view.\n"
+        "Within-plane contrast is kept. [%(default)s]",
     )
     p.add_argument(
         "--blend_tissue_threshold",
@@ -1002,6 +1009,8 @@ def main() -> None:
     first_dx, first_dy = cumsum_px[first_id]
     first_vol_f32 = first_vol.astype(np.float32)
     first_vol_f32 = _apply_overlap_z_gain_to_slice(first_vol_f32, first_id)
+    if args.flatten_z_profile:
+        first_vol_f32 = flatten_slice_z_profile(first_vol_f32, tissue_threshold=args.blend_tissue_threshold)
     shifted_first, first_coords = apply_xy_shift(first_vol_f32, first_dx, first_dy, (out_ny, out_nx))
 
     if shifted_first is not None:
@@ -1030,6 +1039,8 @@ def main() -> None:
         # After crop, z=0 is the interface with the previous slab — keep gain=1
         # there and boost toward the next slice's top in the Z-end overlap.
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
+        if args.flatten_z_profile:
+            vol = flatten_slice_z_profile(vol, tissue_threshold=args.blend_tissue_threshold)
 
         # Apply registration transform (rotation/small translation refinement) if available
         if apply_pairwise_rigid and slice_id in registration_transforms and registration_transforms[slice_id] is not None:
@@ -1111,16 +1122,9 @@ def main() -> None:
                 existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
-                # Do not scale the incoming slab to the previous overlap median.
-                # That match is chained (each slice is dimmed to the last dim
-                # face) and collapses contrast along Z. Hann already ramps
-                # previous-deep → incoming-top on both-tissue voxels.
-
-                gain = seam_overlap_gain(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
-                if abs(gain - 1.0) >= 0.02:
-                    shifted = apply_seam_gain(shifted, s_blend_start, overlap_depth, gain)
-                    moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
-                    logger.info("Slice %s: seam gain %.3f", slice_id, gain)
+                # No per-seam gain. It sat on the 0.7 floor for almost every
+                # slice and painted a dark line at each cut. The Z profile
+                # flatten above removes that stripe; Hann mixes the overlap.
 
                 # A few pixels of cut-face residual, including on manuals.
                 # The manuals set the slab; this only closes an edge the Hann

@@ -672,6 +672,34 @@ def estimate_z_blend_xy_shift(
     return dy, dx, magnitude
 
 
+def flatten_slice_z_profile(
+    vol: np.ndarray,
+    tissue_threshold: float = 0.01,
+    gain_lo: float = 0.65,
+    gain_hi: float = 1.55,
+) -> np.ndarray:
+    """Remove the bright-to-dark stripe along a slice's depth.
+
+    Each plane is scaled so its tissue median matches the slice median.
+    Within a plane, contrast is unchanged. The scale is clamped.
+    """
+    nz = int(vol.shape[0])
+    if nz < 3:
+        return vol
+    med = np.empty(nz, dtype=np.float64)
+    for z in range(nz):
+        tissue = vol[z] > tissue_threshold
+        med[z] = float(np.median(vol[z][tissue])) if int(np.sum(tissue)) > 50 else np.nan
+    good = np.isfinite(med)
+    if int(np.sum(good)) < 3:
+        return vol
+    idx = np.arange(nz)
+    filled = np.interp(idx, idx[good], med[good])
+    target = float(np.median(filled))
+    gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
+    return (vol * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
+
+
 def seam_overlap_gain(
     existing: np.ndarray,
     moving: np.ndarray,

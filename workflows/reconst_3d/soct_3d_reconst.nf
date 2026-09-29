@@ -1269,11 +1269,12 @@ process stack {
     // Explicit --blend/--no-blend so a subject-config false cannot cache-hit a
     // hashed task that still mixed overlap (focused_franklin hit d5/49159b).
     def blend_flag = params.stack_blend_enabled ? " --blend" : " --no-blend"
+    def flatten_flag = " --flatten_z_profile"
     // In the hashed script block so a default-only Python change cannot cache-hit.
     def blend_tissue_flag = " --blend_tissue_threshold ${params.stack_overlap_z_gain_threshold}"
     def blend_refine_flag = " --blend_refinement_px ${params.blend_refinement_px} --blend_refinement_ncc_min_improve ${params.blend_refinement_ncc_min_improve} --blend_refinement_ncc_min_absolute ${params.blend_refinement_ncc_min_absolute ?: 0.2}"
     def slice_step_flag = " --max_slice_step_px ${params.stack_max_slice_step_px}"
-    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag
+    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag + flatten_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def manual_fp = Helpers.manualTransformsFingerprint(params)
@@ -1289,6 +1290,8 @@ process stack {
     # seam_snap_8 1
     # seam_feather_8px 1
     # keep_manual_low_zcorr 1
+    # flatten_slice_z 1
+    # preview_tissue_center 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

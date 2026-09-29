@@ -411,8 +411,17 @@ def save_annotated_views(
     if slice_ids is not None and n_input_slices is None:
         n_input_slices = len(slice_ids)
 
-    x_slice = x_slice if x_slice is not None else n_rows // 2
-    y_slice = y_slice if y_slice is not None else n_cols // 2
+    # The box center can sit on the edge of the brain and open a false gap.
+    # Cut through the tissue instead.
+    if x_slice is None or y_slice is None:
+        mass_y = np.sum(np.asarray(image) > 0, axis=(0, 2))
+        mass_x = np.sum(np.asarray(image) > 0, axis=(0, 1))
+        if x_slice is None:
+            total = float(np.sum(mass_y))
+            x_slice = int(np.sum(np.arange(n_rows) * mass_y) / total) if total > 0 else n_rows // 2
+        if y_slice is None:
+            total = float(np.sum(mass_x))
+            y_slice = int(np.sum(np.arange(n_cols) * mass_x) / total) if total > 0 else n_cols // 2
 
     # Derive panel titles and axis labels from orientation when available.
     orient = _panel_labels_from_orientation(orientation) if orientation else None

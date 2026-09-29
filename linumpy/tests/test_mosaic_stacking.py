@@ -17,6 +17,7 @@ from linumpy.mosaic.stacking import (
     extract_overlap_rois,
     find_z_overlap,
     fit_overlap_log_ratio,
+    flatten_slice_z_profile,
     overlap_z_gain_curve,
     overlap_z_profiles,
     paste_tissue,
@@ -169,6 +170,13 @@ def test_blend_overlap_z_single_slice():
     moving = np.zeros((1, 8, 8), dtype=np.float32)
     result = blend_overlap_z(fixed, moving)
     assert result.shape == (1, 8, 8)
+
+
+def test_flatten_slice_z_profile_removes_the_depth_hump():
+    vol = np.full((8, 20, 20), 0.24, dtype=np.float32)
+    vol[2:5] = 0.33
+    out = flatten_slice_z_profile(vol)
+    assert abs(float(np.median(out[3])) - float(np.median(out[0]))) < 0.02
 
 
 def test_blend_overlap_z_softens_a_shifted_edge():
