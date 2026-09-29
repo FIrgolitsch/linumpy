@@ -43,6 +43,7 @@ from linumpy.mosaic.stacking import (
     expected_z_overlap,
     find_z_overlap,
     flatten_slice_z_profile,
+    inplane_output_point,
     overlap_z_gain_curve,
     paste_tissue,
     rigid_euler_pad,
@@ -54,6 +55,7 @@ from linumpy.stack_alignment.motor_stack import (
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
+    outline_step_corrections,
     zero_if_over,
 )
 from linumpy.stack_alignment.units import center_shifts, convert_shifts_to_pixels
@@ -114,6 +116,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "magnitude exceeds this (pixels). The Euler translation is cleared\n"
         "with it so the slice is not still shifted at resample time. 0 =\n"
         "disabled. This does not change the Z blend. [%(default)s]",
+    )
+    p.add_argument(
+        "--max_outline_step_px",
+        type=float,
+        default=36,
+        help="Cap the tissue-outline step between neighbouring slices (pixels).\n"
+        "A step already under this stays, so a 25 px pair is not opened when\n"
+        "the 70 px steps on either side are pulled in. 0 = disabled. [%(default)s]",
     )
     p.add_argument(
         "--confidence_weight_translations",
@@ -395,6 +405,37 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     add_overwrite_arg(p)
     return p
+
+
+def _outline_world_xy(
+    path: Path,
+    canvas: tuple[float, float],
+    pad: tuple[int, int],
+    tfm_tuple: tuple | None,
+    is_manual: bool,
+) -> tuple[float, float] | None:
+    """Tissue centroid in canvas coordinates, after the Euler the stack will apply."""
+    coarse, _res_c = read_omezarr(path, level=2)
+    arr = np.asarray(coarse[:])
+    if arr.ndim != 3 or arr.shape[0] == 0:
+        return None
+    aip = arr.mean(axis=0)
+    tissue = aip > 0.05
+    if int(np.sum(tissue)) < 30:
+        return None
+    rows, cols = np.nonzero(tissue)
+    full, _res_0 = read_omezarr(path, level=0)
+    scale_x = float(full.shape[2]) / float(arr.shape[2])
+    scale_y = float(full.shape[1]) / float(arr.shape[1])
+    cx = float(cols.mean()) * scale_x
+    cy = float(rows.mean()) * scale_y
+    if tfm_tuple is not None and tfm_tuple[0] is not None:
+        ox, oy = inplane_output_point(cx, cy, tfm_tuple[0], apply_translation=is_manual)
+    else:
+        ox, oy = cx, cy
+    dx, dy = canvas
+    pad_x, pad_y = pad
+    return dx + pad_x + ox, dy + pad_y + oy
 
 
 def main() -> None:
@@ -970,6 +1011,61 @@ def main() -> None:
         out_nx = int(np.ceil(max_x))
         out_ny = int(np.ceil(max_y))
         logger.info("Expanded canvas for manual Euler padding: %s x %s", out_ny, out_nx)
+
+    # The z41→z42 and z43→z44 outline steps are ~70 px after the manuals.
+    # z42→z43 is already ~25 px; capping each raw step leaves that pair alone.
+    if args.max_outline_step_px > 0:
+        outline_ids = list(available_ids)
+        outline_centroids = [
+            _outline_world_xy(
+                slice_files[sid],
+                cumsum_px[sid],
+                manual_pads.get(sid, (0, 0)),
+                registration_transforms.get(sid),
+                sid in manual_slice_ids,
+            )
+            for sid in outline_ids
+        ]
+        outline_corrections = outline_step_corrections(outline_centroids, args.max_outline_step_px)
+        n_outline = 0
+        for sid, (corr_x, corr_y), centroid, previous in zip(
+            outline_ids,
+            outline_corrections,
+            outline_centroids,
+            [None, *outline_centroids[:-1]],
+            strict=True,
+        ):
+            if abs(corr_x) < 0.5 and abs(corr_y) < 0.5:
+                continue
+            dx, dy = cumsum_px[sid]
+            cumsum_px[sid] = (dx + corr_x, dy + corr_y)
+            raw = float("nan")
+            if centroid is not None and previous is not None:
+                raw = float(np.hypot(centroid[0] - previous[0], centroid[1] - previous[1]))
+            logger.info(
+                "Slice %s: outline canvas dx %+.1f dy %+.1f (raw step %.0f px, cap %.0f)",
+                sid,
+                corr_x,
+                corr_y,
+                raw,
+                args.max_outline_step_px,
+            )
+            n_outline += 1
+        if n_outline:
+            min_x = min(dx for dx, _dy in cumsum_px.values())
+            min_y = min(dy for _dx, dy in cumsum_px.values())
+            shift_x = min(0.0, min_x)
+            shift_y = min(0.0, min_y)
+            cumsum_px = {sid: (dx - shift_x, dy - shift_y) for sid, (dx, dy) in cumsum_px.items()}
+            max_x = 0.0
+            max_y = 0.0
+            for sid, (dx, dy) in cumsum_px.items():
+                pad_x, pad_y = manual_pads.get(sid, (0, 0))
+                max_x = max(max_x, dx + first_vol.shape[2] + 2 * pad_x)
+                max_y = max(max_y, dy + first_vol.shape[1] + 2 * pad_y)
+            out_nx = int(np.ceil(max_x))
+            out_ny = int(np.ceil(max_y))
+            logger.info("Outline cap moved %s slices; canvas %s x %s", n_outline, out_ny, out_nx)
 
     # Second pass: assemble volume
     logger.info("Assembling volume: %s x %s x %s", total_z, out_ny, out_nx)

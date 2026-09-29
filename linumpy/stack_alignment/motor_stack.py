@@ -10,6 +10,7 @@ plus ``linumpy.stack_alignment.io`` (shifts loading) and
 
 import json
 import logging
+from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,48 @@ import SimpleITK as sitk
 logger = logging.getLogger(__name__)
 
 _MANUAL_SOURCES = frozenset({"manual", "manual_refined"})
+
+
+def clamp_radial(tx: float, ty: float, max_px: float) -> tuple[float, float]:
+    """Shorten a vector so its length is at most ``max_px``. ``max_px <= 0`` leaves it."""
+    tx_f, ty_f = float(tx), float(ty)
+    if max_px <= 0:
+        return tx_f, ty_f
+    magnitude = float(np.hypot(tx_f, ty_f))
+    if magnitude <= max_px or magnitude == 0.0:
+        return tx_f, ty_f
+    scale = max_px / magnitude
+    return tx_f * scale, ty_f * scale
+
+
+def outline_step_corrections(
+    centroids: Sequence[tuple[float, float] | None],
+    max_step: float,
+) -> list[tuple[float, float]]:
+    """Canvas shifts that cap each raw outline step at ``max_step``.
+
+    The first slice is fixed. A step already inside the cap is kept, including
+    the step that follows a capped one, so a 25 px pair is not opened up when
+    its neighbour is pulled in.
+    """
+    corrections = [(0.0, 0.0)] * len(centroids)
+    if len(centroids) < 2 or max_step <= 0:
+        return corrections
+    out: list[tuple[float, float]] = [(0.0, 0.0)]
+    for index in range(1, len(centroids)):
+        previous = centroids[index - 1]
+        current = centroids[index]
+        if previous is None or current is None:
+            out.append(out[-1])
+            continue
+        raw_x = current[0] - previous[0]
+        raw_y = current[1] - previous[1]
+        step_x, step_y = clamp_radial(raw_x, raw_y, max_step)
+        previous_correction = out[-1]
+        desired_x = previous[0] + previous_correction[0] + step_x
+        desired_y = previous[1] + previous_correction[1] + step_y
+        out.append((desired_x - current[0], desired_y - current[1]))
+    return out
 
 
 def zero_if_over(tx: float, ty: float, max_px: float) -> tuple[float, float]:

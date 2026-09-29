@@ -13,6 +13,7 @@ from linumpy.stack_alignment.motor_stack import (
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
+    outline_step_corrections,
     zero_if_over,
 )
 
@@ -333,6 +334,18 @@ def test_common_space_xy_policy_accumulates_on_common_space():
     assert accumulate is True
     assert apply_tfm is True
     assert rotation_only is True
+
+
+def test_outline_step_corrections_caps_z42_neighbours_and_keeps_the_middle():
+    # Measured outline centroids: z41, z42 (+65,+74), z43 (+24,+25), z44 (+76,+64).
+    centroids = [(0.0, 0.0), (65.0, 74.0), (89.0, 99.0), (165.0, 163.0)]
+    corrections = outline_step_corrections(centroids, 36)
+    placed = [(c[0] + d[0], c[1] + d[1]) for c, d in zip(centroids, corrections, strict=True)]
+    steps = [float(np.hypot(placed[i][0] - placed[i - 1][0], placed[i][1] - placed[i - 1][1])) for i in range(1, 4)]
+    assert abs(steps[0] - 36.0) < 0.05
+    assert abs(steps[2] - 36.0) < 0.05
+    middle = float(np.hypot(24.0, 25.0))
+    assert abs(steps[1] - middle) < 0.05
 
 
 def test_zero_if_over_drops_the_z42_step_and_keeps_a_small_one():

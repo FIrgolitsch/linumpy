@@ -324,6 +324,42 @@ def apply_transform_to_volume(
     return result
 
 
+def inplane_output_point(
+    x: float,
+    y: float,
+    transform: Any,
+    *,
+    apply_translation: bool,
+) -> tuple[float, float]:
+    """Where a full-resolution point lands after the Euler used at stack time.
+
+    Matches ``Resample``: positive SimpleITK ``tx`` moves the point to a smaller x.
+    """
+    params = [float(v) for v in transform.GetParameters()]
+    if transform.GetDimension() == 3 and len(params) >= 5:
+        angle = float(params[2])
+        tx = float(params[3])
+        ty = float(params[4])
+        center = transform.GetCenter()
+        center_x, center_y = float(center[0]), float(center[1])
+    else:
+        angle = float(params[0]) if params else 0.0
+        tx = float(params[1]) if len(params) > 1 else 0.0
+        ty = float(params[2]) if len(params) > 2 else 0.0
+        center = transform.GetCenter() if hasattr(transform, "GetCenter") else (x, y)
+        center_x = float(center[0]) if len(center) > 0 else x
+        center_y = float(center[1]) if len(center) > 1 else y
+    if not apply_translation:
+        tx, ty = 0.0, 0.0
+    cosine, sine = float(np.cos(angle)), float(np.sin(angle))
+    in_x = x - center_x - tx
+    in_y = y - center_y - ty
+    # Inverse of the ITK Euler2D map (output → input).
+    out_x = center_x + cosine * in_x + sine * in_y
+    out_y = center_y - sine * in_x + cosine * in_y
+    return out_x, out_y
+
+
 def rigid_euler_pad(transform: Any, ny: int, nx: int) -> tuple[int, int, float, float, float]:
     """Return ``(pad_x, pad_y, angle_rad, tx, ty)`` for a saved Euler."""
     params = list(transform.GetParameters())

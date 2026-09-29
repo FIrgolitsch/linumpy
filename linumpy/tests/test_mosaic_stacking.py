@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from linumpy.mosaic.stacking import (
+    apply_2d_transform,
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
     apply_xy_shift,
@@ -18,6 +19,7 @@ from linumpy.mosaic.stacking import (
     find_z_overlap,
     fit_overlap_log_ratio,
     flatten_slice_z_profile,
+    inplane_output_point,
     overlap_z_gain_curve,
     overlap_z_profiles,
     paste_tissue,
@@ -170,6 +172,22 @@ def test_blend_overlap_z_single_slice():
     moving = np.zeros((1, 8, 8), dtype=np.float32)
     result = blend_overlap_z(fixed, moving)
     assert result.shape == (1, 8, 8)
+
+
+def test_inplane_output_point_matches_a_resampled_pixel():
+    import SimpleITK as sitk
+
+    image = np.zeros((40, 50), dtype=np.float32)
+    image[12, 20] = 1.0
+    transform = sitk.Euler3DTransform()
+    transform.SetCenter((25.0, 20.0, 0.0))
+    transform.SetRotation(0.0, 0.0, 0.0)
+    transform.SetTranslation((8.0, -4.0, 0.0))
+    moved = apply_2d_transform(image, transform, rotation_only=False, max_rotation_deg=0)
+    rows, cols = np.nonzero(moved > 0.5)
+    out_x, out_y = inplane_output_point(20.0, 12.0, transform, apply_translation=True)
+    assert abs(float(cols.mean()) - out_x) < 0.6
+    assert abs(float(rows.mean()) - out_y) < 0.6
 
 
 def test_flatten_slice_z_profile_removes_the_depth_hump():
