@@ -1295,6 +1295,7 @@ process stack {
     # preview_tissue_center 1
     # outline_step_36 1
     # slice_median_match 1
+    # flatten_z_repeat 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

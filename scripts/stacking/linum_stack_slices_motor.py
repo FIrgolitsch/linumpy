@@ -1108,10 +1108,11 @@ def main() -> None:
     first_vol_f32 = first_vol.astype(np.float32)
     first_vol_f32 = _apply_overlap_z_gain_to_slice(first_vol_f32, first_id)
     if args.flatten_z_profile:
-        first_vol_f32 = flatten_slice_z_profile(first_vol_f32, tissue_threshold=args.blend_tissue_threshold)
+        profile_threshold = max(args.blend_tissue_threshold, 0.05)
+        first_vol_f32 = flatten_slice_z_profile(first_vol_f32, tissue_threshold=profile_threshold)
     # One brightness for every slice. Matching only the overlap paints a line
     # at the cut; the Hann then mixes slices that already share a median.
-    slice_median_target = slice_tissue_median(first_vol_f32, args.blend_tissue_threshold)
+    slice_median_target = slice_tissue_median(first_vol_f32, max(args.blend_tissue_threshold, 0.05))
     shifted_first, first_coords = apply_xy_shift(first_vol_f32, first_dx, first_dy, (out_ny, out_nx))
 
     if shifted_first is not None:
@@ -1141,8 +1142,12 @@ def main() -> None:
         # there and boost toward the next slice's top in the Z-end overlap.
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
         if args.flatten_z_profile:
-            vol = flatten_slice_z_profile(vol, tissue_threshold=args.blend_tissue_threshold)
-        vol, slice_gain = scale_slice_to_median(vol, slice_median_target, tissue_threshold=args.blend_tissue_threshold)
+            vol = flatten_slice_z_profile(vol, tissue_threshold=max(args.blend_tissue_threshold, 0.05))
+        vol, slice_gain = scale_slice_to_median(
+            vol,
+            slice_median_target,
+            tissue_threshold=max(args.blend_tissue_threshold, 0.05),
+        )
         if abs(slice_gain - 1.0) >= 0.02:
             logger.info("Slice %s: slice median gain %.3f", slice_id, slice_gain)
 

@@ -711,29 +711,36 @@ def estimate_z_blend_xy_shift(
 def flatten_slice_z_profile(
     vol: np.ndarray,
     tissue_threshold: float = 0.01,
-    gain_lo: float = 0.65,
-    gain_hi: float = 1.55,
+    gain_lo: float = 0.25,
+    gain_hi: float = 4.0,
+    passes: int = 4,
 ) -> np.ndarray:
     """Remove the bright-to-dark stripe along a slice's depth.
 
     Each plane is scaled so its tissue median matches the slice median.
-    Within a plane, contrast is unchanged. The scale is clamped.
+    Within a plane, contrast is unchanged. Scaling changes which voxels
+    sit above the threshold, so the correction is repeated.
     """
-    nz = int(vol.shape[0])
-    if nz < 3:
-        return vol
-    med = np.empty(nz, dtype=np.float64)
-    for z in range(nz):
-        tissue = vol[z] > tissue_threshold
-        med[z] = float(np.median(vol[z][tissue])) if int(np.sum(tissue)) > 50 else np.nan
-    good = np.isfinite(med)
-    if int(np.sum(good)) < 3:
-        return vol
-    idx = np.arange(nz)
-    filled = np.interp(idx, idx[good], med[good])
-    target = float(np.median(filled))
-    gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
-    return (vol * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
+    out = vol
+    for _ in range(max(1, passes)):
+        nz = int(out.shape[0])
+        if nz < 3:
+            return out
+        med = np.empty(nz, dtype=np.float64)
+        for z in range(nz):
+            tissue = out[z] > tissue_threshold
+            med[z] = float(np.median(out[z][tissue])) if int(np.sum(tissue)) > 50 else np.nan
+        good = np.isfinite(med)
+        if int(np.sum(good)) < 3:
+            return out
+        idx = np.arange(nz)
+        filled = np.interp(idx, idx[good], med[good])
+        target = float(np.median(filled))
+        gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
+        if float(np.max(np.abs(gain - 1.0))) < 0.02:
+            return out
+        out = (out * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
+    return out
 
 
 def slice_tissue_median(vol: np.ndarray, tissue_threshold: float = 0.01) -> float:
@@ -748,8 +755,8 @@ def scale_slice_to_median(
     vol: np.ndarray,
     target: float,
     tissue_threshold: float = 0.01,
-    gain_lo: float = 0.5,
-    gain_hi: float = 2.0,
+    gain_lo: float = 0.3,
+    gain_hi: float = 3.0,
 ) -> tuple[np.ndarray, float]:
     """Scale a whole slice so its tissue median matches ``target``.
 
