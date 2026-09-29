@@ -49,7 +49,6 @@ from linumpy.mosaic.stacking import (
     rigid_euler_pad,
     scale_slice_to_median,
     slice_tissue_median,
-    suppress_z_slice_bands,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -190,6 +189,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--search_range_mm", type=float, default=0.100, help="Search range for Z-matching in mm [%(default)s]")
     p.add_argument(
         "--use_expected_overlap", action="store_true", help="Use expected overlap from slicing_interval instead of correlation"
+    )
+    p.add_argument(
+        "--z_from_registration",
+        action="store_true",
+        help="Find the Z overlap by correlation, as pairwise registration does.\n"
+        "Manual alignments still supply XY and rotation. Their Z overlap\n"
+        "is not used. Takes precedence over --use_expected_overlap.",
     )
     p.add_argument(
         "--z_overlap_min_corr",
@@ -756,7 +762,32 @@ def main() -> None:
         if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
             _, fixed_z, moving_z, _ = registration_transforms[slice_id]
 
-        if args.use_expected_overlap:
+        if args.z_from_registration:
+            # XY stays on the manual Euler. Z is the correlation search,
+            # not the overlap chosen in the manual tool and not the
+            # slicing-interval guess. Do not crop the incoming cut face.
+            res_z_um = res_z_mm * 1000
+            overlap, corr = find_z_overlap(
+                prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
+            )
+            moving_z = 0
+            if args.z_overlap_min_corr > 0 and corr < args.z_overlap_min_corr:
+                interval_voxels = int(args.slicing_interval_mm / res_z_mm)
+                id_step = max(1, int(slice_id) - int(prev_id))
+                fallback_overlap = expected_z_overlap(vol.shape[0], 0, interval_voxels, id_step)
+                logger.warning(
+                    "Slice %s: registration Z correlation %.3f < %.2f, using expected overlap %s (was %s)",
+                    slice_id,
+                    corr,
+                    args.z_overlap_min_corr,
+                    fallback_overlap,
+                    overlap,
+                )
+                overlap = fallback_overlap
+                correlation_fallback_used = True
+            blend_overlap = max(0, overlap)
+            logger.info("Slice %s: registration Z overlap=%s voxels (corr=%.3f)", slice_id, overlap, corr)
+        elif args.use_expected_overlap:
             # Expected overlap from known slicing interval and volume depth.
             # ALWAYS use the stacking crop (moving_z_first_index), NOT the
             # pairwise template stored in offsets.txt (moving_z_index). That
@@ -1324,11 +1355,6 @@ def main() -> None:
     if args.output_stacking_decisions:
         decisions_df.to_csv(args.output_stacking_decisions, index=False)
         logger.info("Stacking decisions saved to %s", args.output_stacking_decisions)
-
-    # The per-plane flatten leaves the depth wave where a column does not
-    # follow the plane median. Remove that wave before the pyramid is built.
-    logger.info("Suppressing per-slice brightness bands...")
-    suppress_z_slice_bands(output.zarray)
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
