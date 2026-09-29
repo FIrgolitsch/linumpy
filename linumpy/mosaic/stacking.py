@@ -711,9 +711,9 @@ def estimate_z_blend_xy_shift(
 def flatten_slice_z_profile(
     vol: np.ndarray,
     tissue_threshold: float = 0.01,
-    gain_lo: float = 0.25,
-    gain_hi: float = 4.0,
-    passes: int = 4,
+    gain_lo: float = 0.5,
+    gain_hi: float = 2.0,
+    passes: int = 2,
 ) -> np.ndarray:
     """Remove the bright-to-dark stripe along a slice's depth.
 
@@ -741,6 +741,39 @@ def flatten_slice_z_profile(
             return out
         out = (out * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
     return out
+
+
+def suppress_z_slice_bands(
+    array: Any,
+    tissue_threshold: float = 0.05,
+    sigma_narrow: float = 2.0,
+    sigma_wide: float = 24.0,
+    gain_lo: float = 0.7,
+    gain_hi: float = 1.4,
+    tile: int = 100,
+) -> None:
+    """Take out the brightness wave that repeats once per slice.
+
+    A plane-wide scale leaves the wave in place where one column does not
+    follow the plane median. Along Z, divide the local mean by a mean taken
+    over about one slice, and leave slower anatomy and within-plane contrast.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    _nz, ny, nx = array.shape
+    for y0 in range(0, ny, tile):
+        y1 = min(ny, y0 + tile)
+        for x0 in range(0, nx, tile):
+            x1 = min(nx, x0 + tile)
+            block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
+            if not np.any(block > tissue_threshold):
+                continue
+            narrow = gaussian_filter1d(block, sigma_narrow, axis=0, mode="nearest")
+            wide = gaussian_filter1d(block, sigma_wide, axis=0, mode="nearest")
+            gain = np.ones(block.shape, dtype=np.float32)
+            tissue = narrow > tissue_threshold
+            gain[tissue] = np.clip(wide[tissue] / np.maximum(narrow[tissue], 1e-6), gain_lo, gain_hi).astype(np.float32)
+            array[:, y0:y1, x0:x1] = block * gain
 
 
 def slice_tissue_median(vol: np.ndarray, tissue_threshold: float = 0.01) -> float:

@@ -1,5 +1,7 @@
 """Tests for linumpy/mosaic/stacking.py"""
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -27,6 +29,7 @@ from linumpy.mosaic.stacking import (
     scale_slice_to_median,
     seam_overlap_gain,
     slice_tissue_median,
+    suppress_z_slice_bands,
 )
 
 
@@ -199,6 +202,27 @@ def test_scale_slice_to_median_matches_a_brighter_neighbour():
     scaled, gain = scale_slice_to_median(bright, target)
     assert abs(gain - 0.5) < 1e-6
     assert abs(slice_tissue_median(scaled) - target) < 1e-5
+
+
+def test_suppress_z_slice_bands_removes_a_slice_period_wave():
+    class _Array:
+        def __init__(self, data: np.ndarray) -> None:
+            self.data = data
+            self.shape = data.shape
+
+        def __getitem__(self, index: Any) -> np.ndarray:
+            return self.data[index]
+
+        def __setitem__(self, index: Any, value: np.ndarray) -> None:
+            self.data[index] = value
+
+    depth = np.arange(200, dtype=np.float32)
+    wave = 0.2 + 0.06 * np.sin(2 * np.pi * depth / 20)
+    volume = np.broadcast_to(wave[:, None, None], (200, 8, 8)).copy()
+    array = _Array(volume)
+    suppress_z_slice_bands(array, tissue_threshold=0.05, tile=8)
+    column = array.data[40:160, 0, 0]
+    assert float(column.max() - column.min()) < 0.04
 
 
 def test_flatten_slice_z_profile_removes_the_depth_hump():

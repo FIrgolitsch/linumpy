@@ -1296,6 +1296,8 @@ process stack {
     # outline_step_36 1
     # slice_median_match 1
     # flatten_z_repeat 1
+    # z_band_suppress 1
+    # annotated_panel_vmax 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

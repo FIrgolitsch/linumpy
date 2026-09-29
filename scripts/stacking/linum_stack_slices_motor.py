@@ -49,6 +49,7 @@ from linumpy.mosaic.stacking import (
     rigid_euler_pad,
     scale_slice_to_median,
     slice_tissue_median,
+    suppress_z_slice_bands,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -1323,6 +1324,11 @@ def main() -> None:
     if args.output_stacking_decisions:
         decisions_df.to_csv(args.output_stacking_decisions, index=False)
         logger.info("Stacking decisions saved to %s", args.output_stacking_decisions)
+
+    # The per-plane flatten leaves the depth wave where a column does not
+    # follow the plane median. Remove that wave before the pyramid is built.
+    logger.info("Suppressing per-slice brightness bands...")
+    suppress_z_slice_bands(output.zarray)
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
