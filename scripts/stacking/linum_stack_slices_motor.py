@@ -785,8 +785,16 @@ def main() -> None:
                 )
                 overlap = fallback_overlap
                 correlation_fallback_used = True
-            blend_overlap = max(0, overlap)
-            logger.info("Slice %s: registration Z overlap=%s voxels (corr=%.3f)", slice_id, overlap, corr)
+            # Keep the registered spacing. Blend only a short band at the cut
+            # so the rest of the slab stays sharp.
+            blend_overlap = min(max(0, overlap), 10)
+            logger.info(
+                "Slice %s: registration Z overlap=%s voxels, blend=%s (corr=%.3f)",
+                slice_id,
+                overlap,
+                blend_overlap,
+                corr,
+            )
         elif slice_id in manual_slice_ids and fixed_z is not None:
             # --z_from_registration is off, so the Z saved in the manual tool is used.
             prev_nz = prev_vol.shape[0]

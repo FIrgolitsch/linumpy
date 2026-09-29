@@ -231,7 +231,8 @@ def test_flatten_slice_z_profile_removes_the_depth_hump():
         vol[z, 4:28, 4:28] = value
     out = flatten_slice_z_profile(vol, tissue_threshold=0.05)
     medians = [float(np.median(out[z][out[z] > 0.05])) for z in range(8)]
-    assert max(medians) / min(medians) < 1.08
+    assert max(medians) < 0.24
+    assert float(out.max()) <= float(vol.max()) + 1e-5
 
 
 def test_blend_overlap_z_softens_a_shifted_edge():

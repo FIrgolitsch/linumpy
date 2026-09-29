@@ -736,7 +736,9 @@ def flatten_slice_z_profile(
         idx = np.arange(nz)
         filled = np.interp(idx, idx[good], med[good])
         target = float(np.median(filled))
-        gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
+        # Never brighten a dark plane. That turns a small hot spot into a
+        # saturated block and the annotated contrast scale follows it.
+        gain = np.minimum(np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi), 1.0)
         if float(np.max(np.abs(gain - 1.0))) < 0.02:
             return out
         out = (out * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
@@ -788,8 +790,8 @@ def scale_slice_to_median(
     vol: np.ndarray,
     target: float,
     tissue_threshold: float = 0.01,
-    gain_lo: float = 0.3,
-    gain_hi: float = 3.0,
+    gain_lo: float = 0.5,
+    gain_hi: float = 1.4,
 ) -> tuple[np.ndarray, float]:
     """Scale a whole slice so its tissue median matches ``target``.
 

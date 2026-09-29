@@ -464,7 +464,7 @@ def save_annotated_views(
 
     def _panel_vmax(panel: np.ndarray) -> float:
         positive = panel[np.isfinite(panel) & (panel > 0)]
-        return float(np.percentile(positive, 99.9)) if positive.size > 0 else 1.0
+        return float(np.percentile(positive, 99.5)) if positive.size > 0 else 1.0
 
     vmin = 0.0
     vmax1 = _panel_vmax(image_zy)
