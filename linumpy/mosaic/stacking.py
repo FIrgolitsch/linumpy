@@ -736,6 +736,34 @@ def flatten_slice_z_profile(
     return (vol * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
 
 
+def slice_tissue_median(vol: np.ndarray, tissue_threshold: float = 0.01) -> float:
+    """Median of voxels above ``tissue_threshold``, or NaN when there is too little tissue."""
+    tissue = vol > tissue_threshold
+    if int(np.sum(tissue)) < 100:
+        return float("nan")
+    return float(np.median(vol[tissue]))
+
+
+def scale_slice_to_median(
+    vol: np.ndarray,
+    target: float,
+    tissue_threshold: float = 0.01,
+    gain_lo: float = 0.5,
+    gain_hi: float = 2.0,
+) -> tuple[np.ndarray, float]:
+    """Scale a whole slice so its tissue median matches ``target``.
+
+    One gain for the entire slab. A per-plane seam gain leaves a line at the cut.
+    """
+    med = slice_tissue_median(vol, tissue_threshold)
+    if not np.isfinite(med) or med < 1e-6 or not np.isfinite(target):
+        return vol, 1.0
+    gain = float(np.clip(target / med, gain_lo, gain_hi))
+    if abs(gain - 1.0) < 0.02:
+        return vol, gain
+    return (vol * gain).astype(vol.dtype, copy=False), gain
+
+
 def seam_overlap_gain(
     existing: np.ndarray,
     moving: np.ndarray,

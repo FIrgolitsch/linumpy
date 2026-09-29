@@ -24,7 +24,9 @@ from linumpy.mosaic.stacking import (
     overlap_z_profiles,
     paste_tissue,
     refine_z_blend_overlap,
+    scale_slice_to_median,
     seam_overlap_gain,
+    slice_tissue_median,
 )
 
 
@@ -188,6 +190,15 @@ def test_inplane_output_point_matches_a_resampled_pixel():
     out_x, out_y = inplane_output_point(20.0, 12.0, transform, apply_translation=True)
     assert abs(float(cols.mean()) - out_x) < 0.6
     assert abs(float(rows.mean()) - out_y) < 0.6
+
+
+def test_scale_slice_to_median_matches_a_brighter_neighbour():
+    dim = np.full((6, 16, 16), 0.20, dtype=np.float32)
+    bright = np.full((6, 16, 16), 0.40, dtype=np.float32)
+    target = slice_tissue_median(dim)
+    scaled, gain = scale_slice_to_median(bright, target)
+    assert abs(gain - 0.5) < 1e-6
+    assert abs(slice_tissue_median(scaled) - target) < 1e-5
 
 
 def test_flatten_slice_z_profile_removes_the_depth_hump():
