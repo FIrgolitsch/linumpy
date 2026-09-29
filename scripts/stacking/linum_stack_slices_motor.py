@@ -194,8 +194,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--z_from_registration",
         action="store_true",
         help="Find the Z overlap by correlation, as pairwise registration does.\n"
-        "Manual alignments still supply XY and rotation. Their Z overlap\n"
-        "is not used. Takes precedence over --use_expected_overlap.",
+        "Manual alignments still supply XY and rotation. Their saved Z\n"
+        "overlap is not used. Omit this flag to use that saved Z.",
     )
     p.add_argument(
         "--z_overlap_min_corr",
@@ -787,6 +787,19 @@ def main() -> None:
                 correlation_fallback_used = True
             blend_overlap = max(0, overlap)
             logger.info("Slice %s: registration Z overlap=%s voxels (corr=%.3f)", slice_id, overlap, corr)
+        elif slice_id in manual_slice_ids and fixed_z is not None:
+            # --z_from_registration is off, so the Z saved in the manual tool is used.
+            prev_nz = prev_vol.shape[0]
+            overlap = max(0, prev_nz - int(fixed_z))
+            blend_overlap = overlap
+            corr = 1.0
+            logger.info(
+                "Slice %s: manual Z overlap=%s voxels (fixed_z=%s, moving_z=%s)",
+                slice_id,
+                overlap,
+                fixed_z,
+                moving_z,
+            )
         elif args.use_expected_overlap:
             # Expected overlap from known slicing interval and volume depth.
             # ALWAYS use the stacking crop (moving_z_first_index), NOT the

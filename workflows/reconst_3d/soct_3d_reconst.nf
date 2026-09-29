@@ -1299,6 +1299,7 @@ process stack {
     # flatten_z_repeat 1
     # no_z_band_suppress 1
     # z_from_registration 1
+    # manual_z_when_off 1
     # annotated_panel_vmax 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
