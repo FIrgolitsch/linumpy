@@ -231,8 +231,16 @@ def test_flatten_slice_z_profile_removes_the_depth_hump():
         vol[z, 4:28, 4:28] = value
     out = flatten_slice_z_profile(vol, tissue_threshold=0.05)
     medians = [float(np.median(out[z][out[z] > 0.05])) for z in range(8)]
-    assert max(medians) < 0.24
-    assert float(out.max()) <= float(vol.max()) + 1e-5
+    assert max(medians) / min(medians) < 1.15
+
+
+def test_flatten_does_not_amplify_a_hot_spot_on_a_dim_plane():
+    vol = np.full((6, 40, 40), 0.20, dtype=np.float32)
+    vol[0] = 0.10
+    vol[0, 10:15, 10:15] = 1.0
+    out = flatten_slice_z_profile(vol, tissue_threshold=0.05)
+    assert float(out[0, 12, 12]) <= 1.0 + 1e-5
+    assert float(np.median(out[0][out[0] > 0.05])) > 0.15
 
 
 def test_blend_overlap_z_softens_a_shifted_edge():

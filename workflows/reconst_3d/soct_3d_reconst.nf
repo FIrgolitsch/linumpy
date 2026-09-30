@@ -1300,8 +1300,8 @@ process stack {
     # no_z_band_suppress 1
     # z_from_registration 1
     # manual_z_when_off 1
-    # no_plane_amplify 1
-    # blend_band_10 1
+    # flatten_cap_hotspot 1
+    # blend_full_overlap 1
     # annotated_panel_vmax 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr

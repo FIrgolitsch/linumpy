@@ -736,12 +736,17 @@ def flatten_slice_z_profile(
         idx = np.arange(nz)
         filled = np.interp(idx, idx[good], med[good])
         target = float(np.median(filled))
-        # Never brighten a dark plane. That turns a small hot spot into a
-        # saturated block and the annotated contrast scale follows it.
-        gain = np.minimum(np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi), 1.0)
+        gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
         if float(np.max(np.abs(gain - 1.0))) < 0.02:
             return out
-        out = (out * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
+        # A dim plane can hold a few voxels far above its median. Cap those
+        # before the plane is brightened, or they become a saturated block.
+        adjusted = np.array(out, dtype=np.float32, copy=True)
+        for z in range(nz):
+            if gain[z] > 1.0 and np.isfinite(filled[z]):
+                cap = float(filled[z]) * 5.0
+                np.minimum(adjusted[z], cap, out=adjusted[z])
+        out = (adjusted * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
     return out
 
 
