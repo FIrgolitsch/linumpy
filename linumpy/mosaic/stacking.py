@@ -750,6 +750,34 @@ def flatten_slice_z_profile(
     return out
 
 
+def notch_slice_seams(
+    block: np.ndarray,
+    period: float,
+    harmonics: tuple[int, ...] = (1, 2, 3, 4),
+    rel_width: float = 0.12,
+) -> np.ndarray:
+    """Remove brightness that repeats once per slice, along axis 0.
+
+    Only Fourier bins next to that period and its harmonics are cleared.
+    Voxels that were zero stay zero, so the tissue outline does not move.
+    """
+    if period < 4:
+        return block
+    spec = np.fft.rfft(block, axis=0)
+    freqs = np.fft.rfftfreq(block.shape[0])
+    keep = np.ones(spec.shape[0], dtype=bool)
+    for harmonic in harmonics:
+        center = harmonic / float(period)
+        keep &= np.abs(freqs - center) > rel_width * center
+    keep[0] = True
+    shape = (spec.shape[0],) + (1,) * (block.ndim - 1)
+    spec *= keep.reshape(shape)
+    out = np.fft.irfft(spec, n=block.shape[0], axis=0).astype(np.float32, copy=False)
+    np.clip(out, 0, None, out=out)
+    out[block == 0] = 0
+    return out
+
+
 def suppress_z_slice_bands(
     array: Any,
     tissue_threshold: float = 0.05,

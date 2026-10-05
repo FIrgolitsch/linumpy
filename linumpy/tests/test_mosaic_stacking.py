@@ -22,6 +22,7 @@ from linumpy.mosaic.stacking import (
     fit_overlap_log_ratio,
     flatten_slice_z_profile,
     inplane_output_point,
+    notch_slice_seams,
     overlap_z_gain_curve,
     overlap_z_profiles,
     paste_tissue,
@@ -202,6 +203,19 @@ def test_scale_slice_to_median_matches_a_brighter_neighbour():
     scaled, gain = scale_slice_to_median(bright, target)
     assert abs(gain - 0.5) < 1e-6
     assert abs(slice_tissue_median(scaled) - target) < 1e-5
+
+
+def test_notch_slice_seams_removes_the_repeating_step():
+    depth = np.arange(200, dtype=np.float32)
+    slow = 0.30 + 0.05 * np.sin(2 * np.pi * depth / 80)
+    seam = 0.04 * np.sign(np.sin(2 * np.pi * depth / 20))
+    volume = np.broadcast_to((slow + seam)[:, None, None], (200, 4, 4)).copy()
+    volume[0, 0, 0] = 0
+    out = notch_slice_seams(volume, period=20)
+    assert out[0, 0, 0] == 0
+    spectrum = np.abs(np.fft.rfft(out[1:, 1, 1] - np.mean(out[1:, 1, 1])))
+    freqs = np.fft.rfftfreq(out.shape[0] - 1)
+    assert float(spectrum[int(np.argmin(np.abs(freqs - 1 / 20)))]) < 0.05
 
 
 def test_suppress_z_slice_bands_removes_a_slice_period_wave():
