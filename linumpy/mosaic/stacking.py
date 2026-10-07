@@ -778,6 +778,45 @@ def notch_slice_seams(
     return out
 
 
+def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05) -> float:
+    """Notch the slice-period seam on a ZYX array. Returns the period in voxels."""
+    step = 8
+    medians = np.empty(array.shape[0], dtype=np.float64)
+    for z in range(array.shape[0]):
+        plane = np.asarray(array[z, ::step, ::step])
+        tissue = plane > threshold
+        medians[z] = float(np.median(plane[tissue])) if int(np.sum(tissue)) > 40 else np.nan
+    good = np.isfinite(medians)
+    if int(np.sum(good)) < 8:
+        return 0.0
+    index = np.arange(len(medians))
+    filled = np.interp(index, index[good], medians[good])
+    period = estimate_slice_period(filled, period_min=12, period_max=40)
+    _, ny, nx = array.shape
+    for y0 in range(0, ny, tile):
+        y1 = min(ny, y0 + tile)
+        for x0 in range(0, nx, tile):
+            x1 = min(nx, x0 + tile)
+            block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
+            array[:, y0:y1, x0:x1] = notch_slice_seams(block, period)
+    return period
+
+
+def estimate_slice_period(medians: np.ndarray, period_min: float, period_max: float) -> float:
+    """Return the strongest period, in planes, inside ``[period_min, period_max]``."""
+    values = np.asarray(medians, dtype=np.float64)
+    values = values - float(np.mean(values))
+    spectrum = np.abs(np.fft.rfft(values))
+    freqs = np.fft.rfftfreq(len(values))
+    band = (freqs >= 1.0 / period_max) & (freqs <= 1.0 / period_min)
+    if not np.any(band):
+        return float(period_min)
+    peak = int(np.argmax(np.where(band, spectrum, 0.0)))
+    if freqs[peak] == 0:
+        return float(period_min)
+    return float(1.0 / freqs[peak])
+
+
 def suppress_z_slice_bands(
     array: Any,
     tissue_threshold: float = 0.05,

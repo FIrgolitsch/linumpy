@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import zarr
 
-from linumpy.mosaic.stacking import notch_slice_seams
+from linumpy.mosaic.stacking import estimate_slice_period, notch_slice_seams
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +30,6 @@ def _plane_medians(array: zarr.Array, threshold: float) -> np.ndarray:
         return np.zeros_like(medians)
     index = np.arange(len(medians))
     return np.interp(index, index[good], medians[good])
-
-
-def estimate_slice_period(medians: np.ndarray, period_min: float, period_max: float) -> float:
-    """Return the strongest period, in planes, inside ``[period_min, period_max]``."""
-    values = medians - float(np.mean(medians))
-    spectrum = np.abs(np.fft.rfft(values))
-    freqs = np.fft.rfftfreq(len(values))
-    band = (freqs >= 1.0 / period_max) & (freqs <= 1.0 / period_min)
-    if not np.any(band):
-        return float(period_min)
-    peak = int(np.argmax(np.where(band, spectrum, 0)))
-    return float(1.0 / freqs[peak])
 
 
 def _copy_group_metadata(src: Path, dst: Path) -> None:

@@ -33,6 +33,7 @@ from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
+    apply_seam_notch,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
@@ -122,10 +123,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--max_outline_step_px",
         type=float,
-        default=36,
+        default=0,
         help="Cap the tissue-outline step between neighbouring slices (pixels).\n"
-        "A step already under this stays, so a 25 px pair is not opened when\n"
-        "the 70 px steps on either side are pulled in. 0 = disabled. [%(default)s]",
+        "0 = disabled. Leave this off: it shrinks the brain. [%(default)s]",
     )
     p.add_argument(
         "--confidence_weight_translations",
@@ -295,12 +295,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
     )
     p.add_argument(
-        "--flatten_z_profile",
+        "--notch_slice_seams",
         action=argparse.BooleanOptionalAction,
         default=True,
+        help="Remove the brightness that repeats once per slice. Does not move tissue. [%(default)s]",
+    )
+    p.add_argument(
+        "--flatten_z_profile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Scale each slice along Z so its tissue median is flat.\n"
-        "Removes the bright stripe each cut face paints into a coronal view.\n"
-        "Within-plane contrast is kept. [%(default)s]",
+        "Off: the seam notch removes the stripe without moving tissue. [%(default)s]",
     )
     p.add_argument(
         "--blend_tissue_threshold",
@@ -1152,12 +1157,11 @@ def main() -> None:
     first_dx, first_dy = cumsum_px[first_id]
     first_vol_f32 = first_vol.astype(np.float32)
     first_vol_f32 = _apply_overlap_z_gain_to_slice(first_vol_f32, first_id)
+    slice_median_target = None
     if args.flatten_z_profile:
         profile_threshold = max(args.blend_tissue_threshold, 0.05)
         first_vol_f32 = flatten_slice_z_profile(first_vol_f32, tissue_threshold=profile_threshold)
-    # One brightness for every slice. Matching only the overlap paints a line
-    # at the cut; the Hann then mixes slices that already share a median.
-    slice_median_target = slice_tissue_median(first_vol_f32, max(args.blend_tissue_threshold, 0.05))
+        slice_median_target = slice_tissue_median(first_vol_f32, profile_threshold)
     shifted_first, first_coords = apply_xy_shift(first_vol_f32, first_dx, first_dy, (out_ny, out_nx))
 
     if shifted_first is not None:
@@ -1187,14 +1191,16 @@ def main() -> None:
         # there and boost toward the next slice's top in the Z-end overlap.
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
         if args.flatten_z_profile:
-            vol = flatten_slice_z_profile(vol, tissue_threshold=max(args.blend_tissue_threshold, 0.05))
-        vol, slice_gain = scale_slice_to_median(
-            vol,
-            slice_median_target,
-            tissue_threshold=max(args.blend_tissue_threshold, 0.05),
-        )
-        if abs(slice_gain - 1.0) >= 0.02:
-            logger.info("Slice %s: slice median gain %.3f", slice_id, slice_gain)
+            profile_threshold = max(args.blend_tissue_threshold, 0.05)
+            vol = flatten_slice_z_profile(vol, tissue_threshold=profile_threshold)
+            if slice_median_target is not None:
+                vol, slice_gain = scale_slice_to_median(
+                    vol,
+                    slice_median_target,
+                    tissue_threshold=profile_threshold,
+                )
+                if abs(slice_gain - 1.0) >= 0.02:
+                    logger.info("Slice %s: slice median gain %.3f", slice_id, slice_gain)
 
         # Apply registration transform (rotation/small translation refinement) if available
         if apply_pairwise_rigid and slice_id in registration_transforms and registration_transforms[slice_id] is not None:
@@ -1368,6 +1374,11 @@ def main() -> None:
     if args.output_stacking_decisions:
         decisions_df.to_csv(args.output_stacking_decisions, index=False)
         logger.info("Stacking decisions saved to %s", args.output_stacking_decisions)
+
+    # Remove the repeating slice stripe. Does not move tissue.
+    if args.notch_slice_seams:
+        period = apply_seam_notch(output.zarray)
+        logger.info("Notched slice seams (period %.1f voxels)", period)
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
