@@ -33,7 +33,7 @@ from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
-    apply_seam_notch,
+    apply_seam_gain,
     apply_transform_to_volume,
     apply_xy_shift,
     blend_overlap_z,
@@ -43,23 +43,17 @@ from linumpy.mosaic.stacking import (
     estimate_z_blend_xy_shift,
     expected_z_overlap,
     find_z_overlap,
-    flatten_slice_z_profile,
-    inplane_output_point,
     overlap_z_gain_curve,
     paste_tissue,
     rigid_euler_pad,
-    scale_slice_to_median,
-    slice_tissue_median,
+    seam_overlap_gain,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
-    clear_euler_translation,
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
-    outline_step_corrections,
-    zero_if_over,
 )
 from linumpy.stack_alignment.units import center_shifts, convert_shifts_to_pixels
 
@@ -110,22 +104,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "failures (hitting the optimizer boundary) and excluded from\n"
         "accumulation. Set to registration_max_translation. 0 = disabled.\n"
         "[%(default)s]",
-    )
-    p.add_argument(
-        "--max_slice_step_px",
-        type=float,
-        default=0,
-        help="Drop a pairwise slab translation, including a manual, when its\n"
-        "magnitude exceeds this (pixels). The Euler translation is cleared\n"
-        "with it so the slice is not still shifted at resample time. 0 =\n"
-        "disabled. This does not change the Z blend. [%(default)s]",
-    )
-    p.add_argument(
-        "--max_outline_step_px",
-        type=float,
-        default=0,
-        help="Cap the tissue-outline step between neighbouring slices (pixels).\n"
-        "0 = disabled. Leave this off: it shrinks the brain. [%(default)s]",
     )
     p.add_argument(
         "--confidence_weight_translations",
@@ -189,13 +167,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--search_range_mm", type=float, default=0.100, help="Search range for Z-matching in mm [%(default)s]")
     p.add_argument(
         "--use_expected_overlap", action="store_true", help="Use expected overlap from slicing_interval instead of correlation"
-    )
-    p.add_argument(
-        "--z_from_registration",
-        action="store_true",
-        help="Find the Z overlap by correlation, as pairwise registration does.\n"
-        "Manual alignments still supply XY and rotation. Their saved Z\n"
-        "overlap is not used. Omit this flag to use that saved Z.",
     )
     p.add_argument(
         "--z_overlap_min_corr",
@@ -293,19 +264,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
-    )
-    p.add_argument(
-        "--notch_slice_seams",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Remove the brightness that repeats once per slice. Does not move tissue. [%(default)s]",
-    )
-    p.add_argument(
-        "--flatten_z_profile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Scale each slice along Z so its tissue median is flat.\n"
-        "Off: the seam notch removes the stripe without moving tissue. [%(default)s]",
     )
     p.add_argument(
         "--blend_tissue_threshold",
@@ -419,37 +377,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     add_overwrite_arg(p)
     return p
-
-
-def _outline_world_xy(
-    path: Path,
-    canvas: tuple[float, float],
-    pad: tuple[int, int],
-    tfm_tuple: tuple | None,
-    is_manual: bool,
-) -> tuple[float, float] | None:
-    """Tissue centroid in canvas coordinates, after the Euler the stack will apply."""
-    coarse, _res_c = read_omezarr(path, level=2)
-    arr = np.asarray(coarse[:])
-    if arr.ndim != 3 or arr.shape[0] == 0:
-        return None
-    aip = arr.mean(axis=0)
-    tissue = aip > 0.05
-    if int(np.sum(tissue)) < 30:
-        return None
-    rows, cols = np.nonzero(tissue)
-    full, _res_0 = read_omezarr(path, level=0)
-    scale_x = float(full.shape[2]) / float(arr.shape[2])
-    scale_y = float(full.shape[1]) / float(arr.shape[1])
-    cx = float(cols.mean()) * scale_x
-    cy = float(rows.mean()) * scale_y
-    if tfm_tuple is not None and tfm_tuple[0] is not None:
-        ox, oy = inplane_output_point(cx, cy, tfm_tuple[0], apply_translation=is_manual)
-    else:
-        ox, oy = cx, cy
-    dx, dy = canvas
-    pad_x, pad_y = pad
-    return dx + pad_x + ox, dy + pad_y + oy
 
 
 def main() -> None:
@@ -615,30 +542,6 @@ def main() -> None:
 
     manual_slice_ids = {sid for sid, src in transform_sources.items() if src in ("manual", "manual_refined")}
 
-    # A step this large is a translation gap (z42→z43 is ~160 px). It is not
-    # applied to the slab. Smaller steps stay; the Z blend does not use this.
-    if args.max_slice_step_px > 0:
-        n_dropped = 0
-        for sid, (tx, ty, zcorr) in list(all_pairwise_translations.items()):
-            kept_tx, kept_ty = zero_if_over(tx, ty, args.max_slice_step_px)
-            if (kept_tx, kept_ty) == (float(tx), float(ty)):
-                continue
-            logger.warning(
-                "Slice %s: not applying slab translation tx=%.1f ty=%.1f (mag %.1f > %.1f px)",
-                sid,
-                tx,
-                ty,
-                float(np.hypot(tx, ty)),
-                args.max_slice_step_px,
-            )
-            all_pairwise_translations[sid] = (kept_tx, kept_ty, zcorr)
-            tfm_tuple = registration_transforms.get(sid)
-            if tfm_tuple is not None:
-                clear_euler_translation(tfm_tuple[0])
-            n_dropped += 1
-        if n_dropped:
-            logger.info("Dropped %s slab translations over %.1f px", n_dropped, args.max_slice_step_px)
-
     # Accumulate translations cumulatively if requested
     # Translations are moved from the transforms into cumsum_px so that:
     # 1. The output canvas is sized to accommodate the cumulative shifts
@@ -767,45 +670,7 @@ def main() -> None:
         if slice_id in registration_transforms and registration_transforms[slice_id] is not None:
             _, fixed_z, moving_z, _ = registration_transforms[slice_id]
 
-        if args.z_from_registration:
-            # XY stays on the manual Euler. Z is the correlation search,
-            # not the overlap chosen in the manual tool and not the
-            # slicing-interval guess. Do not crop the incoming cut face.
-            res_z_um = res_z_mm * 1000
-            overlap, corr = find_z_overlap(
-                prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
-            )
-            moving_z = 0
-            if args.z_overlap_min_corr > 0 and corr < args.z_overlap_min_corr:
-                interval_voxels = int(args.slicing_interval_mm / res_z_mm)
-                id_step = max(1, int(slice_id) - int(prev_id))
-                fallback_overlap = expected_z_overlap(vol.shape[0], 0, interval_voxels, id_step)
-                logger.warning(
-                    "Slice %s: registration Z correlation %.3f < %.2f, using expected overlap %s (was %s)",
-                    slice_id,
-                    corr,
-                    args.z_overlap_min_corr,
-                    fallback_overlap,
-                    overlap,
-                )
-                overlap = fallback_overlap
-                correlation_fallback_used = True
-            blend_overlap = max(0, overlap)
-            logger.info("Slice %s: registration Z overlap=%s voxels (corr=%.3f)", slice_id, overlap, corr)
-        elif slice_id in manual_slice_ids and fixed_z is not None:
-            # --z_from_registration is off, so the Z saved in the manual tool is used.
-            prev_nz = prev_vol.shape[0]
-            overlap = max(0, prev_nz - int(fixed_z))
-            blend_overlap = overlap
-            corr = 1.0
-            logger.info(
-                "Slice %s: manual Z overlap=%s voxels (fixed_z=%s, moving_z=%s)",
-                slice_id,
-                overlap,
-                fixed_z,
-                moving_z,
-            )
-        elif args.use_expected_overlap:
+        if args.use_expected_overlap:
             # Expected overlap from known slicing interval and volume depth.
             # ALWAYS use the stacking crop (moving_z_first_index), NOT the
             # pairwise template stored in offsets.txt (moving_z_index). That
@@ -1064,61 +929,6 @@ def main() -> None:
         out_ny = int(np.ceil(max_y))
         logger.info("Expanded canvas for manual Euler padding: %s x %s", out_ny, out_nx)
 
-    # The z41→z42 and z43→z44 outline steps are ~70 px after the manuals.
-    # z42→z43 is already ~25 px; capping each raw step leaves that pair alone.
-    if args.max_outline_step_px > 0:
-        outline_ids = list(available_ids)
-        outline_centroids = [
-            _outline_world_xy(
-                slice_files[sid],
-                cumsum_px[sid],
-                manual_pads.get(sid, (0, 0)),
-                registration_transforms.get(sid),
-                sid in manual_slice_ids,
-            )
-            for sid in outline_ids
-        ]
-        outline_corrections = outline_step_corrections(outline_centroids, args.max_outline_step_px)
-        n_outline = 0
-        for sid, (corr_x, corr_y), centroid, previous in zip(
-            outline_ids,
-            outline_corrections,
-            outline_centroids,
-            [None, *outline_centroids[:-1]],
-            strict=True,
-        ):
-            if abs(corr_x) < 0.5 and abs(corr_y) < 0.5:
-                continue
-            dx, dy = cumsum_px[sid]
-            cumsum_px[sid] = (dx + corr_x, dy + corr_y)
-            raw = float("nan")
-            if centroid is not None and previous is not None:
-                raw = float(np.hypot(centroid[0] - previous[0], centroid[1] - previous[1]))
-            logger.info(
-                "Slice %s: outline canvas dx %+.1f dy %+.1f (raw step %.0f px, cap %.0f)",
-                sid,
-                corr_x,
-                corr_y,
-                raw,
-                args.max_outline_step_px,
-            )
-            n_outline += 1
-        if n_outline:
-            min_x = min(dx for dx, _dy in cumsum_px.values())
-            min_y = min(dy for _dx, dy in cumsum_px.values())
-            shift_x = min(0.0, min_x)
-            shift_y = min(0.0, min_y)
-            cumsum_px = {sid: (dx - shift_x, dy - shift_y) for sid, (dx, dy) in cumsum_px.items()}
-            max_x = 0.0
-            max_y = 0.0
-            for sid, (dx, dy) in cumsum_px.items():
-                pad_x, pad_y = manual_pads.get(sid, (0, 0))
-                max_x = max(max_x, dx + first_vol.shape[2] + 2 * pad_x)
-                max_y = max(max_y, dy + first_vol.shape[1] + 2 * pad_y)
-            out_nx = int(np.ceil(max_x))
-            out_ny = int(np.ceil(max_y))
-            logger.info("Outline cap moved %s slices; canvas %s x %s", n_outline, out_ny, out_nx)
-
     # Second pass: assemble volume
     logger.info("Assembling volume: %s x %s x %s", total_z, out_ny, out_nx)
     output_shape = (total_z, out_ny, out_nx)
@@ -1157,11 +967,6 @@ def main() -> None:
     first_dx, first_dy = cumsum_px[first_id]
     first_vol_f32 = first_vol.astype(np.float32)
     first_vol_f32 = _apply_overlap_z_gain_to_slice(first_vol_f32, first_id)
-    slice_median_target = None
-    if args.flatten_z_profile:
-        profile_threshold = max(args.blend_tissue_threshold, 0.05)
-        first_vol_f32 = flatten_slice_z_profile(first_vol_f32, tissue_threshold=profile_threshold)
-        slice_median_target = slice_tissue_median(first_vol_f32, profile_threshold)
     shifted_first, first_coords = apply_xy_shift(first_vol_f32, first_dx, first_dy, (out_ny, out_nx))
 
     if shifted_first is not None:
@@ -1190,17 +995,6 @@ def main() -> None:
         # After crop, z=0 is the interface with the previous slab — keep gain=1
         # there and boost toward the next slice's top in the Z-end overlap.
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
-        if args.flatten_z_profile:
-            profile_threshold = max(args.blend_tissue_threshold, 0.05)
-            vol = flatten_slice_z_profile(vol, tissue_threshold=profile_threshold)
-            if slice_median_target is not None:
-                vol, slice_gain = scale_slice_to_median(
-                    vol,
-                    slice_median_target,
-                    tissue_threshold=profile_threshold,
-                )
-                if abs(slice_gain - 1.0) >= 0.02:
-                    logger.info("Slice %s: slice median gain %.3f", slice_id, slice_gain)
 
         # Apply registration transform (rotation/small translation refinement) if available
         if apply_pairwise_rigid and slice_id in registration_transforms and registration_transforms[slice_id] is not None:
@@ -1282,9 +1076,16 @@ def main() -> None:
                 existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
-                # No per-seam gain. It sat on the 0.7 floor for almost every
-                # slice and painted a dark line at each cut. The Z profile
-                # flatten above removes that stripe; Hann mixes the overlap.
+                # Do not scale the incoming slab to the previous overlap median.
+                # That match is chained (each slice is dimmed to the last dim
+                # face) and collapses contrast along Z. Hann already ramps
+                # previous-deep → incoming-top on both-tissue voxels.
+
+                gain = seam_overlap_gain(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
+                if abs(gain - 1.0) >= 0.02:
+                    shifted = apply_seam_gain(shifted, s_blend_start, overlap_depth, gain)
+                    moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
+                    logger.info("Slice %s: seam gain %.3f", slice_id, gain)
 
                 # A few pixels of cut-face residual, including on manuals.
                 # The manuals set the slab; this only closes an edge the Hann
@@ -1374,11 +1175,6 @@ def main() -> None:
     if args.output_stacking_decisions:
         decisions_df.to_csv(args.output_stacking_decisions, index=False)
         logger.info("Stacking decisions saved to %s", args.output_stacking_decisions)
-
-    # Remove the repeating slice stripe. Does not move tissue.
-    if args.notch_slice_seams:
-        period = apply_seam_notch(output.zarray)
-        logger.info("Notched slice seams (period %.1f voxels)", period)
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")

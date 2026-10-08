@@ -324,42 +324,6 @@ def apply_transform_to_volume(
     return result
 
 
-def inplane_output_point(
-    x: float,
-    y: float,
-    transform: Any,
-    *,
-    apply_translation: bool,
-) -> tuple[float, float]:
-    """Where a full-resolution point lands after the Euler used at stack time.
-
-    Matches ``Resample``: positive SimpleITK ``tx`` moves the point to a smaller x.
-    """
-    params = [float(v) for v in transform.GetParameters()]
-    if transform.GetDimension() == 3 and len(params) >= 5:
-        angle = float(params[2])
-        tx = float(params[3])
-        ty = float(params[4])
-        center = transform.GetCenter()
-        center_x, center_y = float(center[0]), float(center[1])
-    else:
-        angle = float(params[0]) if params else 0.0
-        tx = float(params[1]) if len(params) > 1 else 0.0
-        ty = float(params[2]) if len(params) > 2 else 0.0
-        center = transform.GetCenter() if hasattr(transform, "GetCenter") else (x, y)
-        center_x = float(center[0]) if len(center) > 0 else x
-        center_y = float(center[1]) if len(center) > 1 else y
-    if not apply_translation:
-        tx, ty = 0.0, 0.0
-    cosine, sine = float(np.cos(angle)), float(np.sin(angle))
-    in_x = x - center_x - tx
-    in_y = y - center_y - ty
-    # Inverse of the ITK Euler2D map (output → input).
-    out_x = center_x + cosine * in_x + sine * in_y
-    out_y = center_y - sine * in_x + cosine * in_y
-    return out_x, out_y
-
-
 def rigid_euler_pad(transform: Any, ny: int, nx: int) -> tuple[int, int, float, float, float]:
     """Return ``(pad_x, pad_y, angle_rad, tx, ty)`` for a saved Euler."""
     params = list(transform.GetParameters())
@@ -513,21 +477,20 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
     if np.any(moving_only):
         blended[moving_only] = moving_region[moving_only]
 
-    # A one-sided rim is a hard line: the other slice's tissue is off to
-    # the side, so the Z Hann never sees it. Mix that rim with nearby
-    # tissue from the other slice (~8 px). Interior overlap stays sharp.
-    # A 160 px translation gap is not closed here.
+    # A one-sided rim is a hard line: the other slice's tissue is a few
+    # pixels away, so the Z Hann never sees it. Mix that rim with the
+    # nearby tissue from the other slice. Interior overlap stays sharp.
     if np.any(fixed_only) or np.any(moving_only):
         from scipy.ndimage import gaussian_filter
 
-        sigma = (0.0, 8.0, 8.0)
+        sigma = (0.0, 1.5, 1.5)
         fixed_weight = gaussian_filter(fixed_valid.astype(np.float32), sigma=sigma)
         moving_weight = gaussian_filter(moving_valid.astype(np.float32), sigma=sigma)
         fixed_mean = gaussian_filter(np.where(fixed_valid, fixed_region, 0.0).astype(np.float32), sigma=sigma)
         moving_mean = gaussian_filter(np.where(moving_valid, moving_region, 0.0).astype(np.float32), sigma=sigma)
         fixed_mean = fixed_mean / np.maximum(fixed_weight, 1e-6)
         moving_mean = moving_mean / np.maximum(moving_weight, 1e-6)
-        rim = (fixed_weight > 0.02) & (moving_weight > 0.02) & ~both_valid
+        rim = (fixed_weight > 0.05) & (moving_weight > 0.05) & ~both_valid
         if np.any(rim):
             blended[rim] = ((1.0 - alphas) * fixed_mean + alphas * moving_mean)[rim]
 
@@ -706,176 +669,6 @@ def estimate_z_blend_xy_shift(
         ncc_after,
     )
     return dy, dx, magnitude
-
-
-def flatten_slice_z_profile(
-    vol: np.ndarray,
-    tissue_threshold: float = 0.01,
-    gain_lo: float = 0.5,
-    gain_hi: float = 2.0,
-    passes: int = 2,
-) -> np.ndarray:
-    """Remove the bright-to-dark stripe along a slice's depth.
-
-    Each plane is scaled so its tissue median matches the slice median.
-    Within a plane, contrast is unchanged. Scaling changes which voxels
-    sit above the threshold, so the correction is repeated.
-    """
-    out = vol
-    for _ in range(max(1, passes)):
-        nz = int(out.shape[0])
-        if nz < 3:
-            return out
-        med = np.empty(nz, dtype=np.float64)
-        for z in range(nz):
-            tissue = out[z] > tissue_threshold
-            med[z] = float(np.median(out[z][tissue])) if int(np.sum(tissue)) > 50 else np.nan
-        good = np.isfinite(med)
-        if int(np.sum(good)) < 3:
-            return out
-        idx = np.arange(nz)
-        filled = np.interp(idx, idx[good], med[good])
-        target = float(np.median(filled))
-        gain = np.clip(target / np.maximum(filled, 1e-6), gain_lo, gain_hi)
-        if float(np.max(np.abs(gain - 1.0))) < 0.02:
-            return out
-        # A dim plane can hold a few voxels far above its median. Cap those
-        # before the plane is brightened, or they become a saturated block.
-        adjusted = np.array(out, dtype=np.float32, copy=True)
-        for z in range(nz):
-            if gain[z] > 1.0 and np.isfinite(filled[z]):
-                cap = float(filled[z]) * 5.0
-                np.minimum(adjusted[z], cap, out=adjusted[z])
-        out = (adjusted * gain[:, np.newaxis, np.newaxis]).astype(vol.dtype, copy=False)
-    return out
-
-
-def notch_slice_seams(
-    block: np.ndarray,
-    period: float,
-    harmonics: tuple[int, ...] = (1, 2, 3, 4),
-    rel_width: float = 0.12,
-) -> np.ndarray:
-    """Remove brightness that repeats once per slice, along axis 0.
-
-    Only Fourier bins next to that period and its harmonics are cleared.
-    Voxels that were zero stay zero, so the tissue outline does not move.
-    """
-    if period < 4:
-        return block
-    spec = np.fft.rfft(block, axis=0)
-    freqs = np.fft.rfftfreq(block.shape[0])
-    keep = np.ones(spec.shape[0], dtype=bool)
-    for harmonic in harmonics:
-        center = harmonic / float(period)
-        keep &= np.abs(freqs - center) > rel_width * center
-    keep[0] = True
-    shape = (spec.shape[0],) + (1,) * (block.ndim - 1)
-    spec *= keep.reshape(shape)
-    out = np.fft.irfft(spec, n=block.shape[0], axis=0).astype(np.float32, copy=False)
-    np.clip(out, 0, None, out=out)
-    out[block == 0] = 0
-    return out
-
-
-def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05) -> float:
-    """Notch the slice-period seam on a ZYX array. Returns the period in voxels."""
-    step = 8
-    medians = np.empty(array.shape[0], dtype=np.float64)
-    for z in range(array.shape[0]):
-        plane = np.asarray(array[z, ::step, ::step])
-        tissue = plane > threshold
-        medians[z] = float(np.median(plane[tissue])) if int(np.sum(tissue)) > 40 else np.nan
-    good = np.isfinite(medians)
-    if int(np.sum(good)) < 8:
-        return 0.0
-    index = np.arange(len(medians))
-    filled = np.interp(index, index[good], medians[good])
-    period = estimate_slice_period(filled, period_min=12, period_max=40)
-    _, ny, nx = array.shape
-    for y0 in range(0, ny, tile):
-        y1 = min(ny, y0 + tile)
-        for x0 in range(0, nx, tile):
-            x1 = min(nx, x0 + tile)
-            block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
-            array[:, y0:y1, x0:x1] = notch_slice_seams(block, period)
-    return period
-
-
-def estimate_slice_period(medians: np.ndarray, period_min: float, period_max: float) -> float:
-    """Return the strongest period, in planes, inside ``[period_min, period_max]``."""
-    values = np.asarray(medians, dtype=np.float64)
-    values = values - float(np.mean(values))
-    spectrum = np.abs(np.fft.rfft(values))
-    freqs = np.fft.rfftfreq(len(values))
-    band = (freqs >= 1.0 / period_max) & (freqs <= 1.0 / period_min)
-    if not np.any(band):
-        return float(period_min)
-    peak = int(np.argmax(np.where(band, spectrum, 0.0)))
-    if freqs[peak] == 0:
-        return float(period_min)
-    return float(1.0 / freqs[peak])
-
-
-def suppress_z_slice_bands(
-    array: Any,
-    tissue_threshold: float = 0.05,
-    sigma_narrow: float = 2.0,
-    sigma_wide: float = 24.0,
-    gain_lo: float = 0.7,
-    gain_hi: float = 1.4,
-    tile: int = 100,
-) -> None:
-    """Take out the brightness wave that repeats once per slice.
-
-    A plane-wide scale leaves the wave in place where one column does not
-    follow the plane median. Along Z, divide the local mean by a mean taken
-    over about one slice, and leave slower anatomy and within-plane contrast.
-    """
-    from scipy.ndimage import gaussian_filter1d
-
-    _nz, ny, nx = array.shape
-    for y0 in range(0, ny, tile):
-        y1 = min(ny, y0 + tile)
-        for x0 in range(0, nx, tile):
-            x1 = min(nx, x0 + tile)
-            block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
-            if not np.any(block > tissue_threshold):
-                continue
-            narrow = gaussian_filter1d(block, sigma_narrow, axis=0, mode="nearest")
-            wide = gaussian_filter1d(block, sigma_wide, axis=0, mode="nearest")
-            gain = np.ones(block.shape, dtype=np.float32)
-            tissue = narrow > tissue_threshold
-            gain[tissue] = np.clip(wide[tissue] / np.maximum(narrow[tissue], 1e-6), gain_lo, gain_hi).astype(np.float32)
-            array[:, y0:y1, x0:x1] = block * gain
-
-
-def slice_tissue_median(vol: np.ndarray, tissue_threshold: float = 0.01) -> float:
-    """Median of voxels above ``tissue_threshold``, or NaN when there is too little tissue."""
-    tissue = vol > tissue_threshold
-    if int(np.sum(tissue)) < 100:
-        return float("nan")
-    return float(np.median(vol[tissue]))
-
-
-def scale_slice_to_median(
-    vol: np.ndarray,
-    target: float,
-    tissue_threshold: float = 0.01,
-    gain_lo: float = 0.5,
-    gain_hi: float = 1.4,
-) -> tuple[np.ndarray, float]:
-    """Scale a whole slice so its tissue median matches ``target``.
-
-    One gain for the entire slab. A per-plane seam gain leaves a line at the cut.
-    """
-    med = slice_tissue_median(vol, tissue_threshold)
-    if not np.isfinite(med) or med < 1e-6 or not np.isfinite(target):
-        return vol, 1.0
-    gain = float(np.clip(target / med, gain_lo, gain_hi))
-    if abs(gain - 1.0) < 0.02:
-        return vol, gain
-    return (vol * gain).astype(vol.dtype, copy=False), gain
 
 
 def seam_overlap_gain(

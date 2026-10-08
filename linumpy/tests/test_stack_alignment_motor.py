@@ -9,12 +9,9 @@ import SimpleITK as sitk
 
 from linumpy.stack_alignment.motor_stack import (
     accumulate_pairwise_translations,
-    clear_euler_translation,
     common_space_xy_policy,
     compute_output_shape,
     load_registration_transforms,
-    outline_step_corrections,
-    zero_if_over,
 )
 
 # ---------------------------------------------------------------------------
@@ -70,32 +67,6 @@ def test_load_registration_transforms_basic(tmp_path: Path):
     assert moving_z == 8
     assert abs(confidence - 0.75) < 1e-9
     assert pairwise[1] == (2.0, -1.0, 0.6)
-
-
-def test_load_registration_transforms_keeps_manual_below_zcorr_gate(tmp_path: Path):
-    """z43 is a checked manual with zcorr 0.207. The 0.3 gate must not drop it."""
-    metrics = {
-        "source": "manual",
-        "overall_status": "ok",
-        "metrics": {
-            "registration_confidence": {"value": 1.0},
-            "translation_x": {"value": -115.5},
-            "translation_y": {"value": -114.3},
-            "z_correlation": {"value": 0.207},
-            "rotation": {"value": 0.06},
-        },
-    }
-    _write_transform_dir(tmp_path, 43, metrics)
-
-    transforms, pairwise, _sources = load_registration_transforms(
-        tmp_path,
-        [42, 43],
-        load_min_zcorr=0.3,
-        load_max_rotation=8.0,
-    )
-
-    assert transforms[43] is not None
-    assert abs(pairwise[43][0] - (-115.5)) < 1e-6
 
 
 def test_load_registration_transforms_metric_gating_rejects_low_zcorr(tmp_path: Path):
@@ -334,36 +305,6 @@ def test_common_space_xy_policy_accumulates_on_common_space():
     assert accumulate is True
     assert apply_tfm is True
     assert rotation_only is True
-
-
-def test_outline_step_corrections_caps_z42_neighbours_and_keeps_the_middle():
-    # Measured outline centroids: z41, z42 (+65,+74), z43 (+24,+25), z44 (+76,+64).
-    centroids = [(0.0, 0.0), (65.0, 74.0), (89.0, 99.0), (165.0, 163.0)]
-    corrections = outline_step_corrections(centroids, 36)
-    placed = [(c[0] + d[0], c[1] + d[1]) for c, d in zip(centroids, corrections, strict=True)]
-    steps = [float(np.hypot(placed[i][0] - placed[i - 1][0], placed[i][1] - placed[i - 1][1])) for i in range(1, 4)]
-    assert abs(steps[0] - 36.0) < 0.05
-    assert abs(steps[2] - 36.0) < 0.05
-    middle = float(np.hypot(24.0, 25.0))
-    assert abs(steps[1] - middle) < 0.05
-
-
-def test_zero_if_over_drops_the_z42_step_and_keeps_a_small_one():
-    assert zero_if_over(-56.3, -154.6, 140) == (0.0, 0.0)
-    assert zero_if_over(-114.3, -114.2, 140) == (0.0, 0.0)
-    assert zero_if_over(-5.0, -3.2, 140) == (-5.0, -3.2)
-    assert zero_if_over(-114.3, -114.2, 0) == (-114.3, -114.2)
-
-
-def test_clear_euler_translation_keeps_angle():
-    tfm = sitk.Euler3DTransform()
-    tfm.SetRotation(0.0, 0.0, -0.002)
-    tfm.SetTranslation((-114.3, -114.2, 0.0))
-    clear_euler_translation(tfm)
-    params = list(tfm.GetParameters())
-    assert params[3] == 0.0
-    assert params[4] == 0.0
-    assert abs(params[2] - (-0.002)) < 1e-9
 
 
 def test_common_space_xy_policy_accumulates_without_common_space():

@@ -1,12 +1,9 @@
 """Tests for linumpy/mosaic/stacking.py"""
 
-from typing import Any
-
 import numpy as np
 import pytest
 
 from linumpy.mosaic.stacking import (
-    apply_2d_transform,
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
     apply_xy_shift,
@@ -20,17 +17,11 @@ from linumpy.mosaic.stacking import (
     extract_overlap_rois,
     find_z_overlap,
     fit_overlap_log_ratio,
-    flatten_slice_z_profile,
-    inplane_output_point,
-    notch_slice_seams,
     overlap_z_gain_curve,
     overlap_z_profiles,
     paste_tissue,
     refine_z_blend_overlap,
-    scale_slice_to_median,
     seam_overlap_gain,
-    slice_tissue_median,
-    suppress_z_slice_bands,
 )
 
 
@@ -178,83 +169,6 @@ def test_blend_overlap_z_single_slice():
     moving = np.zeros((1, 8, 8), dtype=np.float32)
     result = blend_overlap_z(fixed, moving)
     assert result.shape == (1, 8, 8)
-
-
-def test_inplane_output_point_matches_a_resampled_pixel():
-    import SimpleITK as sitk
-
-    image = np.zeros((40, 50), dtype=np.float32)
-    image[12, 20] = 1.0
-    transform = sitk.Euler3DTransform()
-    transform.SetCenter((25.0, 20.0, 0.0))
-    transform.SetRotation(0.0, 0.0, 0.0)
-    transform.SetTranslation((8.0, -4.0, 0.0))
-    moved = apply_2d_transform(image, transform, rotation_only=False, max_rotation_deg=0)
-    rows, cols = np.nonzero(moved > 0.5)
-    out_x, out_y = inplane_output_point(20.0, 12.0, transform, apply_translation=True)
-    assert abs(float(cols.mean()) - out_x) < 0.6
-    assert abs(float(rows.mean()) - out_y) < 0.6
-
-
-def test_scale_slice_to_median_matches_a_brighter_neighbour():
-    dim = np.full((6, 16, 16), 0.20, dtype=np.float32)
-    bright = np.full((6, 16, 16), 0.40, dtype=np.float32)
-    target = slice_tissue_median(dim)
-    scaled, gain = scale_slice_to_median(bright, target)
-    assert abs(gain - 0.5) < 1e-6
-    assert abs(slice_tissue_median(scaled) - target) < 1e-5
-
-
-def test_notch_slice_seams_removes_the_repeating_step():
-    depth = np.arange(200, dtype=np.float32)
-    slow = 0.30 + 0.05 * np.sin(2 * np.pi * depth / 80)
-    seam = 0.04 * np.sign(np.sin(2 * np.pi * depth / 20))
-    volume = np.broadcast_to((slow + seam)[:, None, None], (200, 4, 4)).copy()
-    volume[0, 0, 0] = 0
-    out = notch_slice_seams(volume, period=20)
-    assert out[0, 0, 0] == 0
-    spectrum = np.abs(np.fft.rfft(out[1:, 1, 1] - np.mean(out[1:, 1, 1])))
-    freqs = np.fft.rfftfreq(out.shape[0] - 1)
-    assert float(spectrum[int(np.argmin(np.abs(freqs - 1 / 20)))]) < 0.05
-
-
-def test_suppress_z_slice_bands_removes_a_slice_period_wave():
-    class _Array:
-        def __init__(self, data: np.ndarray) -> None:
-            self.data = data
-            self.shape = data.shape
-
-        def __getitem__(self, index: Any) -> np.ndarray:
-            return self.data[index]
-
-        def __setitem__(self, index: Any, value: np.ndarray) -> None:
-            self.data[index] = value
-
-    depth = np.arange(200, dtype=np.float32)
-    wave = 0.2 + 0.06 * np.sin(2 * np.pi * depth / 20)
-    volume = np.broadcast_to(wave[:, None, None], (200, 8, 8)).copy()
-    array = _Array(volume)
-    suppress_z_slice_bands(array, tissue_threshold=0.05, tile=8)
-    column = array.data[40:160, 0, 0]
-    assert float(column.max() - column.min()) < 0.04
-
-
-def test_flatten_slice_z_profile_removes_the_depth_hump():
-    vol = np.full((8, 32, 32), 0.01, dtype=np.float32)
-    for z, value in enumerate((0.16, 0.22, 0.29, 0.28, 0.22, 0.17, 0.16, 0.16)):
-        vol[z, 4:28, 4:28] = value
-    out = flatten_slice_z_profile(vol, tissue_threshold=0.05)
-    medians = [float(np.median(out[z][out[z] > 0.05])) for z in range(8)]
-    assert max(medians) / min(medians) < 1.15
-
-
-def test_flatten_does_not_amplify_a_hot_spot_on_a_dim_plane():
-    vol = np.full((6, 40, 40), 0.20, dtype=np.float32)
-    vol[0] = 0.10
-    vol[0, 10:15, 10:15] = 1.0
-    out = flatten_slice_z_profile(vol, tissue_threshold=0.05)
-    assert float(out[0, 12, 12]) <= 1.0 + 1e-5
-    assert float(np.median(out[0][out[0] > 0.05])) > 0.15
 
 
 def test_blend_overlap_z_softens_a_shifted_edge():

@@ -411,17 +411,8 @@ def save_annotated_views(
     if slice_ids is not None and n_input_slices is None:
         n_input_slices = len(slice_ids)
 
-    # The box center can sit on the edge of the brain and open a false gap.
-    # Cut through the tissue instead.
-    if x_slice is None or y_slice is None:
-        mass_y = np.sum(np.asarray(image) > 0, axis=(0, 2))
-        mass_x = np.sum(np.asarray(image) > 0, axis=(0, 1))
-        if x_slice is None:
-            total = float(np.sum(mass_y))
-            x_slice = int(np.sum(np.arange(n_rows) * mass_y) / total) if total > 0 else n_rows // 2
-        if y_slice is None:
-            total = float(np.sum(mass_x))
-            y_slice = int(np.sum(np.arange(n_cols) * mass_x) / total) if total > 0 else n_cols // 2
+    x_slice = x_slice if x_slice is not None else n_rows // 2
+    y_slice = y_slice if y_slice is not None else n_cols // 2
 
     # Derive panel titles and axis labels from orientation when available.
     orient = _panel_labels_from_orientation(orientation) if orientation else None
@@ -462,19 +453,16 @@ def save_annotated_views(
         aspect1 = "equal"
         aspect2 = "equal"
 
-    def _panel_vmax(panel: np.ndarray) -> float:
-        positive = panel[np.isfinite(panel) & (panel > 0)]
-        return float(np.percentile(positive, 99.5)) if positive.size > 0 else 1.0
-
+    allvals = np.concatenate([image_zy.ravel(), image_zx.ravel()])
+    display_vals = allvals[np.isfinite(allvals) & (allvals > 0)]
     vmin = 0.0
-    vmax1 = _panel_vmax(image_zy)
-    vmax2 = _panel_vmax(image_zx)
+    vmax = float(np.percentile(display_vals, 99.9)) if display_vals.size > 0 else 1.0
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 12), facecolor="black")
     for ax in [ax1, ax2]:
         ax.set_facecolor("black")
 
-    ax1.imshow(image_zy, cmap="magma", origin="lower", vmin=vmin, vmax=vmax1, aspect=aspect1)
+    ax1.imshow(image_zy, cmap="magma", origin="lower", vmin=vmin, vmax=vmax, aspect=aspect1)
     ax1.set_title(title1, color="white", fontsize=12, pad=10)
     ax1.set_xlabel(xlabel1, color="white", fontsize=10)
     ax1.set_ylabel(ylabel1, color="white", fontsize=10)
@@ -492,7 +480,7 @@ def save_annotated_views(
         slice_ids=slice_ids,
     )
 
-    ax2.imshow(image_zx, cmap="magma", origin="lower", vmin=vmin, vmax=vmax2, aspect=aspect2)
+    ax2.imshow(image_zx, cmap="magma", origin="lower", vmin=vmin, vmax=vmax, aspect=aspect2)
     ax2.set_title(title2, color="white", fontsize=12, pad=10)
     ax2.set_xlabel(xlabel2, color="white", fontsize=10)
     ax2.set_ylabel(ylabel2, color="white", fontsize=10)

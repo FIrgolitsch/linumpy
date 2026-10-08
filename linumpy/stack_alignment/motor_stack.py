@@ -10,7 +10,6 @@ plus ``linumpy.stack_alignment.io`` (shifts loading) and
 
 import json
 import logging
-from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -21,74 +20,6 @@ import SimpleITK as sitk
 logger = logging.getLogger(__name__)
 
 _MANUAL_SOURCES = frozenset({"manual", "manual_refined"})
-
-
-def clamp_radial(tx: float, ty: float, max_px: float) -> tuple[float, float]:
-    """Shorten a vector so its length is at most ``max_px``. ``max_px <= 0`` leaves it."""
-    tx_f, ty_f = float(tx), float(ty)
-    if max_px <= 0:
-        return tx_f, ty_f
-    magnitude = float(np.hypot(tx_f, ty_f))
-    if magnitude <= max_px or magnitude == 0.0:
-        return tx_f, ty_f
-    scale = max_px / magnitude
-    return tx_f * scale, ty_f * scale
-
-
-def outline_step_corrections(
-    centroids: Sequence[tuple[float, float] | None],
-    max_step: float,
-) -> list[tuple[float, float]]:
-    """Canvas shifts that cap each raw outline step at ``max_step``.
-
-    The first slice is fixed. A step already inside the cap is kept, including
-    the step that follows a capped one, so a 25 px pair is not opened up when
-    its neighbour is pulled in.
-    """
-    corrections = [(0.0, 0.0)] * len(centroids)
-    if len(centroids) < 2 or max_step <= 0:
-        return corrections
-    out: list[tuple[float, float]] = [(0.0, 0.0)]
-    for index in range(1, len(centroids)):
-        previous = centroids[index - 1]
-        current = centroids[index]
-        if previous is None or current is None:
-            out.append(out[-1])
-            continue
-        raw_x = current[0] - previous[0]
-        raw_y = current[1] - previous[1]
-        step_x, step_y = clamp_radial(raw_x, raw_y, max_step)
-        previous_correction = out[-1]
-        desired_x = previous[0] + previous_correction[0] + step_x
-        desired_y = previous[1] + previous_correction[1] + step_y
-        out.append((desired_x - current[0], desired_y - current[1]))
-    return out
-
-
-def zero_if_over(tx: float, ty: float, max_px: float) -> tuple[float, float]:
-    """Drop a translation whose magnitude exceeds ``max_px``.
-
-    ``max_px <= 0`` leaves the translation unchanged. This is a placement
-    limit, not a blend.
-    """
-    tx_f, ty_f = float(tx), float(ty)
-    if max_px <= 0:
-        return tx_f, ty_f
-    if float(np.hypot(tx_f, ty_f)) > max_px:
-        return 0.0, 0.0
-    return tx_f, ty_f
-
-
-def clear_euler_translation(transform: Any) -> None:
-    """Zero the in-plane translation of a saved Euler. Angle and center stay."""
-    params = [float(v) for v in transform.GetParameters()]
-    if transform.GetDimension() == 3 and len(params) >= 5:
-        params[3] = 0.0
-        params[4] = 0.0
-    elif len(params) >= 3:
-        params[1] = 0.0
-        params[2] = 0.0
-    transform.SetParameters(params)
 
 
 def _manual_gap_record(transform_dir: Path) -> tuple[str | None, int | None]:
@@ -272,10 +203,8 @@ def load_registration_transforms(
                     metrics_zcorr = 0.0
                 all_pairwise_translations[slice_id] = (metrics_tx, metrics_ty, metrics_zcorr)
                 sources[slice_id] = metrics_data.get("source")
-                # A manual was checked in the align tool. Low z_correlation
-                # is not a reason to drop it (z43 is source manual, zcorr
-                # 0.207, and the gate was deleting that Euler).
-                if sources[slice_id] not in _MANUAL_SOURCES and use_metric_gating:
+
+                if use_metric_gating:
                     # Metric-based gating: accept based on z_correlation and rotation
                     try:
                         zcorr = float(metrics_data["metrics"]["z_correlation"]["value"])
@@ -303,7 +232,7 @@ def load_registration_transforms(
                         rot_deg,
                         status,
                     )
-                elif sources[slice_id] not in _MANUAL_SOURCES:
+                else:
                     should_skip = (status == "error" and skip_error_status) or (status == "warning" and skip_warning_status)
                     if should_skip:
                         logger.warning(
