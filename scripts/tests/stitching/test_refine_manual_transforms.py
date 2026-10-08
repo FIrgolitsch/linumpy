@@ -121,6 +121,44 @@ def test_run_with_manual_transform(tmp_path, script_runner):
     assert "ncc_before" in metrics["refinement"]
 
 
+def test_no_manual_z_keeps_registration_offsets(tmp_path, script_runner):
+    """--no-manual-z writes the pairwise Z, not the Z saved in the manual tool."""
+    fixed_zarr = tmp_path / "slice_z04.ome.zarr"
+    moving_zarr = tmp_path / "slice_z05.ome.zarr"
+    auto_dir = tmp_path / "auto_transforms"
+    manual_dir = tmp_path / "manual"
+    out_dir = tmp_path / "out"
+
+    _make_zarr_slice(fixed_zarr)
+    _make_zarr_slice(moving_zarr)
+
+    auto_dir.mkdir()
+    _make_transform(auto_dir / "transform.tfm")
+    np.savetxt(str(auto_dir / "offsets.txt"), [8, 2], fmt="%d")
+
+    manual_pair = manual_dir / "slice_z05"
+    manual_pair.mkdir(parents=True)
+    _make_transform(manual_pair / "transform.tfm", tx=1.0, ty=0.5)
+    np.savetxt(str(manual_pair / "offsets.txt"), [1, 0], fmt="%d")
+
+    ret = script_runner.run(
+        [
+            "linum-refine-manual-transforms",
+            str(fixed_zarr),
+            str(moving_zarr),
+            str(auto_dir),
+            str(out_dir),
+            "--manual_transforms_dir",
+            str(manual_dir),
+            "--no-manual-z",
+            "-f",
+        ]
+    )
+    assert ret.success, ret.stderr
+    saved = np.loadtxt(str(out_dir / "offsets.txt"), dtype=int)
+    assert list(saved) == [8, 2]
+
+
 def test_overwrite_guard(tmp_path, script_runner):
     """Running twice without -f should fail; with -f should succeed."""
     fixed_zarr = tmp_path / "slice_z04.ome.zarr"

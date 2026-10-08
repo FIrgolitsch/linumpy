@@ -1160,15 +1160,17 @@ process refine_manual_transforms {
 
     script:
     def manual_fp = Helpers.manualTransformsFingerprint(params)
+    def manual_z_flag = params.use_manual_z_overlap ? "" : " --no-manual-z"
     """
     # manual_transforms_fingerprint ${manual_fp}
     # refine_against_corrected_fixed 1
+    # manual_z ${params.use_manual_z_overlap}
     dirname=\$(basename ${moving_vol} .ome.zarr)
     linum-refine-manual-transforms ${fixed_vol} ${moving_vol} auto_transforms \$dirname \
         --max_translation_px ${params.refine_max_translation_px} \
         --max_rotation_deg ${params.refine_max_rotation_deg} \
         --manual_transforms_dir ${manual_transforms} \
-        --overlap_px 20 \
+        --overlap_px 20${manual_z_flag} \
         -f
     """
 

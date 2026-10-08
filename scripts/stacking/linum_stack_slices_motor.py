@@ -749,16 +749,23 @@ def main() -> None:
                     args.blend_z_refine_min_confidence,
                 )
         elif fixed_z is not None:
-            # Registration-derived Z: overlap starts at the 2-D template match
-            # in the previous slab (fixed_z). offsets moving_z is that template
-            # plane and is used as the crop so moving[template] lines up with
-            # fixed[fixed_z]. Production stacking uses --use_expected_overlap
-            # instead, which does not take this branch.
+            # Z from pairwise registration (best_z in the previous slab).
+            # moving_z in offsets.txt is the 2-D template plane, not a crop.
+            # Fold it into the overlap so that plane still meets fixed[best_z]
+            # and the incoming cut face is kept.
             prev_nz = prev_vol.shape[0]
-            overlap = max(0, prev_nz - fixed_z)
+            template_z = int(moving_z or 0)
+            overlap = max(0, prev_nz - int(fixed_z) + template_z)
+            moving_z = args.moving_z_first_index
             blend_overlap = overlap
             corr = 1.0  # Assume good correlation since registration found it
-            logger.debug("Slice %s: fixed_z=%s, moving_z=%s, overlap=%s voxels", slice_id, fixed_z, moving_z, overlap)
+            logger.info(
+                "Slice %s: registration Z overlap=%s voxels (fixed_z=%s, template_z=%s)",
+                slice_id,
+                overlap,
+                fixed_z,
+                template_z,
+            )
         else:
             # find_z_overlap expects resolution in µm for its internal calculation
             res_z_um = res_z_mm * 1000

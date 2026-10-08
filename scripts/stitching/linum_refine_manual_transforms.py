@@ -67,6 +67,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Max residual rotation to search during refinement [%(default)s degrees]",
     )
     p.add_argument(
+        "--manual-z",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Use the Z index saved by the manual tool. "
+        "--no-manual-z keeps the Z already found by pairwise registration. [%(default)s]",
+    )
+    p.add_argument(
         "--overlap_px",
         type=int,
         default=20,
@@ -372,13 +379,14 @@ def main() -> None:
 
     logger.info("z%d: refining from manual transform", slice_id)
 
-    # Load Z-indices (fixed_z, moving_z). Prefer the manual offsets.txt: the
-    # user may have corrected the Z-overlap in the manual-align tool's Z mode,
-    # and that correction must drive which depth slabs are registered here.
-    # Fall back to the automated offsets when the manual file is absent.
+    # Load Z-indices (fixed_z, moving_z). With --manual-z, prefer the manual
+    # offsets: the user corrected the overlap in the manual tool. With
+    # --no-manual-z, keep the Z pairwise registration already found. That
+    # search was initialised at the cut thickness.
     manual_offsets_path = manual_tfm_path.parent / "offsets.txt"
     auto_offsets_path = auto_transform_dir / "offsets.txt"
-    offsets_path = manual_offsets_path if manual_offsets_path.exists() else auto_offsets_path
+    use_manual_offsets = args.manual_z and manual_offsets_path.exists()
+    offsets_path = manual_offsets_path if use_manual_offsets else auto_offsets_path
     if offsets_path.exists():
         offsets_arr = np.loadtxt(str(offsets_path), dtype=int)
         fixed_z = int(offsets_arr[0]) if offsets_arr.size >= 1 else 0
