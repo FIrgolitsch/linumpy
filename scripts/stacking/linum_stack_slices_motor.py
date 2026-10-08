@@ -45,6 +45,7 @@ from linumpy.mosaic.stacking import (
     find_z_overlap,
     overlap_z_gain_curve,
     paste_tissue,
+    registration_z_overlap,
     rigid_euler_pad,
     seam_overlap_gain,
 )
@@ -755,7 +756,7 @@ def main() -> None:
             # and the incoming cut face is kept.
             prev_nz = prev_vol.shape[0]
             template_z = int(moving_z or 0)
-            overlap = max(0, prev_nz - int(fixed_z) + template_z)
+            overlap = registration_z_overlap(prev_nz, vol.shape[0], int(fixed_z), template_z)
             moving_z = args.moving_z_first_index
             blend_overlap = overlap
             corr = 1.0  # Assume good correlation since registration found it

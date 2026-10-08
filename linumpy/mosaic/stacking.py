@@ -116,6 +116,18 @@ def expected_z_overlap(vol_nz: int, moving_z: int, interval_voxels: int, id_step
     return int(vol_nz) - int(moving_z or 0) - int(interval_voxels) * step
 
 
+def registration_z_overlap(prev_nz: int, moving_nz: int, fixed_z: int, template_z: int = 0) -> int:
+    """Overlap from pairwise ``best_z``, without cropping the incoming cut face.
+
+    ``fixed_z`` is the plane in the previous slab where the moving template
+    plane landed. ``template_z`` is that 2-D template index. It is added into
+    the overlap so the same plane still meets ``fixed_z`` while plane 0 of the
+    incoming slab is kept. The result is clamped to both slabs.
+    """
+    overlap = max(0, int(prev_nz) - int(fixed_z) + int(template_z or 0))
+    return int(min(overlap, max(0, int(prev_nz)), max(0, int(moving_nz))))
+
+
 def crop_moving_volume(vol: np.ndarray, moving_z_start: int = 0) -> np.ndarray:
     """Drop leading Z planes from a moving slab before Hann/paste.
 

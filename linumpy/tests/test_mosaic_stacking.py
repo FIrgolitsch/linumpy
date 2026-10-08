@@ -21,6 +21,7 @@ from linumpy.mosaic.stacking import (
     overlap_z_profiles,
     paste_tissue,
     refine_z_blend_overlap,
+    registration_z_overlap,
     seam_overlap_gain,
 )
 
@@ -32,6 +33,16 @@ def _make_vol(shape=(10, 32, 32), fill=1.0):
 # ---------------------------------------------------------------------------
 # find_z_overlap
 # ---------------------------------------------------------------------------
+
+
+def test_registration_z_overlap_keeps_cut_face_and_clamps():
+    # Template plane 4 meets previous plane 8. Cut face stays, so the overlap
+    # is (prev_nz - fixed_z) plus the template index.
+    assert registration_z_overlap(56, 80, fixed_z=8, template_z=4) == 52
+    # Incoming slab is shorter than that overlap. Do not ask the blend for
+    # planes the slice does not have.
+    assert registration_z_overlap(56, 50, fixed_z=8, template_z=4) == 50
+    assert registration_z_overlap(20, 50, fixed_z=4, template_z=4) == 20
 
 
 def test_find_z_overlap_returns_tuple():
