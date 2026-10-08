@@ -281,12 +281,30 @@ def n4_correct_gpu(
     xp = get_array_module(use_gpu=use_gpu and GPU_AVAILABLE)
     on_gpu = xp is not np
 
-    # Single host -> device transfer of the volume.  The fit only reads a
-    # strided mask, so that mask is made contiguous at the shrunk shape
-    # before upload.  A full-resolution bool mask is another byte per voxel
-    # (~11 GB on a whole-brain stack) on top of the volume already on device.
-    vol_xp = xp.asarray(vol, dtype=xp.float32)
-    full_shape: tuple[int, int, int] = (int(vol_xp.shape[0]), int(vol_xp.shape[1]), int(vol_xp.shape[2]))
+    # The fit only needs a strided copy.  On the GPU, keep that small copy
+    # and leave the full volume on the host: a whole-brain stack is ~40 GB
+    # and the fit's working set does not fit beside it on a 48 GB card.
+    vol_host: np.ndarray | None = None
+    vol_xp: Any = None
+    if on_gpu and shrink_factor > 1:
+        if hasattr(vol, "device"):
+            import cupy as cp
+
+            vol_host = cp.asnumpy(vol)
+        else:
+            vol_host = np.asarray(vol, dtype=np.float32)
+        full_shape = (int(vol_host.shape[0]), int(vol_host.shape[1]), int(vol_host.shape[2]))
+        sl = (slice(None, None, shrink_factor),) * 3
+        vol_small = xp.asarray(np.ascontiguousarray(vol_host[sl]), dtype=xp.float32)
+    else:
+        vol_xp = xp.asarray(vol, dtype=xp.float32)
+        full_shape = (int(vol_xp.shape[0]), int(vol_xp.shape[1]), int(vol_xp.shape[2]))
+        if shrink_factor > 1:
+            sl = (slice(None, None, shrink_factor),) * 3
+            vol_small = xp.ascontiguousarray(vol_xp[sl])
+        else:
+            sl = None
+            vol_small = vol_xp
 
     def _mask_for_fit(slicer: tuple[slice, ...] | None, shape: tuple[int, int, int]) -> Any:
         if mask is None:
@@ -298,15 +316,8 @@ def n4_correct_gpu(
             sampled = np.ascontiguousarray(sampled)
         return xp.ascontiguousarray(xp.asarray(sampled, dtype=xp.bool_))
 
-    if shrink_factor > 1:
-        # The fit only touches the small arrays.  `vol_xp` stays live for the
-        # full-resolution evaluation pass at the bottom of the function.
-        sl = (slice(None, None, shrink_factor),) * 3
-        vol_small = xp.ascontiguousarray(vol_xp[sl])
-        mask_small = _mask_for_fit(sl, (int(vol_small.shape[0]), int(vol_small.shape[1]), int(vol_small.shape[2])))
-    else:
-        vol_small = vol_xp
-        mask_small = _mask_for_fit(None, full_shape)
+    small_shape_now = (int(vol_small.shape[0]), int(vol_small.shape[1]), int(vol_small.shape[2]))
+    mask_small = _mask_for_fit(sl, small_shape_now)
 
     if on_gpu:
         import cupy as _cp_free
@@ -481,7 +492,15 @@ def n4_correct_gpu(
         )
         bias_chunk = xp.exp(log_bias_chunk).astype(xp.float32)
         del log_bias_chunk
-        corrected_chunk = (vol_xp[z0:z1] / xp.maximum(bias_chunk, 1e-6)).astype(xp.float32)
+        if vol_xp is None:
+            # Copy first: `out` may alias the host volume we are reading.
+            assert vol_host is not None
+            src = np.array(vol_host[z0:z1], dtype=np.float32, copy=True)
+            vol_tile = xp.asarray(src)
+        else:
+            vol_tile = vol_xp[z0:z1]
+        corrected_chunk = (vol_tile / xp.maximum(bias_chunk, 1e-6)).astype(xp.float32)
+        del vol_tile
 
         if on_gpu:
             corrected_host[z0:z1] = cp.asnumpy(corrected_chunk)

@@ -239,6 +239,27 @@ def _save(arr: np.ndarray, path: str, res: list, args: argparse.Namespace) -> No
     )
 
 
+def _to_host(arr: np.ndarray) -> np.ndarray:
+    """Return a host array. A CuPy input is copied; the caller drops it."""
+    from linumpy.gpu import is_cupy_array
+
+    if not is_cupy_array(arr):
+        return arr
+    import cupy as cp
+
+    return cp.asnumpy(arr)
+
+
+def _free_gpu_pool() -> None:
+    from linumpy.gpu import GPU_AVAILABLE
+
+    if not GPU_AVAILABLE:
+        return
+    import cupy as cp
+
+    cp.get_default_memory_pool().free_all_blocks()
+
+
 def _as_same_module(arr: np.ndarray, like: np.ndarray) -> np.ndarray:
     """Put *arr* on *like*'s module so in-place ufuncs can run."""
     from linumpy.gpu import is_cupy_array
@@ -406,6 +427,13 @@ def main() -> None:
 
         if args.mode in ("global", "two_pass"):
             logger.info("Running global N4…")
+            # Per-section N4 may have left the stack on the GPU. The global
+            # fit only needs a downsampled copy; the full volume stays on
+            # the host so a ~40 GB stack does not fill a 48 GB card.
+            working_vol = _to_host(working_vol)
+            if mask is not None:
+                mask = _to_host(mask)
+            _free_gpu_pool()
             # When the GPU backend is in play and ``working_vol`` already
             # owns a full-resolution float32 buffer, alias it as the output
             # destination so n4_correct_gpu does not allocate a fresh
