@@ -281,27 +281,33 @@ def n4_correct_gpu(
     xp = get_array_module(use_gpu=use_gpu and GPU_AVAILABLE)
     on_gpu = xp is not np
 
-    # Single host -> device transfer.  All intermediates remain on `xp`.
+    # Single host -> device transfer of the volume.  The fit only reads a
+    # strided mask, so that mask is made contiguous at the shrunk shape
+    # before upload.  A full-resolution bool mask is another byte per voxel
+    # (~11 GB on a whole-brain stack) on top of the volume already on device.
     vol_xp = xp.asarray(vol, dtype=xp.float32)
     full_shape: tuple[int, int, int] = (int(vol_xp.shape[0]), int(vol_xp.shape[1]), int(vol_xp.shape[2]))
-    mask_xp = xp.ones(full_shape, dtype=xp.bool_) if mask is None else xp.asarray(mask, dtype=xp.bool_)
 
-    # Spatial subsampling for fit (stride-subsample, on device).
+    def _mask_for_fit(slicer: tuple[slice, ...] | None, shape: tuple[int, int, int]) -> Any:
+        if mask is None:
+            return xp.ones(shape, dtype=xp.bool_)
+        sampled = mask if slicer is None else mask[slicer]
+        # NumPy views stay on the host until the small contiguous copy exists.
+        # CuPy arrays are already on device; compact only the strided result.
+        if not hasattr(sampled, "device"):
+            sampled = np.ascontiguousarray(sampled)
+        return xp.ascontiguousarray(xp.asarray(sampled, dtype=xp.bool_))
+
     if shrink_factor > 1:
-        # Materialise the subsampled volume/mask as contiguous copies so we
-        # can release the full-resolution `mask_xp` (and any temporaries
-        # that share storage with it) during the fit loop.  The fit only
-        # touches the small arrays; `vol_xp` is kept live for the
+        # The fit only touches the small arrays.  `vol_xp` stays live for the
         # full-resolution evaluation pass at the bottom of the function.
-        vol_small = xp.ascontiguousarray(vol_xp[::shrink_factor, ::shrink_factor, ::shrink_factor])
-        mask_small = xp.ascontiguousarray(mask_xp[::shrink_factor, ::shrink_factor, ::shrink_factor])
+        sl = (slice(None, None, shrink_factor),) * 3
+        vol_small = xp.ascontiguousarray(vol_xp[sl])
+        mask_small = _mask_for_fit(sl, (int(vol_small.shape[0]), int(vol_small.shape[1]), int(vol_small.shape[2])))
     else:
         vol_small = vol_xp
-        mask_small = mask_xp
+        mask_small = _mask_for_fit(None, full_shape)
 
-    # Free the full-resolution mask now -- only `mask_small` is used in the
-    # fit loop, and a fresh full mask is not needed for the evaluation pass.
-    del mask_xp
     if on_gpu:
         import cupy as _cp_free
 
