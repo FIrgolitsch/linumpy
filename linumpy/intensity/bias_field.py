@@ -118,18 +118,19 @@ def _otsu_threshold_gpu(values: Any, nbins: int = 256) -> float:
     hi = float(values.max().item())
     if hi <= lo:
         return lo
-    hist, edges = cp.histogram(values, bins=nbins, range=(lo, hi))
-    # Mirror skimage.filters.threshold_otsu: minimize within-class variance
-    # equivalent to maximizing between-class variance.
-    centers = 0.5 * (edges[:-1] + edges[1:])
-    hist = hist.astype(cp.float64)
-    weight1 = cp.cumsum(hist)
-    weight2 = cp.cumsum(hist[::-1])[::-1]
-    mean1 = cp.cumsum(hist * centers) / cp.maximum(weight1, 1.0)
-    mean2 = (cp.cumsum((hist * centers)[::-1]) / cp.maximum(weight2[::-1], 1.0))[::-1]
+    # Histogram on the device, Otsu search on the host. The 256-bin
+    # between-class variance is a handful of numbers; doing it in CuPy
+    # routes the multiply through cuTensor, which returns
+    # CUTENSOR_STATUS_INTERNAL_ERROR once the card is already full.
+    hist = cp.asnumpy(cp.histogram(values, bins=nbins, range=(lo, hi))[0]).astype(np.float64)
+    centers = np.linspace(lo, hi, nbins, endpoint=False) + 0.5 * (hi - lo) / nbins
+    weight1 = np.cumsum(hist)
+    weight2 = np.cumsum(hist[::-1])[::-1]
+    mean1 = np.cumsum(hist * centers) / np.maximum(weight1, 1.0)
+    mean2 = (np.cumsum((hist * centers)[::-1]) / np.maximum(weight2[::-1], 1.0))[::-1]
     variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
-    idx = int(cp.argmax(variance12).item())
-    return float(centers[idx].item())
+    idx = int(np.argmax(variance12))
+    return float(centers[idx])
 
 
 def compute_tissue_mask(

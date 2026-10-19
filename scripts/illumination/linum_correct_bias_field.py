@@ -288,31 +288,28 @@ def main() -> None:
 
     n_processes = parse_processes_arg(args.n_processes)
 
-    # Resolve GPU usage from --backend choice for non-N4 stages. We resolve
-    # this BEFORE reading so we can stream the volume directly into device
-    # memory through the GDS / zarr-gpu fast path when the GPU is in play.
+    # Chunked stages may use the GPU. The stack itself stays on the host:
+    # sub-18 is ~45 GB, and parking that on a 48 GB card leaves the tissue
+    # mask with no room for its section filter.
     if args.backend == "gpu":
-        use_gpu_pre = True
+        use_gpu_chunks = True
     elif args.backend == "auto":
         from linumpy.gpu import GPU_AVAILABLE
 
-        use_gpu_pre = GPU_AVAILABLE
+        use_gpu_chunks = GPU_AVAILABLE
     else:
-        use_gpu_pre = False
+        use_gpu_chunks = False
 
-    # Load volume — onto GPU directly when use_gpu_pre, else host.
-    vol, res = read_omezarr_array(args.in_image, level=0, use_gpu=use_gpu_pre)
-    # copy=False avoids doubling GPU memory when the array is already float32
-    # (the common case for mosaic grids).
+    vol, res = read_omezarr_array(args.in_image, level=0, use_gpu=False)
     vol = vol.astype(np.float32, copy=False)
-    logger.info("Loaded volume %s from %s (gpu=%s)", vol.shape, args.in_image, use_gpu_pre)
+    logger.info("Loaded volume %s from %s (gpu=%s)", vol.shape, args.in_image, False)
 
     # Tissue mask (per serial section)
     mask = compute_tissue_mask(
         vol,
         smoothing_sigma=args.mask_smoothing_sigma,
         n_serial_slices=args.n_serial_slices,
-        use_gpu=use_gpu_pre,
+        use_gpu=use_gpu_chunks,
     )
     logger.info("Tissue mask: %d/%d voxels", int(mask.sum()), mask.size)
 
@@ -334,7 +331,7 @@ def main() -> None:
             n_serial_slices=hm_n_serial,
             n_bins=args.histogram_n_bins,
             tissue_threshold=args.tissue_threshold,
-            use_gpu=use_gpu_pre,
+            use_gpu=use_gpu_chunks,
         ).astype(np.float32)
 
     # Z-profile smoothing: remove residual per-Z jitter that HM cannot fully fix
