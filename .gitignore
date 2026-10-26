@@ -215,6 +215,10 @@ docs/api/
 
 # === GSD (pi) — keep GSD-produced state out of git ===
 .gsd/
+.planning/
+
+# Graphify generated knowledge graph (do not commit)
+graphify-out/
 
 # === Agent tooling state (pi skills, background shells) ===
 .agents/
