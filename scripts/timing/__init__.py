@@ -1,0 +1,1 @@
+"""Hot-path timing driver."""
