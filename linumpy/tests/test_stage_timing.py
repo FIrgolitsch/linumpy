@@ -10,6 +10,12 @@ from linumpy.mosaic.grid import add_volume_to_mosaic, get_diffusion_blending_wei
 from linumpy.utils import stage_timing
 
 
+def _drop_totals() -> None:
+    stage_timing._SECONDS.clear()
+    stage_timing._COUNTS.clear()
+    stage_timing._META.clear()
+
+
 @pytest.fixture(autouse=True)
 def _isolated_stage_timing(monkeypatch, tmp_path):
     drain = tmp_path / "_drain.jsonl"
@@ -17,8 +23,7 @@ def _isolated_stage_timing(monkeypatch, tmp_path):
     stage_timing.flush()
     monkeypatch.delenv("LINUMPY_STAGE_TIMING", raising=False)
     yield
-    monkeypatch.setenv("LINUMPY_STAGE_TIMING", str(drain))
-    stage_timing.flush()
+    _drop_totals()
 
 
 def test_unset_is_noop(tmp_path, monkeypatch):
