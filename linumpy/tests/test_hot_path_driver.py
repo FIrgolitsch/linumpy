@@ -396,7 +396,7 @@ def test_stages_keep_zip_and_screenshots_separate(tmp_path: Path):
     assert all("linum-align-to-ras" not in stage.get("argv", []) for stage in stages if isinstance(stage, dict))
 
 
-def test_attenuation_input_is_not_the_output():
+def test_attenuation_input_is_not_the_output(tmp_path: Path):
     command = (
         "linum-compensate-attenuation-inplace "
         "/scratch_nvme/workspace/work/aa/bb/slice_z45_crop_interface.ome.zarr "
@@ -407,3 +407,25 @@ def test_attenuation_input_is_not_the_output():
     assert isinstance(resolved, str)
     assert resolved.endswith("slice_z45_crop_interface.ome.zarr")
     assert not resolved.endswith("slice_z45_attn_corr.ome.zarr")
+    root = tmp_path / "timing"
+    root.mkdir()
+    inputs = _stage_inputs(root)
+    raw_attenuation = inputs["attenuation"]
+    assert isinstance(raw_attenuation, dict)
+    inputs["attenuation"] = {str(key): value for key, value in raw_attenuation.items()}
+    attenuation_inputs = inputs["attenuation"]
+    assert isinstance(attenuation_inputs, dict)
+    attenuation_inputs["45"] = resolved
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), inputs)
+    assert isinstance(stages, list)
+    attenuation = next(
+        stage
+        for stage in stages
+        if isinstance(stage, dict) and stage.get("name") == "attenuation" and stage.get("slice_id") == 45
+    )
+    argv = attenuation["argv"]
+    assert isinstance(argv, list)
+    assert "--method" in argv
+    assert argv[argv.index("--method") + 1] == "li"
+    assert isinstance(argv[1], str)
+    assert not argv[1].endswith("slice_z45_attn_corr.ome.zarr")
