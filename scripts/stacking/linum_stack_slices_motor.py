@@ -63,6 +63,7 @@ from linumpy.stack_alignment.motor_stack import (
     zero_if_over,
 )
 from linumpy.stack_alignment.units import center_shifts, convert_shifts_to_pixels
+from linumpy.utils.stage_timing import add, span
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -496,7 +497,8 @@ def main() -> None:
     # NOTE: read_omezarr returns resolution in MILLIMETERS (OME-NGFF standard)
     first_id = available_ids[0]
     first_vol, first_res = read_omezarr(slice_files[first_id], level=0)
-    first_vol = np.array(first_vol[:])
+    with span("stack_reads", device="cpu"):
+        first_vol = np.array(first_vol[:])
 
     # Resolution in mm (from OME-NGFF metadata)
     res_z_mm = first_res[0] if len(first_res) >= 1 else 0.010  # default 10 µm
@@ -756,7 +758,8 @@ def main() -> None:
 
     for _i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
-        vol = np.array(vol[:])
+        with span("stack_reads", device="cpu"):
+            vol = np.array(vol[:])
         volume_shapes[slice_id] = vol.shape  # Cache shape
 
         # Check if we have registration-derived Z-indices
@@ -1188,7 +1191,8 @@ def main() -> None:
         moving_z_start = match.get("moving_z_start", 0) or 0
 
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
-        vol = np.array(vol[:]).astype(np.float32)
+        with span("stack_reads", device="cpu"):
+            vol = np.array(vol[:]).astype(np.float32)
 
         # Optional discarded-plane crop. Pairwise moving_z_index is not this.
         if moving_z_start > 0:
@@ -1215,7 +1219,8 @@ def main() -> None:
             transform, _, _, confidence = registration_transforms[slice_id]
             is_manual = slice_id in manual_slice_ids
             if is_manual:
-                vol, _pad_x, _pad_y = apply_rigid_euler_padded(vol, transform)
+                with span("per_plane_resample", device="cpu", function="apply_rigid_euler_padded"):
+                    vol, _pad_x, _pad_y = apply_rigid_euler_padded(vol, transform)
                 logger.debug("Applied manual Euler to slice %s", slice_id)
             elif args.confidence_low is not None and confidence < args.confidence_low:
                 logger.warning(
@@ -1224,6 +1229,7 @@ def main() -> None:
                     confidence,
                     args.confidence_low,
                 )
+                add("per_plane_resample", 0.0, device="cpu", function="skipped")
             else:
                 if args.confidence_high is not None and confidence < args.confidence_high:
                     use_rotation_only = True
@@ -1236,17 +1242,20 @@ def main() -> None:
                 else:
                     use_rotation_only = default_rotation_only
                 override_rot = smoothed_rotations.get(slice_id)
-                vol = apply_transform_to_volume(
-                    vol,
-                    transform,
-                    rotation_only=use_rotation_only,
-                    max_rotation_deg=args.max_rotation_deg,
-                    override_rotation=override_rot,
-                )
+                with span("per_plane_resample", device="cpu", function="apply_transform_to_volume"):
+                    vol = apply_transform_to_volume(
+                        vol,
+                        transform,
+                        rotation_only=use_rotation_only,
+                        max_rotation_deg=args.max_rotation_deg,
+                        override_rotation=override_rot,
+                    )
                 if use_rotation_only:
                     logger.debug("Applied rotation-only transform to slice %s (max_rot=%s°)", slice_id, args.max_rotation_deg)
                 else:
                     logger.debug("Applied registration transform to slice %s", slice_id)
+        else:
+            add("per_plane_resample", 0.0, device="cpu", function="skipped")
 
         # Apply XY shift (from motor positions)
         dx, dy = cumsum_px[slice_id]
