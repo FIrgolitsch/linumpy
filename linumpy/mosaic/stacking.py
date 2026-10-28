@@ -5,6 +5,8 @@ Consolidated from linum_stack_slices_motor.py and linum_stack_motor_only.py.
 """
 
 import logging
+from collections.abc import Sequence
+from itertools import pairwise
 from typing import Any
 
 import numpy as np
@@ -114,6 +116,51 @@ def expected_z_overlap(vol_nz: int, moving_z: int, interval_voxels: int, id_step
     """
     step = max(1, int(id_step))
     return int(vol_nz) - int(moving_z or 0) - int(interval_voxels) * step
+
+
+SLAB_Z_STARTS_KEY = "slab_z_starts"
+SLAB_Z_DEPTH_KEY = "slab_z_depth"
+
+
+def write_slab_z_starts(zarr_path: Any, starts: Sequence[int], n_z: int) -> None:
+    """Record where each stacked slab starts in the OME-Zarr root attributes.
+
+    ``n_z`` is the Z depth the starts refer to, so a reader can rescale them
+    if the volume was resampled afterwards.
+    """
+    import zarr
+
+    group = zarr.open_group(str(zarr_path), mode="r+")
+    group.attrs[SLAB_Z_STARTS_KEY] = [int(s) for s in starts]
+    group.attrs[SLAB_Z_DEPTH_KEY] = int(n_z)
+
+
+def read_slab_bounds(zarr_path: Any, n_z: int) -> list[tuple[int, int]] | None:
+    """Return ``(start, end)`` Z bounds per stacked slab for a volume of depth ``n_z``.
+
+    Returns None when the stack did not record slab starts or they are not
+    usable, so callers fall back to equal chunks.
+    """
+    import zarr
+
+    try:
+        attrs = zarr.open_group(str(zarr_path), mode="r").attrs
+        raw_starts = attrs.get(SLAB_Z_STARTS_KEY)
+        raw_depth = attrs.get(SLAB_Z_DEPTH_KEY)
+        if not isinstance(raw_starts, list) or not isinstance(raw_depth, int | float):
+            return None
+        starts = [float(s) for s in raw_starts]
+    except Exception:
+        return None
+    if len(starts) < 2 or raw_depth <= 0:
+        return None
+    scale = n_z / float(raw_depth)
+    scaled = [round(s * scale) for s in starts]
+    scaled = [min(max(s, 0), n_z) for s in scaled]
+    if scaled[0] != 0 or any(b <= a for a, b in pairwise(scaled)):
+        return None
+    ends = [*scaled[1:], n_z]
+    return list(zip(scaled, ends, strict=True))
 
 
 def registration_z_overlap(prev_nz: int, moving_nz: int, fixed_z: int, template_z: int = 0) -> int:

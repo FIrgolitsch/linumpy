@@ -329,3 +329,29 @@ def test_gpu_upsample_shape():
     bias_low = np.ones((5, 8, 8), dtype=np.float32)
     upsampled = upsample_bias_gpu(bias_low, target_shape=(20, 32, 32), use_gpu=True)
     assert upsampled.shape == (20, 32, 32)
+
+
+def test_section_silhouettes_follow_given_bounds():
+    from linumpy.intensity.bias_field import tissue_mask_section_silhouettes
+
+    mask = np.zeros((12, 8, 8), dtype=bool)
+    mask[:4, 1:3, 1:3] = True  # section A, unequal depth
+    mask[4:12, 5:7, 5:7] = True  # section B
+    out = tissue_mask_section_silhouettes(mask, 2, bounds=[(0, 4), (4, 12)])
+    assert out[:4, 1:3, 1:3].all() and not out[:4, 5:7, 5:7].any()
+    assert out[4:, 5:7, 5:7].all() and not out[4:, 1:3, 1:3].any()
+    # Equal chunks (6/6) would have leaked section B's footprint into z4:6.
+    equal = tissue_mask_section_silhouettes(mask, 2)
+    assert equal[4:6, 1:3, 1:3].any()
+
+
+def test_slab_bounds_round_trip(tmp_path):
+    import zarr
+
+    from linumpy.mosaic.stacking import read_slab_bounds, write_slab_z_starts
+
+    zarr.open_group(str(tmp_path / "v.ome.zarr"), mode="w")
+    assert read_slab_bounds(tmp_path / "v.ome.zarr", 12) is None
+    write_slab_z_starts(tmp_path / "v.ome.zarr", [0, 4], 12)
+    assert read_slab_bounds(tmp_path / "v.ome.zarr", 12) == [(0, 4), (4, 12)]
+    assert read_slab_bounds(tmp_path / "v.ome.zarr", 6) == [(0, 2), (2, 6)]

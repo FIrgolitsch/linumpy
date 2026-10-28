@@ -38,6 +38,7 @@ from linumpy.intensity.bias_field import (
 )
 from linumpy.intensity.normalization import apply_histogram_matching, apply_zprofile_smoothing
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr_array
+from linumpy.mosaic.stacking import read_slab_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +513,11 @@ def main() -> None:
             corrected *= _as_same_module(sil_xy, corrected)
         elif args.zero_mask_mode == "section_silhouette":
             n_sec = args.n_serial_slices if args.n_serial_slices and args.n_serial_slices > 0 else 1
-            out_mask = tissue_mask_section_silhouettes(mask, n_sec, dilate_px=args.zero_mask_dilate_px)
+            slab_bounds = read_slab_bounds(args.in_image, mask.shape[0])
+            if slab_bounds is not None:
+                n_sec = len(slab_bounds)
+                logger.info("Using the stack's recorded slab boundaries (%d sections)", n_sec)
+            out_mask = tissue_mask_section_silhouettes(mask, n_sec, dilate_px=args.zero_mask_dilate_px, bounds=slab_bounds)
             logger.info(
                 "Zeroing outside per-section silhouettes (%d/%d voxels, %d sections, dilate=%d)\u2026",
                 int(out_mask.sum()),

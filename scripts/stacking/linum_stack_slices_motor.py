@@ -51,6 +51,7 @@ from linumpy.mosaic.stacking import (
     rigid_euler_pad,
     scale_slice_to_median,
     slice_tissue_median,
+    write_slab_z_starts,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -1181,6 +1182,9 @@ def main() -> None:
         logger.info("  First slice: shift=(%.1f, %.1f) px, xy=[%s:%s, %s:%s]", first_dx, first_dy, y0, y1, x0, x1)
 
     z_cursor = first_vol.shape[0]
+    # Z index where each stacked slab starts. Recorded in the output so later
+    # steps can cut sections where the slabs really are, not in equal chunks.
+    slab_z_starts: list[int] = [0]
 
     # Stack remaining slices
     for _i, match in enumerate(tqdm(z_matches, desc="Stacking")):
@@ -1351,6 +1355,7 @@ def main() -> None:
             )
 
         z_cursor = z_end
+        slab_z_starts.append(int(z_start))
 
         logger.debug("  Slice %s: z=[%s:%s], xy=[%s:%s, %s:%s]", slice_id, z_start, z_end, dst_y0, dst_y1, dst_x0, dst_x1)
 
@@ -1400,6 +1405,8 @@ def main() -> None:
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
     output.finalize(first_res, target_resolutions_um=args.pyramid_resolutions, make_isotropic=args.make_isotropic)
+
+    write_slab_z_starts(output_path, slab_z_starts, int(output_shape[0]))
 
     # Collect metrics
     z_offsets = np.array([m["overlap_voxels"] for m in z_matches])

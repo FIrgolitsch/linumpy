@@ -294,6 +294,7 @@ def tissue_mask_section_silhouettes(
     mask: np.ndarray,
     n_serial_slices: int,
     dilate_px: int = 0,
+    bounds: list[tuple[int, int]] | None = None,
 ) -> np.ndarray:
     """Per-section XY silhouettes, extruded only within that section's Z span.
 
@@ -309,6 +310,9 @@ def tissue_mask_section_silhouettes(
         Number of serial sections (same chunking as the Otsu mask).
     dilate_px : int
         Extra XY margin in pixels after hole-filling. ``0`` disables dilation.
+    bounds : list of (start, end), optional
+        Z span of each section. Use this when slabs are not equal in depth;
+        *n_serial_slices* is then ignored. Defaults to equal chunks.
 
     Returns
     -------
@@ -319,7 +323,7 @@ def tissue_mask_section_silhouettes(
 
     if mask.ndim != 3:
         raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
-    if n_serial_slices < 1:
+    if bounds is None and n_serial_slices < 1:
         raise ValueError(f"n_serial_slices must be >= 1; got {n_serial_slices}")
 
     cupy_input = is_cupy_array(mask)
@@ -331,7 +335,8 @@ def tissue_mask_section_silhouettes(
         mask_np = np.asarray(mask, dtype=bool)
 
     out = np.zeros_like(mask_np, dtype=bool)
-    for start, end in _chunk_boundaries(mask_np.shape[0], n_serial_slices):
+    section_bounds = bounds if bounds is not None else _chunk_boundaries(mask_np.shape[0], n_serial_slices)
+    for start, end in section_bounds:
         sil = tissue_mask_silhouette_xy(mask_np[start:end], dilate_px=dilate_px)
         out[start:end] = sil[None, ...]
 
