@@ -1273,7 +1273,7 @@ process stack {
     def blend_flag = params.stack_blend_enabled ? " --blend" : " --no-blend"
     def flatten_flag = " --no-flatten_z_profile"
     def outline_flag = " --max_outline_step_px 0"
-    def notch_flag = " --notch_slice_seams"
+    def notch_flag = params.stack_notch_seams ? " --notch_slice_seams" : ""
     def zreg_flag = params.z_overlap_from_registration ? " --z_from_registration" : ""
     def ignore_manual_z_flag = params.use_manual_z_overlap ? "" : " --ignore_manual_z"
     // In the hashed script block so a default-only Python change cannot cache-hit.
