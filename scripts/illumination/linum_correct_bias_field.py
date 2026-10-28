@@ -312,11 +312,17 @@ def main() -> None:
     vol = vol.astype(np.float32, copy=False)
     logger.info("Loaded volume %s from %s (gpu=%s)", vol.shape, args.in_image, False)
 
+    # Sections follow the stack's slab joints when it recorded them.
+    slab_bounds = read_slab_bounds(args.in_image, vol.shape[0])
+    if slab_bounds is not None:
+        logger.info("Using the stack's recorded slab boundaries (%d sections)", len(slab_bounds))
+
     # Tissue mask (per serial section)
     mask = compute_tissue_mask(
         vol,
         smoothing_sigma=args.mask_smoothing_sigma,
         n_serial_slices=args.n_serial_slices,
+        bounds=slab_bounds,
         use_gpu=use_gpu_chunks,
     )
     logger.info("Tissue mask: %d/%d voxels", int(mask.sum()), mask.size)
@@ -513,10 +519,8 @@ def main() -> None:
             corrected *= _as_same_module(sil_xy, corrected)
         elif args.zero_mask_mode == "section_silhouette":
             n_sec = args.n_serial_slices if args.n_serial_slices and args.n_serial_slices > 0 else 1
-            slab_bounds = read_slab_bounds(args.in_image, mask.shape[0])
             if slab_bounds is not None:
                 n_sec = len(slab_bounds)
-                logger.info("Using the stack's recorded slab boundaries (%d sections)", n_sec)
             out_mask = tissue_mask_section_silhouettes(mask, n_sec, dilate_px=args.zero_mask_dilate_px, bounds=slab_bounds)
             logger.info(
                 "Zeroing outside per-section silhouettes (%d/%d voxels, %d sections, dilate=%d)\u2026",

@@ -32,6 +32,7 @@ def _compute_tissue_mask_gpu(
     n_serial_slices: int,
     closing_radius: int,
     z_closing_sections: int,
+    bounds: list[tuple[int, int]] | None = None,
 ) -> np.ndarray:
     """GPU implementation of :func:`compute_tissue_mask`.
 
@@ -56,7 +57,7 @@ def _compute_tissue_mask_gpu(
     sigma_zyx = (smoothing_sigma_z, smoothing_sigma, smoothing_sigma)
     structuring_g = cp.asarray(disk(closing_radius), dtype=bool) if closing_radius > 0 else None
 
-    bounds = _chunk_boundaries(vol.shape[0], n_serial_slices)
+    bounds = bounds if bounds is not None else _chunk_boundaries(vol.shape[0], n_serial_slices)
     mask = np.zeros(vol.shape, dtype=bool)
 
     for s, e in bounds:
@@ -89,7 +90,7 @@ def _compute_tissue_mask_gpu(
         cp.get_default_memory_pool().free_all_blocks()
 
     # Bridge step artifacts at section boundaries by closing along Z.
-    if z_closing_sections > 0 and n_serial_slices > 1:
+    if z_closing_sections > 0 and len(bounds) > 1:
         z_struct = np.ones((2 * z_closing_sections + 1, 1, 1), dtype=bool)
         # The full bool mask is 8x smaller than vol; usually fits on a single
         # GPU. If it does not, fall back to CPU for this final step.
@@ -141,6 +142,7 @@ def compute_tissue_mask(
     z_closing_sections: int = 2,
     smoothing_sigma_z: float = 1.0,
     use_gpu: bool = False,
+    bounds: list[tuple[int, int]] | None = None,
 ) -> np.ndarray:
     """Return a 3-D boolean mask where *True* indicates tissue (not agarose).
 
@@ -176,6 +178,9 @@ def compute_tissue_mask(
     smoothing_sigma_z : float
         Gaussian smoothing sigma along Z (voxels) before thresholding.
         Small values (1-2) denoise without blurring oblique edges.
+    bounds : list of (start, end), optional
+        Z span of each section, for slabs of unequal depth. Replaces the equal
+        chunks implied by *n_serial_slices*.
     use_gpu : bool
         If True, run the dominant 3-D ``gaussian_filter`` on GPU via
         CuPy (Z-chunked for memory safety). Falls back to CPU silently
@@ -205,6 +210,7 @@ def compute_tissue_mask(
                 n_serial_slices=n_serial_slices,
                 closing_radius=closing_radius,
                 z_closing_sections=z_closing_sections,
+                bounds=bounds,
             )
         except ImportError:
             if is_cupy_array(vol):
@@ -216,7 +222,7 @@ def compute_tissue_mask(
     sigma_zyx = (smoothing_sigma_z, smoothing_sigma, smoothing_sigma)
     smoothed = gaussian_filter(vol.astype(np.float32), sigma=sigma_zyx)
 
-    bounds = _chunk_boundaries(vol.shape[0], n_serial_slices)
+    bounds = bounds if bounds is not None else _chunk_boundaries(vol.shape[0], n_serial_slices)
     mask = np.zeros(vol.shape, dtype=bool)
     structuring = disk(closing_radius) if closing_radius > 0 else None
     for s, e in bounds:
@@ -236,7 +242,7 @@ def compute_tissue_mask(
         mask[s:e] = section_mask
 
     # Bridge step artifacts at section boundaries by closing along Z.
-    if z_closing_sections > 0 and n_serial_slices > 1:
+    if z_closing_sections > 0 and len(bounds) > 1:
         z_struct = np.ones((2 * z_closing_sections + 1, 1, 1), dtype=bool)
         mask = binary_closing(mask, structure=z_struct)
 
