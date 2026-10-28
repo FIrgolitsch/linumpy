@@ -341,6 +341,56 @@ def test_merge_prefers_server():
         _driver_fn("merge_config")("scratch_dir = true", "scratch_dir = not-a-value")
 
 
+def test_params_block_ignores_comment_apostrophe():
+    workflow = """
+params {
+    // CuPy's default lives in a comment: {input}
+    scratch_dir = true
+    use_gpu = false
+}
+env {
+    CUPY_ACCELERATORS = params.cupy_accelerators?.trim() ? params.cupy_accelerators : 'cub'
+}
+"""
+    merged = _driver_fn("merge_config")(workflow, "scratch_dir = false\n")
+    assert merged["scratch_dir"] is False
+    assert merged["use_gpu"] is False
+    assert "CUPY_ACCELERATORS" not in merged
+
+
+def test_real_workflow_config_parses():
+    workflow = Path(__file__).resolve().parents[2].joinpath("workflows/reconst_3d/nextflow.config").read_text(encoding="utf-8")
+    merged = _driver_fn("merge_config")(workflow, "scratch_dir = false\n")
+    assert merged["scratch_dir"] is False
+    assert merged["use_gpu"] is True
+    assert "CUPY_ACCELERATORS" not in merged
+
+
+def test_common_space_uses_staged_inputs(tmp_path: Path):
+    work = tmp_path / "work"
+    inputs = work / "inputs"
+    inputs.mkdir(parents=True)
+    real = tmp_path / "real" / "slice_z45_normalize.ome.zarr"
+    real.mkdir(parents=True)
+    (inputs / real.name).symlink_to(real)
+    skipped_real = tmp_path / "bring_to_common_space" / "slice_z46_normalize.ome.zarr"
+    skipped_real.parent.mkdir()
+    skipped_real.mkdir()
+    (inputs / skipped_real.name).symlink_to(skipped_real)
+    script = "linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space\n"
+    found = _driver_fn("resolve_common_space_inputs")(script, work)
+    assert found == [str(real.resolve())]
+
+
+def test_staged_token_resolves_beside_the_command(tmp_path: Path):
+    work = tmp_path / "task"
+    work.mkdir()
+    affine = work / "global_affine.npy"
+    affine.write_text("x", encoding="utf-8")
+    found = _driver_fn("_materialize_staged")("global_affine.npy", work)
+    assert found == str(affine.resolve())
+
+
 def test_illumination_argv_uses_server_flags(tmp_path: Path):
     root = tmp_path / "timing"
     root.mkdir()

@@ -231,6 +231,10 @@ def _params_body(text: str) -> str:
     index = 0
     while index < len(text):
         char = text[index]
+        if not in_single and not in_double and text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
         if char == "'" and not in_double:
             in_single = not in_single
         elif char == '"' and not in_single:
@@ -805,13 +809,16 @@ def resolve_attenuation_input(command_sh_text: str, slice_id: int) -> str:
     raise ValueError(f"attenuation input for slice {slice_id} is not in the command script")
 
 
-def resolve_common_space_inputs(command_sh_text: str) -> list[str]:
-    """Return pre-alignment zarr paths named in a common-space command script.
+def resolve_common_space_inputs(command_sh_text: str, work_dir: Path | None = None) -> list[str]:
+    """Return pre-alignment zarr paths for a common-space command.
 
     Parameters
     ----------
     command_sh_text : str
         Text of the command script that ran common-space alignment.
+    work_dir : Path | None
+        Directory that holds ``.command.sh``. Relative names and an ``inputs``
+        directory are resolved from here.
 
     Returns
     -------
@@ -821,13 +828,28 @@ def resolve_common_space_inputs(command_sh_text: str) -> list[str]:
     Raises
     ------
     ValueError
-        The script names no usable input zarr.
+        The script and its work directory name no usable input zarr.
     """
     paths: list[str] = []
     for path in _ZARR_PATH.findall(command_sh_text):
         if "bring_to_common_space" in path or path in paths:
             continue
-        paths.append(path)
+        if path.startswith("/") or work_dir is None:
+            paths.append(path)
+            continue
+        staged = _materialize_staged(path, work_dir)
+        if "bring_to_common_space" not in staged and staged not in paths:
+            paths.append(staged)
+    if not paths and work_dir is not None:
+        inputs = work_dir / "inputs"
+        if inputs.is_dir():
+            for child in sorted(inputs.iterdir()):
+                if not child.name.endswith(".ome.zarr"):
+                    continue
+                staged = str(child.resolve())
+                if "bring_to_common_space" in staged or staged in paths:
+                    continue
+                paths.append(staged)
     if not paths:
         raise ValueError("common-space inputs are not in the command script")
     return paths
@@ -1012,7 +1034,7 @@ def _remember_source(sources: list[str], path: str) -> None:
     sources.append(path)
 
 
-def _newest_command_sh(cli_name: str, slice_id: int | None) -> str:
+def _newest_command_file(cli_name: str, slice_id: int | None) -> Path:
     matches: list[Path] = []
     if not WORK_ROOT.is_dir():
         raise FileNotFoundError(f"{cli_name} command script is missing")
@@ -1025,8 +1047,23 @@ def _newest_command_sh(cli_name: str, slice_id: int | None) -> str:
         matches.append(path)
     if not matches:
         raise FileNotFoundError(f"{cli_name} command script is missing")
-    newest = max(matches, key=lambda item: item.stat().st_mtime)
-    return newest.read_text(encoding="utf-8", errors="replace")
+    return max(matches, key=lambda item: item.stat().st_mtime)
+
+
+def _newest_command_sh(cli_name: str, slice_id: int | None) -> str:
+    return _newest_command_file(cli_name, slice_id).read_text(encoding="utf-8", errors="replace")
+
+
+def _materialize_staged(token: str, work_dir: Path) -> str:
+    cleaned = token.strip().strip('"').strip("'")
+    if not cleaned or cleaned == "NO_TRANSFORM":
+        raise ValueError("staged path is empty")
+    path = Path(cleaned)
+    if not path.is_absolute():
+        path = work_dir / path
+    if not path.exists():
+        raise FileNotFoundError(cleaned)
+    return str(path.resolve())
 
 
 def _string_list(value: object) -> list[str]:
@@ -1118,20 +1155,30 @@ def _prepare_inputs(cfg: dict[str, object]) -> tuple[dict[str, object], list[str
         stitch[str(slice_id)] = stitched
         _remember_source(sources, illum)
         _remember_source(sources, stitched)
-        script = _newest_command_sh("linum-compensate-attenuation-inplace", slice_id)
-        crop = resolve_attenuation_input(script, slice_id)
+        atten_file = _newest_command_file("linum-compensate-attenuation-inplace", slice_id)
+        crop_name = resolve_attenuation_input(atten_file.read_text(encoding="utf-8", errors="replace"), slice_id)
+        crop = _materialize_staged(crop_name, atten_file.parent)
         attenuation[str(slice_id)] = crop
         _remember_source(sources, crop)
+        stitch_script = ""
+        stitch_file: Path | None = None
         try:
-            stitch_script = _newest_command_sh("linum-stitch-3d-refined", slice_id)
+            stitch_file = _newest_command_file("linum-stitch-3d-refined", slice_id)
+            stitch_script = stitch_file.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
             stitch_script = ""
         match = re.search(r"--input_transform\s+(\S+)", stitch_script)
         if match is not None and match.group(1) not in {"", "NO_TRANSFORM"}:
-            transforms[str(slice_id)] = match.group(1)
-            _remember_source(sources, match.group(1))
-    common_script = _newest_command_sh("linum-align-mosaics-3d-from-shifts", None)
-    common_paths = resolve_common_space_inputs(common_script)
+            if stitch_file is None:
+                raise FileNotFoundError("stitch command script is missing")
+            transform = _materialize_staged(match.group(1), stitch_file.parent)
+            transforms[str(slice_id)] = transform
+            _remember_source(sources, transform)
+    common_file = _newest_command_file("linum-align-mosaics-3d-from-shifts", None)
+    common_paths = resolve_common_space_inputs(
+        common_file.read_text(encoding="utf-8", errors="replace"),
+        common_file.parent,
+    )
     for path in common_paths:
         _remember_source(sources, path)
     shifts_clean = str(SUBJECT_ROOT / "output" / "detect_rehoming_events" / "shifts_xy_clean.csv")
