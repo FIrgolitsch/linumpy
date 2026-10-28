@@ -4,6 +4,8 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from linumpy.utils.stage_timing import validate_record
+
 TIMING_ROOT = Path("/scratch_nvme/workspace/sub-21/timing")
 RECORD_PATH = TIMING_ROOT / "hot_path.json"
 
@@ -71,6 +73,10 @@ def assert_under_timing(path: Path | str, root: Path = TIMING_ROOT) -> Path:
     return resolved
 
 
+def _findmnt_argv(path: str) -> list[str]:
+    return ["findmnt", "-T", path, "-o", "SOURCE,FSTYPE,TARGET", "-n"]
+
+
 def disk_block(stat_fn: Callable[[str], int], findmnt_fn: Callable[[list[str]], str]) -> dict[str, object]:
     """Return device identity for the temp, subject, and work trees.
 
@@ -80,14 +86,43 @@ def disk_block(stat_fn: Callable[[str], int], findmnt_fn: Callable[[list[str]], 
         Returns ``st_dev`` for a path.
     findmnt_fn : Callable[[list[str]], str]
         Runs a ``findmnt`` argv list and returns its source text.
+
+    Returns
+    -------
+    dict[str, object]
+        Source text and device ids. ``same_filesystem`` compares ``/tmp`` with
+        the subject tree. The block has no duration.
     """
-    del stat_fn, findmnt_fn
-    return {}
+    paths = (
+        ("tmp", "/tmp"),
+        ("subject", "/scratch_nvme/workspace/sub-21"),
+        ("work", "/scratch_nvme/workspace/work"),
+    )
+    sources: dict[str, str] = {}
+    devices: dict[str, int] = {}
+    for key, path in paths:
+        sources[key] = findmnt_fn(_findmnt_argv(path))
+        devices[key] = stat_fn(path)
+    return {
+        "tmp_source": sources["tmp"],
+        "subject_source": sources["subject"],
+        "work_source": sources["work"],
+        "tmp_st_dev": devices["tmp"],
+        "subject_st_dev": devices["subject"],
+        "work_st_dev": devices["work"],
+        "same_filesystem": devices["tmp"] == devices["subject"],
+    }
 
 
 def scratch_copy() -> dict[str, object]:
-    """Return the scratch-copy record for a run that does not rsync."""
-    return {}
+    """Return the scratch-copy record for a run that does not rsync.
+
+    Returns
+    -------
+    dict[str, object]
+        Status ``not_taken``, null seconds, and ``scratch_dir`` false.
+    """
+    return {"status": "not_taken", "seconds": None, "scratch_dir": False}
 
 
 def run_argv(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -99,9 +134,13 @@ def run_argv(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProces
         Program and arguments. Never a shell string.
     env : dict[str, str]
         Environment for the child.
+
+    Returns
+    -------
+    subprocess.CompletedProcess[str]
+        The completed child. A non-zero exit raises.
     """
-    del env
-    return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+    return subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
 
 
 def finalize(payload: dict[str, object], timing_root: Path | str = TIMING_ROOT) -> dict[str, object]:
@@ -113,6 +152,11 @@ def finalize(payload: dict[str, object], timing_root: Path | str = TIMING_ROOT) 
         Candidate timing record.
     timing_root : Path | str
         Directory stage outputs must stay inside.
+
+    Returns
+    -------
+    dict[str, object]
+        The same payload after it passes the record check.
     """
-    del timing_root
+    validate_record(payload, timing_root=str(timing_root))
     return payload
