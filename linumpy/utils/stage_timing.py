@@ -132,4 +132,17 @@ def same_filesystem(path_a: str, path_b: str) -> bool:
     return device_id(path_a) == device_id(path_b)
 
 
+def validate_record(payload: object, timing_root: str = "/scratch_nvme/workspace/sub-21/timing") -> None:
+    """Defer record rejection.
+
+    Parameters
+    ----------
+    payload : object
+        Candidate timing record.
+    timing_root : str
+        Directory stage outputs must stay inside.
+    """
+    _ = (payload, timing_root)
+
+
 atexit.register(flush)
