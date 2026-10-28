@@ -2,7 +2,9 @@
 
 import ast
 import inspect
+import json
 import subprocess
+import sys
 import types
 from collections.abc import Callable
 from pathlib import Path
@@ -429,3 +431,156 @@ def test_attenuation_input_is_not_the_output(tmp_path: Path):
     assert argv[argv.index("--method") + 1] == "li"
     assert isinstance(argv[1], str)
     assert not argv[1].endswith("slice_z45_attn_corr.ome.zarr")
+
+
+_INNER_FIELDS = (
+    "name",
+    "argv",
+    "seconds",
+    "duration_source",
+    "device",
+    "flags",
+    "output_path",
+    "parent",
+    "count",
+    "functions",
+)
+
+
+def test_refuses_stitch_without_inners(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "timing"
+    root.mkdir()
+    record = root / "hot_path.json"
+    calls: list[object] = []
+
+    def fake_finalize(payload: dict[str, object], timing_root: Path = driver.TIMING_ROOT) -> dict[str, object]:
+        calls.append(payload)
+        record.write_text("{}\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(driver, "finalize", fake_finalize)
+    parent = {
+        "name": "stitch",
+        "argv": ["linum-stitch-3d-refined", "in.zarr", str(root / "stitch")],
+        "flags": {"blending_method": "diffusion"},
+        "output_path": str(root / "stitch"),
+    }
+    jsonl = json.dumps({"stage": "stitch_scoring", "seconds": 1.0, "count": 1, "device": "cpu"}) + "\n"
+    with pytest.raises(ValueError, match="diffusion_blend"):
+        _driver_fn("collect_inner_stages")(parent, "child stdout", jsonl)
+    assert calls == []
+    assert not record.exists()
+
+
+def test_accepts_inner_jsonl(tmp_path: Path):
+    root = tmp_path / "timing"
+    root.mkdir()
+    stitch_out = str(root / "stitch")
+    stack_out = str(root / "stack")
+    stitch_parent = {
+        "name": "stitch",
+        "argv": ["linum-stitch-3d-refined", "in.zarr", stitch_out],
+        "flags": {"blending_method": "diffusion"},
+        "output_path": stitch_out,
+    }
+    stack_parent = {
+        "name": "stack",
+        "argv": ["linum-stack-slices-motor", "slices", "shifts.csv", stack_out],
+        "flags": {"use_gpu": True},
+        "output_path": stack_out,
+    }
+    stitch_jsonl = "\n".join(
+        [
+            json.dumps({"stage": "stitch_scoring", "seconds": 1.5, "count": 2, "device": "cpu"}),
+            json.dumps({"stage": "diffusion_blend", "seconds": 0.4, "count": 3, "device": "cpu", "functions": ["blend"]}),
+        ]
+    )
+    stack_jsonl = "\n".join(
+        [
+            json.dumps({"stage": "stack_reads", "seconds": 2.0, "count": 3, "device": "cpu"}),
+            json.dumps(
+                {
+                    "stage": "per_plane_resample",
+                    "seconds": 4.0,
+                    "count": 2,
+                    "device": "cpu",
+                    "functions": ["apply_transform_to_volume", "apply_rigid_euler_padded"],
+                }
+            ),
+        ]
+    )
+    collect = _driver_fn("collect_inner_stages")
+    inners = collect(stitch_parent, "stitch stdout", stitch_jsonl)
+    inners.extend(collect(stack_parent, "stack stdout", stack_jsonl))
+    assert isinstance(inners, list)
+    by_name: dict[str, dict[str, object]] = {}
+    for row in inners:
+        assert isinstance(row, dict)
+        for field in _INNER_FIELDS:
+            assert field in row
+        name = row["name"]
+        assert isinstance(name, str)
+        by_name[name] = row
+    scoring = by_name["stitch_scoring"]
+    assert scoring["argv"] == stitch_parent["argv"]
+    assert scoring["flags"] == stitch_parent["flags"]
+    assert scoring["output_path"] == stitch_out
+    assert scoring["seconds"] == 1.5
+    assert scoring["count"] == 2
+    assert scoring["device"] == "cpu"
+    assert scoring["functions"] == []
+    assert scoring["parent"] == "stitch"
+    assert scoring["duration_source"] == "perf_counter"
+    assert by_name["diffusion_blend"]["functions"] == ["blend"]
+    resample = by_name["per_plane_resample"]
+    assert resample["functions"] == ["apply_transform_to_volume", "apply_rigid_euler_padded"]
+    assert resample["argv"] == stack_parent["argv"]
+    assert resample["flags"] == stack_parent["flags"]
+    assert resample["output_path"] == stack_out
+    assert resample["parent"] == "stack"
+    assert resample["seconds"] == 4.0
+    assert resample["count"] == 2
+    payload = _valid_payload(root)
+    kept = []
+    existing = payload["stages"]
+    assert isinstance(existing, list)
+    for row in existing:
+        assert isinstance(row, dict)
+        if row.get("name") not in by_name:
+            kept.append(row)
+    payload["stages"] = [*kept, *inners]
+    driver.finalize(payload, timing_root=root)
+
+
+def test_help_does_not_touch_subject_tree():
+    completed = subprocess.run(
+        [sys.executable, "scripts/timing/linum_time_hot_path.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "hot_path" in completed.stdout
+    assert "45" in completed.stdout
+    assert "46" in completed.stdout
+    assert "47" in completed.stdout
+
+
+def test_linum_basic_revision_prefers_checkout(tmp_path: Path):
+    direct = '{"url": "https://example.invalid/linum-basic.git", "vcs_info": {"commit_id": "aaa"}}\n'
+    checkout = tmp_path / "linum-basic"
+    checkout.mkdir()
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "git"
+        assert "-C" in argv
+        assert str(checkout) in argv
+        return subprocess.CompletedProcess(argv, 0, stdout="deadbeef\n", stderr="")
+
+    revise = _driver_fn("linum_basic_revision")
+    assert revise(checkout, direct, runner) == "deadbeef"
+
+    def not_checkout(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(128, argv, stderr="not a git repository")
+
+    assert revise(tmp_path / "dist-info", direct, not_checkout) == direct
