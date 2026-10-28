@@ -37,6 +37,7 @@ from linumpy.mosaic.motor import (
     compute_registration_refinements,
     estimate_affine_from_pairs,
 )
+from linumpy.utils.stage_timing import span
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -216,7 +217,10 @@ def main() -> None:
 
     # Correlate neighboring tiles (needed for affine estimation and blend refinement)
     logger.info("Computing neighbor tile correlations...")
-    refinements = compute_registration_refinements(volume, tile_shape, nx, ny, args.overlap_fraction, args.max_refinement_px)
+    with span("stitch_scoring", device="cpu"):
+        refinements = compute_registration_refinements(
+            volume, tile_shape, nx, ny, args.overlap_fraction, args.max_refinement_px
+        )
 
     stats = refinements["stats"]
     logger.info("  Total tile pairs: %s", stats["total_pairs"])
