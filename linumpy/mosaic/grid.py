@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from linumpy.geometry.resample import resample_itk
 from linumpy.metrics.image_quality import compute_normalized_cross_correlation
+from linumpy.utils.stage_timing import span
 
 # TODO: Add an algorithm to estimate the affine transform parameters
 
@@ -650,7 +651,8 @@ def add_volume_to_mosaic(
     # Computing the blending weights
     if np.any(mask):
         if blending_method == "diffusion":
-            alpha = get_diffusion_blending_weights(mask, factor=factor)
+            with span("diffusion_blend", device="cpu"):
+                alpha = get_diffusion_blending_weights(mask, factor=factor)
 
         elif blending_method == "average":
             alpha = get_average_blending_weights(mask)
