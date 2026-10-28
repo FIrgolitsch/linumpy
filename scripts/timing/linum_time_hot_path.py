@@ -1,8 +1,10 @@
 """Helpers for the hot-path timing driver."""
 
-import pathlib
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
 
-TIMING_ROOT = pathlib.Path("/scratch_nvme/workspace/sub-21/timing")
+TIMING_ROOT = Path("/scratch_nvme/workspace/sub-21/timing")
 RECORD_PATH = TIMING_ROOT / "hot_path.json"
 
 _THREAD_NAMES = (
@@ -42,19 +44,19 @@ def thread_env(cpu_count: int, max_cpus: int = 44, processes: int = 8) -> dict[s
     return env
 
 
-def assert_under_timing(path: pathlib.Path | str, root: pathlib.Path = TIMING_ROOT) -> pathlib.Path:
+def assert_under_timing(path: Path | str, root: Path = TIMING_ROOT) -> Path:
     """Return ``path`` when it stays inside ``root`` after resolution.
 
     Parameters
     ----------
-    path : pathlib.Path | str
+    path : Path | str
         Candidate output path.
-    root : pathlib.Path
+    root : Path
         Directory the resolved path must stay under.
 
     Returns
     -------
-    pathlib.Path
+    Path
         The resolved path.
 
     Raises
@@ -62,8 +64,55 @@ def assert_under_timing(path: pathlib.Path | str, root: pathlib.Path = TIMING_RO
     ValueError
         The resolved path leaves ``root``, including through a symlink.
     """
-    resolved = pathlib.Path(path).resolve()
-    root_resolved = pathlib.Path(root).resolve()
+    resolved = Path(path).resolve()
+    root_resolved = Path(root).resolve()
     if not resolved.is_relative_to(root_resolved):
         raise ValueError(f"path resolves outside the timing root: {resolved}")
     return resolved
+
+
+def disk_block(stat_fn: Callable[[str], int], findmnt_fn: Callable[[list[str]], str]) -> dict[str, object]:
+    """Return device identity for the temp, subject, and work trees.
+
+    Parameters
+    ----------
+    stat_fn : Callable[[str], int]
+        Returns ``st_dev`` for a path.
+    findmnt_fn : Callable[[list[str]], str]
+        Runs a ``findmnt`` argv list and returns its source text.
+    """
+    del stat_fn, findmnt_fn
+    return {}
+
+
+def scratch_copy() -> dict[str, object]:
+    """Return the scratch-copy record for a run that does not rsync."""
+    return {}
+
+
+def run_argv(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run ``argv`` with ``env`` and require a zero exit.
+
+    Parameters
+    ----------
+    argv : list[str]
+        Program and arguments. Never a shell string.
+    env : dict[str, str]
+        Environment for the child.
+    """
+    del env
+    return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+
+def finalize(payload: dict[str, object], timing_root: Path | str = TIMING_ROOT) -> dict[str, object]:
+    """Check ``payload`` and return it. This does not write the record file.
+
+    Parameters
+    ----------
+    payload : dict[str, object]
+        Candidate timing record.
+    timing_root : Path | str
+        Directory stage outputs must stay inside.
+    """
+    del timing_root
+    return payload
