@@ -151,6 +151,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "Removes serial-section sawtooth without per-Z histogram matching.\n"
         "Overrides --zprofile_smooth_sigma. [%(default)s]",
     )
+    p.add_argument(
+        "--z_smooth_sigma",
+        type=float,
+        default=0.0,
+        help="Gaussian blur along depth only (sigma in voxels). 0 = disabled.\n"
+        "Softens a thin bright sheet at the cut face without rescaling the slice. [%(default)s]",
+    )
 
     # Background masking (zero out agarose)
     p.add_argument(
@@ -347,6 +354,15 @@ def main() -> None:
             sigma=args.zprofile_smooth_sigma,
             equalize=args.zprofile_equalize,
         ).astype(np.float32)
+
+    # Depth-only blur. A scalar per plane cannot remove a sheet that is a
+    # minority of the plane; this only mixes neighboring depths.
+    if args.z_smooth_sigma > 0:
+        from scipy.ndimage import gaussian_filter1d
+
+        logger.info("Depth-only Gaussian (sigma=%g voxels)…", args.z_smooth_sigma)
+        blurred = gaussian_filter1d(vol, sigma=float(args.z_smooth_sigma), axis=0, mode="nearest")
+        vol = np.where(mask, blurred, vol).astype(np.float32)
 
     # Resolve spline distance defaults
     per_section_spline = args.spline_distance_mm if args.spline_distance_mm is not None else 2.0

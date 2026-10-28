@@ -1350,6 +1350,7 @@ process correct_bias_field {
     def tissue_thresh_flag = params.bias_tissue_threshold != null ? "--tissue_threshold ${params.bias_tissue_threshold}" : ""
     def zprofile_flag = params.bias_zprofile_smooth_sigma != null ? "--zprofile_smooth_sigma ${params.bias_zprofile_smooth_sigma}" : ""
     def zprofile_eq_flag = params.bias_zprofile_equalize ? "--zprofile_equalize" : "--no-zprofile_equalize"
+    def z_smooth_flag = params.bias_z_smooth_sigma ? "--z_smooth_sigma ${params.bias_z_smooth_sigma}" : ""
     def zero_mask_flag = params.bias_zero_outside_mask ? "--zero_outside_mask" : "--no-zero_outside_mask"
     def zero_mask_mode_flag = "--zero_mask_mode ${params.bias_zero_mask_mode}"
     def zero_mask_dilate_flag = "--zero_mask_dilate_px ${params.bias_zero_mask_dilate_px}"
@@ -1369,6 +1370,7 @@ process correct_bias_field {
         ${tissue_thresh_flag} \
         ${zprofile_flag} \
         ${zprofile_eq_flag} \
+        ${z_smooth_flag} \
         ${zero_mask_flag} \
         ${zero_mask_mode_flag} \
         ${zero_mask_dilate_flag} \
