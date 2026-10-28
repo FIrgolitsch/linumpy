@@ -201,6 +201,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "overlap is not used. Omit this flag to use that saved Z.",
     )
     p.add_argument(
+        "--ignore_manual_z",
+        action="store_true",
+        help="Do not use the Z saved in the manual alignments. Manual XY and\n"
+        "rotation still apply; Z comes from --use_expected_overlap or the\n"
+        "pairwise registration.",
+    )
+    p.add_argument(
         "--z_overlap_min_corr",
         type=float,
         default=0.5,
@@ -797,7 +804,7 @@ def main() -> None:
                 correlation_fallback_used = True
             blend_overlap = max(0, overlap)
             logger.info("Slice %s: registration Z overlap=%s voxels (corr=%.3f)", slice_id, overlap, corr)
-        elif slice_id in manual_slice_ids and fixed_z is not None:
+        elif slice_id in manual_slice_ids and fixed_z is not None and not args.ignore_manual_z:
             # --z_from_registration is off, so the Z saved in the manual tool is used.
             prev_nz = prev_vol.shape[0]
             overlap = max(0, prev_nz - int(fixed_z))
