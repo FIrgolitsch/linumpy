@@ -791,7 +791,7 @@ def main() -> None:
             if args.z_overlap_min_corr > 0 and corr < args.z_overlap_min_corr:
                 interval_voxels = int(args.slicing_interval_mm / res_z_mm)
                 id_step = max(1, int(slice_id) - int(prev_id))
-                fallback_overlap = expected_z_overlap(vol.shape[0], 0, interval_voxels, id_step)
+                fallback_overlap = expected_z_overlap(prev_vol.shape[0], 0, interval_voxels, id_step)
                 logger.warning(
                     "Slice %s: registration Z correlation %.3f < %.2f, using expected overlap %s (was %s)",
                     slice_id,
@@ -826,7 +826,7 @@ def main() -> None:
             moving_z = args.moving_z_first_index
             interval_voxels = int(args.slicing_interval_mm / res_z_mm)
             id_step = max(1, int(slice_id) - int(prev_id))
-            overlap = expected_z_overlap(vol.shape[0], moving_z or 0, interval_voxels, id_step)
+            overlap = expected_z_overlap(prev_vol.shape[0], moving_z or 0, interval_voxels, id_step)
             corr = 0.0
             if id_step > 1:
                 logger.info(

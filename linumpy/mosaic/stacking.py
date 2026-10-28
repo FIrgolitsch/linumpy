@@ -110,6 +110,11 @@ def expected_z_overlap(vol_nz: int, moving_z: int, interval_voxels: int, id_step
     slice is missing, ``id_step=2`` uses two intervals so neighbors are not
     glued together. Negative overlap means empty voxels between slabs.
 
+    ``vol_nz`` is the depth of the PREVIOUS slab: each cut advances the surface
+    by one interval, so the slab above reaches ``vol_nz - interval`` voxels past
+    the next cut face. Using the incoming slab's depth misplaces every joint
+    where the depth changes (up to the full depth difference).
+
     ``moving_z`` is a discarded-plane count on the incoming slab, not the
     pairwise 2-D Euler template index. After ``crop_interface`` it should be
     0 so the cut face enters the overlap.
