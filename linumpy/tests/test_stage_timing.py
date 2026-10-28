@@ -279,6 +279,78 @@ def test_stitch_scoring_wraps_only_the_refinements_call():
         assert all(keyword.arg != "use_gpu" for keyword in node.keywords)
 
 
+def _is_level0_materialization(node: ast.AST) -> bool:
+    call: ast.AST = node
+    if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "astype":
+        call = call.func.value
+    if not isinstance(call, ast.Call) or not call.args:
+        return False
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute) and func.attr == "array" and isinstance(func.value, ast.Name) and func.value.id == "np"
+    ):
+        return False
+    arg = call.args[0]
+    if not isinstance(arg, ast.Subscript) or not isinstance(arg.value, ast.Name):
+        return False
+    if arg.value.id not in {"vol", "first_vol"}:
+        return False
+    sl = arg.slice
+    return isinstance(sl, ast.Slice) and sl.lower is None and sl.upper is None and sl.step is None
+
+
+def _is_zero(node: ast.AST | None) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+        and node.value == 0
+    )
+
+
+def test_stack_reads_stay_apart_from_the_resample():
+    src = (_REPO / "scripts/stacking/linum_stack_slices_motor.py").read_text(encoding="utf-8")
+    pre, sep, _rest = src.partition("import numpy")
+    assert sep
+    assert "import linumpy.config.threads" in pre
+    assert "configure_all_libraries" in pre
+    tree = ast.parse(src)
+    parents = _parent_map(tree)
+    loads = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign) and _is_level0_materialization(node.value)]
+    assert len(loads) == 3
+    for node in loads:
+        span_call = _enclosing_span(node, parents, "stack_reads")
+        assert span_call is not None, "level-0 materialization is outside stack_reads"
+        assert _keyword_str(span_call, "device") == "cpu"
+        assert [keyword.arg for keyword in span_call.keywords] == ["device"]
+    for node in ast.walk(tree):
+        if _call_name(node) == "read_omezarr":
+            assert _enclosing_span(node, parents, "stack_reads") is None
+    for target, function_name in (
+        ("apply_rigid_euler_padded", "apply_rigid_euler_padded"),
+        ("apply_transform_to_volume", "apply_transform_to_volume"),
+    ):
+        hits = [node for node in ast.walk(tree) if _call_name(node) == target]
+        assert hits
+        for node in hits:
+            assert isinstance(node, ast.Call)
+            span_call = _enclosing_span(node, parents, "per_plane_resample")
+            assert span_call is not None, f"{target} is outside per_plane_resample"
+            assert _keyword_str(span_call, "device") == "cpu"
+            assert _keyword_str(span_call, "function") == function_name
+            assert [keyword.arg for keyword in span_call.keywords] == ["device", "function"]
+    skipped = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node) != "add":
+            continue
+        stage = node.args[0].value if node.args and isinstance(node.args[0], ast.Constant) else _keyword_str(node, "stage")
+        seconds = node.args[1] if len(node.args) > 1 else None
+        if stage == "per_plane_resample" and _is_zero(seconds) and _keyword_str(node, "function") == "skipped":
+            assert _keyword_str(node, "device") == "cpu"
+            skipped.append(node)
+    assert len(skipped) == 2
+
+
 def test_flush_refuses_ndarray(tmp_path, monkeypatch):
     timing_path = tmp_path / "stages.jsonl"
     monkeypatch.setenv("LINUMPY_STAGE_TIMING", str(timing_path))
