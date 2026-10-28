@@ -1,8 +1,16 @@
-"""Helpers for the hot-path timing driver."""
+"""Time slices 45, 46, and 47 and write hot_path.json.
 
+One pass over the existing reconstruction commands writes
+``/scratch_nvme/workspace/sub-21/timing/hot_path.json``. The command does not
+select other slices or another output root.
+"""
+
+import argparse
+import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,7 +19,39 @@ from linumpy.utils.stage_timing import validate_record
 TIMING_ROOT = Path("/scratch_nvme/workspace/sub-21/timing")
 RECORD_PATH = TIMING_ROOT / "hot_path.json"
 SUBJECT_ROOT = Path("/scratch_nvme/workspace/sub-21")
+WORK_ROOT = Path("/scratch_nvme/workspace/work")
+LINUMPY_REPO = Path("/home/frans/code/linumpy")
+SUBJECT = "sub-21"
+HOST = "132.207.157.41"
 SLICE_IDS = (45, 46, 47)
+_PROVENANCE_KEYS = (
+    "scratch_dir",
+    "compensate_attenuation_method",
+    "fix_illum_backend",
+    "fix_illum_per_z_fit",
+    "fix_illum_darkfield",
+    "fix_illum_multi_gpu",
+    "stitch_blending_method",
+    "align_to_ras_enabled",
+)
+_INNER_REQUIRED = {
+    "stitch": ("stitch_scoring", "diffusion_blend"),
+    "stack": ("stack_reads", "per_plane_resample"),
+}
+_RECORD_STAGES = (
+    "illumination",
+    "stitch",
+    "stitch_scoring",
+    "diffusion_blend",
+    "attenuation",
+    "common_space",
+    "stack",
+    "stack_reads",
+    "per_plane_resample",
+    "zip",
+    "screenshot",
+    "screenshot_annotated",
+)
 
 _ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 _ZARR_PATH = re.compile(r"\S*?\.ome\.zarr")
@@ -791,3 +831,474 @@ def resolve_common_space_inputs(command_sh_text: str) -> list[str]:
     if not paths:
         raise ValueError("common-space inputs are not in the command script")
     return paths
+
+
+def _json_object(line: str) -> dict[str, object]:
+    parsed = json.loads(line)
+    if not isinstance(parsed, dict):
+        raise ValueError("jsonl stage must be an object")
+    row: dict[str, object] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str):
+            raise ValueError("jsonl keys must be strings")
+        row[key] = value
+    return row
+
+
+def _functions(row: dict[str, object]) -> list[object]:
+    functions = row.get("functions")
+    if isinstance(functions, list):
+        return list(functions)
+    function = row.get("function")
+    if function is None:
+        return []
+    return [function]
+
+
+def _parent_command(parent: dict[str, object]) -> tuple[str, list[str], dict[str, object], str]:
+    name = parent.get("name")
+    argv = parent.get("argv")
+    flags = parent.get("flags")
+    output_path = parent.get("output_path")
+    if not isinstance(name, str) or not name:
+        raise ValueError("parent name is missing")
+    if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+        raise ValueError("parent argv must be a list of strings")
+    if not isinstance(flags, dict):
+        raise ValueError("parent flags must be an object")
+    if not isinstance(output_path, str) or not output_path:
+        raise ValueError("parent output_path is missing")
+    copied_argv = [item for item in argv if isinstance(item, str)]
+    copied_flags: dict[str, object] = {}
+    for key, value in flags.items():
+        if not isinstance(key, str):
+            raise ValueError("flag names must be strings")
+        copied_flags[key] = value
+    return name, copied_argv, copied_flags, output_path
+
+
+def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str) -> list[dict[str, object]]:
+    """Map JSONL stages onto the parent command. A missing inner stage raises.
+
+    Parameters
+    ----------
+    parent : dict[str, object]
+        The command that produced the JSONL. argv, flags, and output_path are copied.
+    stdout : str
+        Child stdout. Illumination uses it for the device; stitch and stack do not.
+    jsonl_text : str
+        JSONL text from ``LINUMPY_STAGE_TIMING``.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        Inner stages with the parent command's argv, flags, and output path.
+
+    Raises
+    ------
+    ValueError
+        A required inner stage is absent. Nothing is written.
+    """
+    del stdout
+    parent_name, argv, flags, output_path = _parent_command(parent)
+    grouped: dict[str, dict[str, object]] = {}
+    for line in jsonl_text.splitlines():
+        if not line.strip():
+            continue
+        row = _json_object(line)
+        stage = row.get("stage")
+        if not isinstance(stage, str) or not stage:
+            raise ValueError("jsonl stage name is missing")
+        seconds = row.get("seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int | float):
+            raise ValueError(f"{stage} seconds must be numeric")
+        count = row.get("count", 1)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise ValueError(f"{stage} count must be an int")
+        device = row.get("device")
+        if not isinstance(device, str) or not device:
+            raise ValueError(f"{stage} device must be a string")
+        current = grouped.get(stage)
+        if current is None:
+            grouped[stage] = {
+                "name": stage,
+                "argv": argv,
+                "seconds": float(seconds),
+                "duration_source": "perf_counter",
+                "device": device,
+                "flags": flags,
+                "output_path": output_path,
+                "parent": parent_name,
+                "count": count,
+                "functions": _functions(row),
+            }
+            continue
+        previous = current["seconds"]
+        if isinstance(previous, int | float) and not isinstance(previous, bool):
+            current["seconds"] = float(previous) + float(seconds)
+        previous_count = current["count"]
+        if isinstance(previous_count, int) and not isinstance(previous_count, bool):
+            current["count"] = previous_count + count
+        current["functions"] = [*_functions(current), *_functions(row)]
+        if current["device"] != device:
+            raise ValueError(f"{stage} device disagrees")
+    required = _INNER_REQUIRED.get(parent_name, ())
+    missing = [stage for stage in required if stage not in grouped]
+    if missing:
+        raise ValueError(f"missing stage {missing[0]}")
+    return [grouped[stage] for stage in required] if required else list(grouped.values())
+
+
+def linum_basic_revision(
+    dist_path: Path,
+    direct_url_text: str,
+    git_runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> str:
+    """Return the checkout SHA, or the raw direct-url text when it is not a checkout.
+
+    Parameters
+    ----------
+    dist_path : Path
+        Installed distribution path.
+    direct_url_text : str
+        Raw ``direct_url.json`` text. Stored unchanged when git cannot name a commit.
+    git_runner : Callable[[list[str]], subprocess.CompletedProcess[str]]
+        Runs a git argv list.
+
+    Returns
+    -------
+    str
+        The git SHA when the runner succeeds, otherwise ``direct_url_text``.
+    """
+    try:
+        completed = git_runner(["git", "-C", str(dist_path), "rev-parse", "HEAD"])
+    except subprocess.CalledProcessError, OSError:
+        return direct_url_text
+    revision = completed.stdout.strip()
+    if revision:
+        return revision
+    return direct_url_text
+
+
+def illumination_device(stdout: str) -> str:
+    """Return cuda only when the printed illumination device is cuda.
+
+    Parameters
+    ----------
+    stdout : str
+        Standard output from ``linum-fix-illumination-basic``.
+
+    Returns
+    -------
+    str
+        ``cuda`` or ``cpu``. A missing line or ``device=None`` is cpu.
+    """
+    for line in stdout.splitlines():
+        if "field_mode=" not in line or "backend=" not in line or "device=" not in line:
+            continue
+        match = re.search(r"device=([^,\s)]+)", line)
+        if match is not None and match.group(1) == "cuda":
+            return "cuda"
+        return "cpu"
+    return "cpu"
+
+
+def _remember_source(sources: list[str], path: str) -> None:
+    if not path or path in sources:
+        return
+    parts = [part for part in path.replace("\\", "/").split("/") if part not in {"", "."}]
+    if parts and (parts[-1] == "trace.txt" or ".nextflow" in parts):
+        raise ValueError("refusing to record a nextflow log as an input")
+    sources.append(path)
+
+
+def _newest_command_sh(cli_name: str, slice_id: int | None) -> str:
+    matches: list[Path] = []
+    if not WORK_ROOT.is_dir():
+        raise FileNotFoundError(f"{cli_name} command script is missing")
+    for path in WORK_ROOT.glob("*/*/.command.sh"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if cli_name not in text:
+            continue
+        if slice_id is not None and f"z{slice_id}" not in text:
+            continue
+        matches.append(path)
+    if not matches:
+        raise FileNotFoundError(f"{cli_name} command script is missing")
+    newest = max(matches, key=lambda item: item.stat().st_mtime)
+    return newest.read_text(encoding="utf-8", errors="replace")
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _collapse_stages(rows: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for row in rows:
+        name = row.get("name")
+        if not isinstance(name, str):
+            raise ValueError("stage name must be a string")
+        current = grouped.get(name)
+        if current is None:
+            grouped[name] = dict(row)
+            continue
+        previous = current.get("seconds")
+        added = row.get("seconds")
+        if isinstance(previous, int | float) and isinstance(added, int | float) and not isinstance(previous, bool):
+            current["seconds"] = float(previous) + float(added)
+        if "count" in row and isinstance(row["count"], int) and not isinstance(row["count"], bool):
+            previous_count = current.get("count", 0)
+            if isinstance(previous_count, int) and not isinstance(previous_count, bool):
+                current["count"] = previous_count + row["count"]
+        extra = row.get("functions")
+        if isinstance(extra, list):
+            current["functions"] = [*_functions(current), *extra]
+        if current.get("device") != row.get("device"):
+            if name == "illumination":
+                current["device"] = "cpu"
+            else:
+                raise ValueError(f"{name} device disagrees")
+    return grouped
+
+
+def _stat_dev(path: str) -> int:
+    return Path(path).stat().st_dev
+
+
+def _findmnt_text(argv: list[str]) -> str:
+    return run_argv(argv, dict(os.environ)).stdout.strip()
+
+
+def _git_text(repo: Path, *args: str) -> str:
+    completed = run_argv(["git", "-C", str(repo), *args], dict(os.environ))
+    return completed.stdout.strip()
+
+
+def _installed_linum_basic_revision() -> str:
+    import importlib.metadata as metadata
+
+    dist = metadata.distribution("linum-basic")
+    direct = dist.read_text("direct_url.json") or ""
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        return run_argv(argv, dict(os.environ))
+
+    return linum_basic_revision(Path(str(dist.locate_file(""))), direct, runner)
+
+
+def _prepare_inputs(cfg: dict[str, object]) -> tuple[dict[str, object], list[str]]:
+    sources: list[str] = []
+    illumination: dict[str, str] = {}
+    stitch: dict[str, str] = {}
+    attenuation: dict[str, str] = {}
+    transforms: dict[str, str] = {}
+    for slice_id in SLICE_IDS:
+        illum = str(
+            (
+                SUBJECT_ROOT
+                / "output"
+                / str(slice_id)
+                / "resample_mosaic_grid"
+                / f"mosaic_grid_z{slice_id}_resampled.ome.zarr"
+            ).resolve()
+        )
+        stitched = str(
+            (
+                SUBJECT_ROOT
+                / "output"
+                / str(slice_id)
+                / "fix_illumination_basic"
+                / f"mosaic_grid_z{slice_id}_illum_fix.ome.zarr"
+            ).resolve()
+        )
+        illumination[str(slice_id)] = illum
+        stitch[str(slice_id)] = stitched
+        _remember_source(sources, illum)
+        _remember_source(sources, stitched)
+        script = _newest_command_sh("linum-compensate-attenuation-inplace", slice_id)
+        crop = resolve_attenuation_input(script, slice_id)
+        attenuation[str(slice_id)] = crop
+        _remember_source(sources, crop)
+        try:
+            stitch_script = _newest_command_sh("linum-stitch-3d-refined", slice_id)
+        except FileNotFoundError:
+            stitch_script = ""
+        match = re.search(r"--input_transform\s+(\S+)", stitch_script)
+        if match is not None and match.group(1) not in {"", "NO_TRANSFORM"}:
+            transforms[str(slice_id)] = match.group(1)
+            _remember_source(sources, match.group(1))
+    common_script = _newest_command_sh("linum-align-mosaics-3d-from-shifts", None)
+    common_paths = resolve_common_space_inputs(common_script)
+    for path in common_paths:
+        _remember_source(sources, path)
+    shifts_clean = str(SUBJECT_ROOT / "output" / "detect_rehoming_events" / "shifts_xy_clean.csv")
+    shifts_xy = str(SUBJECT_ROOT / "mosaic-grids" / "shifts_xy.csv")
+    transforms_dir = str(SUBJECT_ROOT / "output" / "register_pairwise")
+    _remember_source(sources, shifts_clean)
+    _remember_source(sources, shifts_xy)
+    if _flag_bool(cfg, "apply_pairwise_transforms", True):
+        _remember_source(sources, transforms_dir)
+    workflow = Path(__file__).resolve().parents[2] / "workflows" / "reconst_3d" / "nextflow.config"
+    _remember_source(sources, str(workflow))
+    _remember_source(sources, str(SUBJECT_ROOT / "nextflow.config"))
+    inputs: dict[str, object] = {
+        "timing_root": TIMING_ROOT,
+        "illumination": illumination,
+        "stitch": stitch,
+        "attenuation": attenuation,
+        "stitch_transforms": transforms,
+        "common_space": common_paths,
+        "transforms_dir": transforms_dir,
+        "cpu_count": os.cpu_count() or 1,
+    }
+    return inputs, sources
+
+
+def _link_named(directory: Path, names: list[tuple[str, Path]]) -> None:
+    assert_under_timing(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, target in names:
+        link = directory / name
+        if link.exists() or link.is_symlink():
+            raise FileExistsError(link)
+        link.symlink_to(target)
+
+
+def _stage_device(spec: dict[str, object], stdout: str) -> str:
+    rule = spec.get("device_rule")
+    if rule == "stdout":
+        return illumination_device(stdout)
+    if isinstance(rule, str) and rule:
+        return rule
+    return "cpu"
+
+
+def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
+    output_raw = spec.get("output_path")
+    if not isinstance(output_raw, str):
+        raise ValueError("output_path must be a string")
+    output = assert_under_timing(output_raw, root=root)
+    if output.exists():
+        raise FileExistsError(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    env_raw = spec.get("env")
+    if not isinstance(env_raw, dict):
+        raise ValueError("stage env must be an object")
+    env = {str(key): str(value) for key, value in env_raw.items()}
+    name = spec.get("name")
+    if not isinstance(name, str):
+        raise ValueError("stage name must be a string")
+    if name in {"stitch", "stack"}:
+        suffix = spec.get("slice_id", "all")
+        jsonl_path = assert_under_timing(root / "out" / f"{name}_{suffix}.jsonl", root=root)
+        if jsonl_path.exists():
+            raise FileExistsError(jsonl_path)
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        env["LINUMPY_STAGE_TIMING"] = str(jsonl_path)
+    else:
+        jsonl_path = None
+    argv = _string_list(spec.get("argv"))
+    if not argv:
+        raise ValueError(f"{name} argv is empty")
+    started = time.perf_counter()
+    completed = run_argv(argv, env)
+    seconds = time.perf_counter() - started
+    flags = spec.get("flags")
+    outer: dict[str, object] = {
+        "name": name,
+        "argv": argv,
+        "seconds": seconds,
+        "duration_source": "perf_counter",
+        "device": _stage_device(spec, completed.stdout),
+        "flags": flags if isinstance(flags, dict) else {},
+        "output_path": str(output),
+    }
+    if jsonl_path is None:
+        return outer, []
+    text = jsonl_path.read_text(encoding="utf-8") if jsonl_path.is_file() else ""
+    return outer, collect_inner_stages(spec, completed.stdout, text)
+
+
+def _run_measurement() -> None:
+    if RECORD_PATH.exists():
+        raise FileExistsError(RECORD_PATH)
+    TIMING_ROOT.mkdir(parents=True, exist_ok=True)
+    workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "reconst_3d" / "nextflow.config"
+    server_path = SUBJECT_ROOT / "nextflow.config"
+    cfg = merge_config(
+        workflow_path.read_text(encoding="utf-8"),
+        server_path.read_text(encoding="utf-8"),
+    )
+    inputs, sources = _prepare_inputs(cfg)
+    stages = build_stage_commands(cfg, inputs)
+    common = next(stage for stage in stages if stage.get("name") == "common_space")
+    common_dir = TIMING_ROOT / "out" / "common_space_inputs"
+    common_links = [(Path(path).name, Path(path)) for path in _string_list(common.get("source_paths"))]
+    _link_named(common_dir, common_links)
+    stack_dir = TIMING_ROOT / "out" / "stack_slices"
+    stack_links = [
+        (
+            f"slice_z{slice_id}_normalize.ome.zarr",
+            SUBJECT_ROOT / "output" / "bring_to_common_space" / f"slice_z{slice_id}_normalize.ome.zarr",
+        )
+        for slice_id in SLICE_IDS
+    ]
+    _link_named(stack_dir, stack_links)
+    for _name, target in stack_links:
+        _remember_source(sources, str(target))
+    outers: list[dict[str, object]] = []
+    inners: list[dict[str, object]] = []
+    for spec in stages:
+        outer, inner = _time_spec(spec, TIMING_ROOT)
+        outers.append(outer)
+        inners.extend(inner)
+    by_name = _collapse_stages(outers)
+    by_name.update(_collapse_stages(inners))
+    missing = [name for name in _RECORD_STAGES if name not in by_name]
+    if missing:
+        raise ValueError(f"missing stage {missing[0]}")
+    threads = thread_env(
+        int(inputs["cpu_count"]) if isinstance(inputs["cpu_count"], int) else 1,
+        max_cpus=int(_flag_number(cfg, "max_cpus", 44)),
+        processes=int(_flag_number(cfg, "processes", 8)),
+    )
+    provenance = {key: cfg[key] for key in _PROVENANCE_KEYS}
+    payload: dict[str, object] = {
+        "subject": SUBJECT,
+        "host": HOST,
+        "slice_ids": list(SLICE_IDS),
+        "page_cache": "not_dropped",
+        "linumpy_git_rev": _git_text(LINUMPY_REPO, "rev-parse", "HEAD"),
+        "linumpy_git_branch": _git_text(LINUMPY_REPO, "rev-parse", "--abbrev-ref", "HEAD"),
+        "linum_basic_revision": _installed_linum_basic_revision(),
+        "thread_env": threads,
+        "disk": disk_block(_stat_dev, _findmnt_text),
+        "scratch_copy": scratch_copy(),
+        "task_hash": None,
+        "task_hash_reason": "direct command has no Nextflow task hash",
+        "provenance_flags": provenance,
+        "stages": [by_name[name] for name in _RECORD_STAGES],
+        "sources_read": sources,
+    }
+    checked = finalize(payload)
+    RECORD_PATH.write_text(json.dumps(checked, indent=2) + "\n", encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Parse arguments, then time slices 45, 46, and 47 into hot_path.json.
+
+    Parameters
+    ----------
+    argv : list[str] | None
+        Arguments after the program name. ``--help`` returns before the subject tree is read.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args(argv)
+    _run_measurement()
+
+
+if __name__ == "__main__":
+    main()
