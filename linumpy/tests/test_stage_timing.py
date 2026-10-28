@@ -1,5 +1,6 @@
 """Tests for env-gated stage timing."""
 
+import ast
 import json
 from pathlib import Path
 
@@ -203,6 +204,79 @@ def test_device_id_inequality(monkeypatch):
     monkeypatch.setattr(stage_timing.os, "stat", fake_stat)
     assert stage_timing.same_filesystem("disk-a", "disk-b") is False
     assert stage_timing.same_filesystem("disk-b", "other-b") is True
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _call_name(node: ast.AST) -> str:
+    if not isinstance(node, ast.Call):
+        return ""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
+def _span_call(node: ast.AST) -> ast.Call | None:
+    if not isinstance(node, ast.With):
+        return None
+    for item in node.items:
+        call = item.context_expr
+        if _call_name(call) == "span" and isinstance(call, ast.Call):
+            return call
+    return None
+
+
+def _keyword_str(call: ast.Call, name: str) -> str | None:
+    for keyword in call.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            return keyword.value.value
+    return None
+
+
+def _span_stage(call: ast.Call) -> str | None:
+    if call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str):
+        return call.args[0].value
+    return _keyword_str(call, "stage")
+
+
+def _enclosing_span(node: ast.AST, parents: dict[ast.AST, ast.AST], stage: str) -> ast.Call | None:
+    current = parents.get(node)
+    while current is not None:
+        call = _span_call(current)
+        if call is not None and _span_stage(call) == stage:
+            return call
+        current = parents.get(current)
+    return None
+
+
+def test_stitch_scoring_wraps_only_the_refinements_call():
+    src = (_REPO / "scripts/stitching/linum_stitch_3d_refined.py").read_text(encoding="utf-8")
+    pre, sep, _rest = src.partition("import numpy")
+    assert sep
+    assert "import linumpy.config.threads" in pre
+    tree = ast.parse(src)
+    parents = _parent_map(tree)
+    hits = [node for node in ast.walk(tree) if _call_name(node) == "compute_registration_refinements"]
+    assert hits
+    for node in hits:
+        assert isinstance(node, ast.Call)
+        span_call = _enclosing_span(node, parents, "stitch_scoring")
+        assert span_call is not None, "compute_registration_refinements is outside stitch_scoring"
+        assert _keyword_str(span_call, "device") == "cpu"
+        assert [keyword.arg for keyword in span_call.keywords] == ["device"]
+        assert all(keyword.arg != "use_gpu" for keyword in node.keywords)
 
 
 def test_flush_refuses_ndarray(tmp_path, monkeypatch):
