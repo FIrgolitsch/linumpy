@@ -4,7 +4,9 @@ import ast
 import inspect
 import subprocess
 import types
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -230,3 +232,178 @@ def test_run_argv_rejects_shell(monkeypatch: pytest.MonkeyPatch):
     assert kwargs.get("check") is True
     assert "shell" not in kwargs
     assert result.stdout == "ok"
+
+
+def _driver_fn(name: str) -> Callable[..., Any]:
+    found = getattr(driver, name, None)
+    assert callable(found), name
+    return cast(Callable[..., Any], found)
+
+
+_WORKFLOW_CONFIG = """
+params {
+    scratch_dir = true
+    fix_illum_per_z_fit = false
+    fix_illum_darkfield = false
+    fix_illum_multi_gpu = false
+    z_overlap_from_registration = false
+    use_gpu = true
+    gpu_count = 1
+    processes = 4
+    max_cpus = 16
+    clip_percentile_upper = 99.0
+    fix_illum_fit_max_samples = 100
+    fix_illum_max_iterations = 10
+    fix_illum_darkfield_percentile = 5
+    fix_illum_smoothness_flatfield = 0.05
+    stitch_overlap_fraction = 0.2
+    stitch_blending_method = 'average'
+    max_blend_refinement_px = 3
+    compensate_attenuation_method = 'faber'
+    compensate_attenuation_min_bias = 0.05
+    compensate_attenuation_mask_sigma = 2.0
+    compensate_attenuation_k = 10
+    compensate_attenuation_zshift = 3
+    compensate_attenuation_strength = 0.3
+    compensate_attenuation_snr_threshold_db = 6.0
+    align_to_ras_enabled = false
+    annotated_label_every = 2
+    annotated_show_lines = false
+    ras_input_orientation = ''
+}
+profiles {
+    aggressive {
+        params {
+            z_overlap_from_registration = true
+        }
+    }
+}
+"""
+
+_SERVER_CONFIG = """
+scratch_dir = false
+fix_illum_per_z_fit = true
+fix_illum_darkfield = true
+fix_illum_multi_gpu = true
+use_gpu = true
+gpu_count = 2
+processes = 8
+max_cpus = 44
+clip_percentile_upper = 99.9
+stitch_blending_method = 'diffusion'
+max_blend_refinement_px = 10
+compensate_attenuation_method = 'li'
+align_to_ras_enabled = true
+annotated_label_every = 1
+"""
+
+
+def _stage_inputs(root: Path) -> dict[str, object]:
+    illumination: dict[int, str] = {}
+    stitch: dict[int, str] = {}
+    attenuation: dict[int, str] = {}
+    for slice_id in (45, 46, 47):
+        illumination[slice_id] = f"/scratch_nvme/workspace/work/resampled/mosaic_grid_z{slice_id}_resampled.ome.zarr"
+        stitch[slice_id] = (
+            f"/scratch_nvme/workspace/sub-21/output/{slice_id}/fix_illumination_basic/"
+            f"mosaic_grid_z{slice_id}_illum_fix.ome.zarr"
+        )
+        attenuation[slice_id] = f"/scratch_nvme/workspace/work/crop/slice_z{slice_id}_crop_interface.ome.zarr"
+    return {
+        "timing_root": root,
+        "illumination": illumination,
+        "stitch": stitch,
+        "attenuation": attenuation,
+        "common_space": [
+            "/scratch_nvme/workspace/work/norm/slice_z45_normalize.ome.zarr",
+            "/scratch_nvme/workspace/work/norm/slice_z46_normalize.ome.zarr",
+            "/scratch_nvme/workspace/work/norm/slice_z47_normalize.ome.zarr",
+        ],
+        "cpu_count": 44,
+    }
+
+
+def _merged_server_config() -> dict[str, object]:
+    merge = _driver_fn("merge_config")
+    merged = merge(_WORKFLOW_CONFIG, _SERVER_CONFIG)
+    assert isinstance(merged, dict)
+    return merged
+
+
+def test_merge_prefers_server():
+    merged = _merged_server_config()
+    assert merged["scratch_dir"] is False
+    assert merged["fix_illum_per_z_fit"] is True
+    assert merged["z_overlap_from_registration"] is False
+    with pytest.raises(ValueError, match="scratch_dir"):
+        _driver_fn("merge_config")("scratch_dir = true", "scratch_dir = not-a-value")
+
+
+def test_illumination_argv_uses_server_flags(tmp_path: Path):
+    root = tmp_path / "timing"
+    root.mkdir()
+    inputs = _stage_inputs(root)
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), inputs)
+    assert isinstance(stages, list)
+    illumination = next(
+        stage
+        for stage in stages
+        if isinstance(stage, dict) and stage.get("name") == "illumination" and "z45" in stage.get("argv", [])
+    )
+    argv = illumination["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "linum-fix-illumination-basic"
+    assert "--per_z_fit" in argv
+    assert "--no-per_z_fit" not in argv
+    assert "--use_darkfield" in argv
+    assert "--use_gpu" in argv
+    assert argv[argv.index("--n_processes") + 1] == "8"
+    assert argv[argv.index("--slice_id") + 1] == "z45"
+    resampled_45 = "/scratch_nvme/workspace/work/resampled/mosaic_grid_z45_resampled.ome.zarr"
+    assert resampled_45 in argv
+    assert "illum_fix.ome.zarr" not in argv[1]
+    output_path = illumination["output_path"]
+    assert isinstance(output_path, str)
+    assert Path(output_path).is_relative_to(root)
+    assert output_path in argv
+
+
+def test_stages_keep_zip_and_screenshots_separate(tmp_path: Path):
+    root = tmp_path / "timing"
+    root.mkdir()
+    inputs = _stage_inputs(root)
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), inputs)
+    assert isinstance(stages, list)
+    names = [stage.get("name") for stage in stages if isinstance(stage, dict)]
+    assert "zip" in names
+    assert "screenshot" in names
+    assert "screenshot_annotated" in names
+    assert "align_to_ras" not in names
+    illumination_outputs = [
+        stage["output_path"]
+        for stage in stages
+        if isinstance(stage, dict) and stage.get("name") == "illumination" and isinstance(stage.get("output_path"), str)
+    ]
+    stitches = [stage for stage in stages if isinstance(stage, dict) and stage.get("name") == "stitch"]
+    assert len(stitches) == 3
+    existing_illum = "/scratch_nvme/workspace/sub-21/output/45/fix_illumination_basic/mosaic_grid_z45_illum_fix.ome.zarr"
+    for stage in stitches:
+        argv = stage["argv"]
+        assert isinstance(argv, list)
+        assert not any(token in argv for token in illumination_outputs)
+        assert existing_illum in argv or any("illum_fix.ome.zarr" in token for token in argv if isinstance(token, str))
+        assert "linum-align-to-ras" not in argv
+    assert all("linum-align-to-ras" not in stage.get("argv", []) for stage in stages if isinstance(stage, dict))
+
+
+def test_attenuation_input_is_not_the_output():
+    command = (
+        "linum-compensate-attenuation-inplace "
+        "/scratch_nvme/workspace/work/aa/bb/slice_z45_crop_interface.ome.zarr "
+        "/scratch_nvme/workspace/sub-21/output/compensate_attenuation/slice_z45_attn_corr.ome.zarr "
+        "--method li\n"
+    )
+    resolved = _driver_fn("resolve_attenuation_input")(command, 45)
+    assert isinstance(resolved, str)
+    assert resolved.endswith("slice_z45_crop_interface.ome.zarr")
+    assert not resolved.endswith("slice_z45_attn_corr.ome.zarr")
