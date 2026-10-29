@@ -3,6 +3,11 @@
 One pass over the existing reconstruction commands writes
 ``/scratch_nvme/workspace/sub-21/timing/hot_path.json``. The command does not
 select other slices or another output root.
+
+Each finished stage is also appended to ``hot_path.partial.jsonl`` for diagnosis.
+That file is never read back into a record. A run that finds a record, a partial
+file, or an ``out`` directory refuses to start unless ``--archive-previous`` is
+given, which renames those three to stamped names and deletes nothing.
 """
 
 import argparse
@@ -13,6 +18,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -20,6 +26,7 @@ from linumpy.utils.stage_timing import validate_record
 
 TIMING_ROOT = Path("/scratch_nvme/workspace/sub-21/timing")
 RECORD_PATH = TIMING_ROOT / "hot_path.json"
+PARTIAL_PATH = TIMING_ROOT / "hot_path.partial.jsonl"
 SUBJECT_ROOT = Path("/scratch_nvme/workspace/sub-21")
 WORK_ROOT = Path("/scratch_nvme/workspace/work")
 LINUMPY_REPO = Path("/home/frans/code/linumpy")
@@ -1583,9 +1590,128 @@ def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], 
     return outer, inners
 
 
-def _run_measurement() -> None:
-    if RECORD_PATH.exists():
-        raise FileExistsError(RECORD_PATH)
+def _append_partial(path: Path, outer: dict[str, object], inners: list[dict[str, object]]) -> None:
+    """Append one finished spec to the partial file as a single JSON line.
+
+    The line is ``{"outer": ..., "inners": [...]}``. It is flushed and synced
+    before this returns, so a later failure leaves it on disk. The partial file
+    is for diagnosis only and is never read back into a record.
+
+    Parameters
+    ----------
+    path : Path
+        The partial file.
+    outer : dict[str, object]
+        The finished spec's outer row.
+    inners : list[dict[str, object]]
+        The finished spec's inner rows.
+
+    Raises
+    ------
+    ValueError
+        A row holds NaN or infinity. Nothing is written.
+    """
+    line = json.dumps({"outer": outer, "inners": inners}, allow_nan=False)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _write_record(path: Path, payload: dict[str, object]) -> None:
+    """Write the record so a truncated file never exists at ``path``.
+
+    The text goes to a temporary file in the same directory and is moved into
+    place with ``Path.replace``, which is ``os.replace``: an atomic rename on one
+    filesystem. NaN is refused before any file is created.
+
+    Parameters
+    ----------
+    path : Path
+        Final record path.
+    payload : dict[str, object]
+        The checked record.
+
+    Raises
+    ------
+    ValueError
+        The payload holds NaN or infinity. Neither ``path`` nor a temporary file exists afterwards.
+    """
+    text = json.dumps(payload, indent=2, allow_nan=False) + "\n"
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _artifact_paths(root: Path) -> list[Path]:
+    """Return what a run leaves under ``root``: the record, the partial file, and ``out``."""
+    return [root / RECORD_PATH.name, root / PARTIAL_PATH.name, root / "out"]
+
+
+def _is_present(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _archive_previous(root: Path, stamp: str) -> list[Path]:
+    """Rename the record, the partial file, and ``out`` to stamped siblings.
+
+    Nothing is copied, deleted, or overwritten. Every source and destination is
+    checked before the first rename, so a refusal moves nothing. An item that
+    does not exist is skipped.
+
+    Parameters
+    ----------
+    root : Path
+        The timing root. Every path must resolve inside it.
+    stamp : str
+        Text put before the suffix: ``hot_path.<stamp>.json``,
+        ``hot_path.partial.<stamp>.jsonl``, and ``out.<stamp>``.
+
+    Returns
+    -------
+    list[Path]
+        The new locations, in record, partial file, out order.
+
+    Raises
+    ------
+    FileExistsError
+        A destination already exists.
+    ValueError
+        A source or destination resolves outside ``root``, including through a symlink.
+    """
+    moves: list[tuple[Path, Path]] = []
+    for source in _artifact_paths(root):
+        if not _is_present(source):
+            continue
+        destination = source.with_name(f"{source.stem}.{stamp}{source.suffix}")
+        assert_under_timing(source, root=root)
+        assert_under_timing(destination, root=root)
+        if _is_present(destination):
+            raise FileExistsError(destination)
+        moves.append((source, destination))
+    for source, destination in moves:
+        source.rename(destination)
+    return [destination for _source, destination in moves]
+
+
+def _run_measurement(archive_previous: bool = False) -> None:
+    """Time the stages and write the record.
+
+    Order: refuse leftover artifacts unless ``archive_previous``, read the
+    config, run the pre-flight checks and gather provenance, resolve inputs,
+    archive when asked, link inputs, then run the stages. Nothing before the
+    archive step writes or moves a file.
+    """
+    leftovers = [path for path in _artifact_paths(TIMING_ROOT) if _is_present(path)]
+    if leftovers and not archive_previous:
+        names = ", ".join(path.name for path in leftovers)
+        raise FileExistsError(f"{names} already exist under {TIMING_ROOT}; pass --archive-previous to move them aside")
     workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "reconst_3d" / "nextflow.config"
     server_path = SUBJECT_ROOT / "nextflow.config"
     cfg = merge_config(
@@ -1595,6 +1721,8 @@ def _run_measurement() -> None:
     _refuse_unfit_run(cfg)
     provenance = _gather_provenance(cfg)
     inputs, sources = _prepare_inputs(cfg)
+    if archive_previous:
+        _archive_previous(TIMING_ROOT, datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ"))
     TIMING_ROOT.mkdir(parents=True, exist_ok=True)
     stages = build_stage_commands(cfg, inputs)
     common = next(stage for stage in stages if stage.get("name") == "common_space")
@@ -1616,6 +1744,7 @@ def _run_measurement() -> None:
     inners: list[dict[str, object]] = []
     for spec in stages:
         outer, inner = _time_spec(spec, TIMING_ROOT)
+        _append_partial(PARTIAL_PATH, outer, inner)
         outers.append(outer)
         inners.extend(inner)
     by_name = _collapse_stages(outers)
@@ -1641,7 +1770,7 @@ def _run_measurement() -> None:
         "sources_read": sources,
     }
     checked = finalize(payload)
-    RECORD_PATH.write_text(json.dumps(checked, indent=2) + "\n", encoding="utf-8")
+    _write_record(RECORD_PATH, checked)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1653,8 +1782,13 @@ def main(argv: list[str] | None = None) -> None:
         Arguments after the program name. ``--help`` returns before the subject tree is read.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args(argv)
-    _run_measurement()
+    parser.add_argument(
+        "--archive-previous",
+        action="store_true",
+        help="rename an existing record, partial file, and out directory to stamped names instead of refusing",
+    )
+    args = parser.parse_args(argv)
+    _run_measurement(archive_previous=bool(args.archive_previous))
 
 
 if __name__ == "__main__":

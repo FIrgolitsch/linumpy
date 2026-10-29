@@ -1312,7 +1312,7 @@ def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple
     (subject / "nextflow.config").write_text(_SERVER_CONFIG, encoding="utf-8")
     monkeypatch.setattr(driver, "TIMING_ROOT", root)
     monkeypatch.setattr(driver, "RECORD_PATH", record)
-    monkeypatch.setattr(driver, "PARTIAL_PATH", root / "hot_path.partial.jsonl", raising=False)
+    monkeypatch.setattr(driver, "PARTIAL_PATH", root / "hot_path.partial.jsonl")
     monkeypatch.setattr(driver, "SUBJECT_ROOT", subject)
     monkeypatch.setattr(driver, "_link_named", lambda directory, names: None)
     monkeypatch.setattr(driver, "_prepare_inputs", lambda cfg: (_stage_inputs(root), [str(root / "shifts_xy.csv")]))
