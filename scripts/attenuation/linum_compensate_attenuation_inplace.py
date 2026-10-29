@@ -47,6 +47,7 @@ from linumpy.intensity.attenuation import (
     get_attenuation_liu2019,
     get_attenuation_smith2015,
     get_attenuation_vermeer2013,
+    smooth_optical_depth_xy,
 )
 from linumpy.intensity.bias_field import compute_tissue_mask
 from linumpy.io.zarr import read_omezarr, save_omezarr
@@ -120,6 +121,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "Voxels where signal / noise_floor < 10^(snr_threshold_db/10) are excluded\n"
         "from the attenuation fit. 6 dB is the Li 2020 paper value. [%(default)s]",
     )
+    p.add_argument(
+        "--lateral_sigma",
+        type=float,
+        default=0.0,
+        help="XY Gaussian sigma (voxels) on the optical depth inside the tissue mask.\n"
+        "Softens the hard-walled gain patches that per-A-line truncation leaves,\n"
+        "which stack into slab-tall blocks. 0 disables. [%(default)s]",
+    )
     p.add_argument("--n_levels", type=int, default=0, help="Pyramid levels in the output. [%(default)s]")
     return p
 
@@ -189,6 +198,7 @@ def main() -> None:
 
     # Cumulative round-trip optical depth along the Aline (axis=2 in XYZ).
     optical_depth = cumulative_trapezoid(attn_per_voxel, axis=2, initial=0)
+    optical_depth = smooth_optical_depth_xy(optical_depth, mask_xyz, args.lateral_sigma)
     bias_xyz = np.exp(-2.0 * args.strength * optical_depth).astype(np.float32)
     np.maximum(bias_xyz, args.min_bias, out=bias_xyz)
 

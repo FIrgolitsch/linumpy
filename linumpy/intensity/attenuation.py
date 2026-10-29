@@ -404,6 +404,32 @@ def get_attenuation_li2020(
     )
 
 
+def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
+    """Smooth a cumulative optical depth across A-lines, inside the tissue mask.
+
+    Per-A-line truncation and hole filling leave flat attenuation patches with
+    hard walls. Summed along depth they become gain blocks one slab tall. A
+    masked Gaussian per depth plane softens those walls; depth is untouched.
+
+    Parameters
+    ----------
+    optical_depth : ndarray
+        Optical depth in ``(X, Y, Z)`` order.
+    mask : ndarray
+        Tissue mask, same shape. Voxels outside keep their value.
+    sigma : float
+        Lateral Gaussian sigma in voxels. ``<= 0`` is a no-op.
+    """
+    if sigma <= 0:
+        return optical_depth
+    mask = mask.astype(bool)
+    sig = (sigma, sigma, 0.0)
+    weight = gaussian_filter(mask.astype(np.float32), sig)
+    smoothed = gaussian_filter(np.where(mask, optical_depth, 0.0).astype(np.float32), sig)
+    smoothed /= np.maximum(weight, 1e-3)
+    return np.where(mask, smoothed, optical_depth).astype(optical_depth.dtype, copy=False)
+
+
 def get_attenuation_faber2004(
     vol: np.ndarray, mask: np.ndarray | None = None, dz: float = 6.5e-6, N: int = 4
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

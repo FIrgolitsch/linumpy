@@ -189,3 +189,23 @@ def test_faber2004_runs_with_noncontiguous_mask():
     assert r_length.shape == (3, 3)
     assert z_focus.shape == (3, 3)
     assert np.all(np.isfinite(attn))
+
+
+def test_smooth_optical_depth_xy_softens_walls_inside_mask():
+    """A hard-walled optical-depth step is softened in XY; outside-mask and depth stay put."""
+    from linumpy.intensity.attenuation import smooth_optical_depth_xy
+
+    od = np.zeros((40, 40, 5), dtype=np.float32)
+    od[20:, :, :] = np.arange(5, dtype=np.float32)  # wall at x=20, deeper = larger
+    mask = np.ones_like(od, dtype=bool)
+    mask[:, :2, :] = False
+    od[:, :2, :] = 7.0
+
+    out = smooth_optical_depth_xy(od, mask, sigma=3.0)
+
+    assert np.all(out[:, :2, :] == 7.0)
+    # wall is now a ramp: values just left of it rise, just right of it drop
+    assert 0 < out[19, 20, 4] < 4 and 0 < out[20, 20, 4] < 4
+    # far from the wall the depth profile is unchanged
+    np.testing.assert_allclose(out[35, 20, :], np.arange(5), atol=1e-4)
+    assert smooth_optical_depth_xy(od, mask, sigma=0) is od
