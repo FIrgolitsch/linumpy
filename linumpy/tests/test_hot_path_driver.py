@@ -7,6 +7,7 @@ import subprocess
 import sys
 import types
 from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from typing import Any, cast
 
@@ -257,6 +258,20 @@ def test_run_argv_rejects_shell(monkeypatch: pytest.MonkeyPatch):
     assert kwargs.get("check") is True
     assert "shell" not in kwargs
     assert result.stdout == "ok"
+
+
+def test_failed_child_shows_its_stderr(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    argv = ["linum-stitch-3d-refined", "in.ome.zarr", "out.ome.zarr"]
+    failure = subprocess.CalledProcessError(3, argv, output="partial stdout", stderr="RuntimeError: zarr store is locked\n")
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise failure
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        driver.run_argv(argv, {"OMP_NUM_THREADS": "2"})
+    assert raised.value is failure
+    assert "RuntimeError: zarr store is locked" in capsys.readouterr().err
 
 
 def _driver_fn(name: str) -> Callable[..., Any]:
@@ -1292,7 +1307,12 @@ def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple
     monkeypatch.setattr(driver, "SUBJECT_ROOT", subject)
     monkeypatch.setattr(driver, "_link_named", lambda directory, names: None)
     monkeypatch.setattr(driver, "_prepare_inputs", lambda cfg: (_stage_inputs(root), [str(root / "shifts_xy.csv")]))
-    monkeypatch.setattr(driver, "_git_text", lambda repo, *args: "abc123")
+
+    def git_text(repo: Path, *args: str) -> str:
+        del repo
+        return "" if args[0] == "status" else "abc123"
+
+    monkeypatch.setattr(driver, "_git_text", git_text)
     monkeypatch.setattr(driver, "_installed_linum_basic_revision", lambda: "def456")
     monkeypatch.setattr(
         driver,
@@ -1459,3 +1479,127 @@ def test_record_carries_the_optional_stack_z_match_row(tmp_path: Path, monkeypat
     assert z_match["functions"] == ["find_z_overlap"]
     assert z_match["duration_source"] == "perf_counter"
     assert stages["stack_reads"]["device"] == "cpu"
+
+
+def _trace_measurement(monkeypatch: pytest.MonkeyPatch, status: str = "") -> list[str]:
+    """Wrap the harness stand-ins so the returned list names, in order, what ``_run_measurement`` touches."""
+    calls: list[str] = []
+    fake_time = _fake_time_for({"value": "ok"}, None)
+    patched_disk = driver.disk_block
+    patched_inputs = driver._prepare_inputs
+
+    def git_text(repo: Path, *args: str) -> str:
+        del repo
+        calls.append(f"git {args[0]}")
+        return status if args[0] == "status" else "abc123"
+
+    def linum_basic() -> str:
+        calls.append("linum_basic")
+        return "def456"
+
+    def disk(stat_fn: Callable[[str], int], findmnt_fn: Callable[[list[str]], str]) -> dict[str, object]:
+        calls.append("disk")
+        return patched_disk(stat_fn, findmnt_fn)
+
+    def prepare_inputs(cfg: dict[str, object]) -> tuple[dict[str, object], list[str]]:
+        calls.append("prepare_inputs")
+        return patched_inputs(cfg)
+
+    def link_named(directory: Path, names: list[tuple[str, Path]]) -> None:
+        calls.append("link")
+
+    def time_spec(spec: dict[str, object], timing_root: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
+        calls.append("time_spec")
+        return fake_time(spec, timing_root)
+
+    monkeypatch.setattr(driver, "_git_text", git_text)
+    monkeypatch.setattr(driver, "_installed_linum_basic_revision", linum_basic)
+    monkeypatch.setattr(driver, "disk_block", disk)
+    monkeypatch.setattr(driver, "_prepare_inputs", prepare_inputs)
+    monkeypatch.setattr(driver, "_link_named", link_named)
+    monkeypatch.setattr(driver, "_time_spec", time_spec)
+    return calls
+
+
+def test_metadata_is_gathered_before_the_first_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    calls = _trace_measurement(monkeypatch)
+
+    def missing_package() -> str:
+        calls.append("linum_basic")
+        raise PackageNotFoundError("linum-basic")
+
+    monkeypatch.setattr(driver, "_installed_linum_basic_revision", missing_package)
+    with pytest.raises(PackageNotFoundError):
+        driver._run_measurement()
+    assert "linum_basic" in calls
+    assert "time_spec" not in calls, "a stage ran although the linum-basic lookup was going to fail"
+    assert "link" not in calls
+    assert not record.exists()
+
+    calls.clear()
+    monkeypatch.setattr(driver, "_installed_linum_basic_revision", lambda: calls.append("linum_basic") or "def456")
+    driver._run_measurement()
+    lookups = [index for index, call in enumerate(calls) if call in {"git rev-parse", "linum_basic", "disk"}]
+    assert {calls[index] for index in lookups} == {"git rev-parse", "linum_basic", "disk"}
+    first_stage = calls.index("time_spec")
+    assert max(lookups) < calls.index("prepare_inputs") < calls.index("link") < first_stage
+    assert record.exists()
+
+
+def test_dirty_linumpy_checkout_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    calls = _trace_measurement(monkeypatch, status=" M linumpy/stitching/blend.py")
+    with pytest.raises(ValueError, match="uncommitted"):
+        driver._run_measurement()
+    assert "time_spec" not in calls, "a stage ran on a checkout that differs from HEAD"
+    assert "link" not in calls
+    assert not record.exists()
+
+    calls = _trace_measurement(monkeypatch, status="")
+    driver._run_measurement()
+    assert "time_spec" in calls
+    assert record.exists()
+
+
+def _commit_in(repo: Path, *args: str) -> str:
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+    return subprocess.run([*git, *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_dirty_check_looks_at_tracked_files_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    real_git_text = driver._git_text
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for({"value": "ok"}, None))
+    repo = tmp_path / "linumpy-checkout"
+    repo.mkdir()
+    _commit_in(repo, "init", "-q")
+    tracked = repo / "tracked.py"
+    tracked.write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_in(repo, "add", "tracked.py")
+    _commit_in(repo, "commit", "-q", "-m", "tracked")
+    monkeypatch.setattr(driver, "LINUMPY_REPO", repo)
+    monkeypatch.setattr(driver, "_git_text", real_git_text)
+
+    tracked.write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="uncommitted"):
+        driver._run_measurement()
+    assert not record.exists()
+
+    tracked.write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "scratch.log").write_text("not tracked\n", encoding="utf-8")
+    driver._run_measurement()
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    assert stored["linumpy_git_rev"] == _commit_in(repo, "rev-parse", "HEAD")
+
+
+def test_scratch_dir_true_is_refused_before_any_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    calls = _trace_measurement(monkeypatch)
+    server_config = driver.SUBJECT_ROOT / "nextflow.config"
+    server_config.write_text(_SERVER_CONFIG.replace("scratch_dir = false", "scratch_dir = true"), encoding="utf-8")
+    with pytest.raises(ValueError, match="scratch_dir"):
+        driver._run_measurement()
+    assert "time_spec" not in calls, "a stage ran although the record could not describe a scratch copy"
+    assert "link" not in calls
+    assert not record.exists()
