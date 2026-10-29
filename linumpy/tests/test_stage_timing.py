@@ -192,6 +192,21 @@ def test_rejects_cache_and_log(tmp_path):
     with pytest.raises(ValueError, match="timing"):
         stage_timing.validate_record(escaped, timing_root=str(root))
 
+    other_slices = _valid_payload(root)
+    other_slices["slice_ids"] = [44, 45, 46, 47, 48]
+    with pytest.raises(ValueError, match="slice_ids"):
+        stage_timing.validate_record(other_slices, timing_root=str(root))
+
+    dropped = _valid_payload(root)
+    dropped["page_cache"] = "dropped"
+    with pytest.raises(ValueError, match="not_dropped"):
+        stage_timing.validate_record(dropped, timing_root=str(root))
+
+    timed_scratch = _valid_payload(root)
+    timed_scratch["scratch_copy"] = {"status": "not_taken", "seconds": 12.0, "scratch_dir": False}
+    with pytest.raises(ValueError, match="not_taken"):
+        stage_timing.validate_record(timed_scratch, timing_root=str(root))
+
 
 def test_device_id_inequality(monkeypatch):
     class _Stat:

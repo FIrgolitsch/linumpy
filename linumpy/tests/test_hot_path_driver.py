@@ -634,3 +634,323 @@ def test_linum_basic_revision_prefers_checkout(tmp_path: Path):
         raise subprocess.CalledProcessError(128, argv, stderr="not a git repository")
 
     assert revise(tmp_path / "dist-info", direct, not_checkout) == direct
+
+
+def test_illumination_device_follows_the_printed_branch():
+    printed = _driver_fn("illumination_device")
+    cuda_line = "field_mode=per_z backend=torch device=cuda"
+    assert printed(cuda_line) == "cuda"
+    assert printed("field_mode=per_z backend=torch device=None") == "cpu"
+    assert printed("field_mode=per_z backend=torch device=cpu") == "cpu"
+    assert printed("field_mode=cuda backend=missing-device") == "cpu"
+    assert printed("cuda") == "cpu"
+    stage_device = _driver_fn("_stage_device")
+    assert stage_device({"device_rule": "stdout"}, cuda_line) == "cuda"
+    assert stage_device({"device_rule": "stdout"}, "field_mode=per_z backend=torch device=None") == "cpu"
+    assert stage_device({"device_rule": "host"}, cuda_line) == "host"
+    assert stage_device({"device_rule": "cpu"}, cuda_line) == "cpu"
+
+
+def test_only_slices_45_to_47_are_timed_and_zip_stays_on_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    for name in (
+        "CUDA_VISIBLE_DEVICES",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "LINUMPY_STAGE_TIMING",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    root = tmp_path / "timing"
+    root.mkdir()
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), _stage_inputs(root))
+    assert isinstance(stages, list)
+    by_name: dict[str, list[dict[str, object]]] = {}
+    for stage in stages:
+        assert isinstance(stage, dict)
+        name = stage.get("name")
+        assert isinstance(name, str)
+        by_name.setdefault(name, []).append(stage)
+        output_path = stage.get("output_path")
+        assert isinstance(output_path, str)
+        assert Path(output_path).is_relative_to(root)
+        assert "output/stack" not in output_path
+    for name in ("illumination", "stitch", "attenuation"):
+        assert {stage.get("slice_id") for stage in by_name[name]} == {45, 46, 47}
+    assert set(by_name) >= {"zip", "screenshot", "screenshot_annotated", "common_space", "stack"}
+    assert "align_to_ras" not in by_name
+    illumination = by_name["illumination"][0]
+    assert illumination["device_rule"] == "stdout"
+    illum_env = illumination["env"]
+    assert isinstance(illum_env, dict)
+    assert illum_env.get("CUDA_VISIBLE_DEVICES") == "0,1"
+    assert illum_env.get("TORCHINDUCTOR_FX_GRAPH_CACHE") == "1"
+    for name in ("stitch", "attenuation", "common_space", "stack", "zip", "screenshot", "screenshot_annotated"):
+        assert by_name[name][0]["device_rule"] == ("host" if name == "zip" else "cpu")
+        env = by_name[name][0]["env"]
+        assert isinstance(env, dict)
+        assert "CUDA_VISIBLE_DEVICES" not in env
+        assert "TORCHINDUCTOR_FX_GRAPH_CACHE" not in env
+    stack_argv = by_name["stack"][0]["argv"]
+    assert isinstance(stack_argv, list)
+    assert "--no_xy_shift" in stack_argv
+    assert "--use_gpu" in stack_argv
+    assert "--z_from_registration" not in stack_argv
+    attenuation_argv = by_name["attenuation"][0]["argv"]
+    assert isinstance(attenuation_argv, list)
+    assert "--use_gpu" not in attenuation_argv
+    common_argv = by_name["common_space"][0]["argv"]
+    assert isinstance(common_argv, list)
+    assert "--refine_unreliable" not in common_argv
+    assert "linum-align-to-ras" not in common_argv
+
+
+def test_outer_clock_stays_off_the_inner_seconds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("LINUMPY_STAGE_TIMING", raising=False)
+    root = tmp_path / "timing"
+    root.mkdir()
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), _stage_inputs(root))
+    assert isinstance(stages, list)
+    stitch = next(
+        stage for stage in stages if isinstance(stage, dict) and stage.get("name") == "stitch" and stage.get("slice_id") == 45
+    )
+    blocked = next(
+        stage for stage in stages if isinstance(stage, dict) and stage.get("name") == "stitch" and stage.get("slice_id") == 46
+    )
+    illumination = next(
+        stage
+        for stage in stages
+        if isinstance(stage, dict) and stage.get("name") == "illumination" and stage.get("slice_id") == 45
+    )
+    stack = next(stage for stage in stages if isinstance(stage, dict) and stage.get("name") == "stack")
+    blocked_output = blocked["output_path"]
+    assert isinstance(blocked_output, str)
+    Path(blocked_output).mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def refuse_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        del env
+        calls.append(argv)
+        raise AssertionError("child started after the output already existed")
+
+    monkeypatch.setattr(driver, "run_argv", refuse_child)
+    with pytest.raises(FileExistsError):
+        _driver_fn("_time_spec")(blocked, root)
+    assert calls == []
+
+    def time_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        timing = env.get("LINUMPY_STAGE_TIMING")
+        assert isinstance(timing, str)
+        timing_path = Path(timing)
+        assert timing_path.is_relative_to(root)
+        timing_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"stage": "stitch_scoring", "seconds": 100.0, "count": 1, "device": "cpu"}),
+                    json.dumps({"stage": "diffusion_blend", "seconds": 50.0, "count": 1, "device": "cpu"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(argv, 0, stdout="field_mode=per_z backend=torch device=cuda", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", time_child)
+    outer, inners = _driver_fn("_time_spec")(stitch, root)
+    assert isinstance(outer, dict)
+    assert isinstance(inners, list)
+    assert outer["duration_source"] == "perf_counter"
+    assert outer["device"] == "cpu"
+    seconds = outer["seconds"]
+    assert isinstance(seconds, float)
+    inner_total = 0.0
+    by_name: dict[str, dict[str, object]] = {}
+    for row in inners:
+        assert isinstance(row, dict)
+        name = row["name"]
+        assert isinstance(name, str)
+        by_name[name] = row
+        row_seconds = row["seconds"]
+        assert isinstance(row_seconds, float)
+        inner_total += row_seconds
+    assert by_name["stitch_scoring"]["seconds"] == 100.0
+    assert by_name["diffusion_blend"]["seconds"] == 50.0
+    assert inner_total == 150.0
+    assert seconds < inner_total
+    assert not (root / "hot_path.json").exists()
+
+    def print_cpu(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        assert "LINUMPY_STAGE_TIMING" not in env
+        return subprocess.CompletedProcess(argv, 0, stdout="field_mode=per_z backend=torch device=None\n", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", print_cpu)
+    illum_outer, illum_inners = _driver_fn("_time_spec")(illumination, root)
+    assert isinstance(illum_outer, dict)
+    assert illum_outer["device"] == "cpu"
+    assert illum_outer["duration_source"] == "perf_counter"
+    assert illum_inners == []
+
+    def print_cuda(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        assert "LINUMPY_STAGE_TIMING" not in env
+        return subprocess.CompletedProcess(argv, 0, stdout="field_mode=per_z backend=torch device=cuda\n", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", print_cuda)
+    cuda_outer, cuda_inners = _driver_fn("_time_spec")(illumination, root)
+    assert isinstance(cuda_outer, dict)
+    assert cuda_outer["device"] == "cuda"
+    assert cuda_inners == []
+
+    def stack_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        timing = env.get("LINUMPY_STAGE_TIMING")
+        assert isinstance(timing, str)
+        Path(timing).write_text(
+            json.dumps({"stage": "stack_reads", "seconds": 1.0, "count": 3, "device": "cpu"}) + "\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", stack_child)
+    with pytest.raises(ValueError, match="per_plane_resample"):
+        _driver_fn("_time_spec")(stack, root)
+    assert not (root / "hot_path.json").exists()
+
+
+def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "timing"
+    root.mkdir()
+    record = root / "hot_path.json"
+    subject = tmp_path / "sub-21"
+    subject.mkdir()
+    (subject / "nextflow.config").write_text(_SERVER_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(driver, "TIMING_ROOT", root)
+    monkeypatch.setattr(driver, "RECORD_PATH", record)
+    monkeypatch.setattr(driver, "SUBJECT_ROOT", subject)
+    monkeypatch.setattr(driver, "_link_named", lambda directory, names: None)
+    monkeypatch.setattr(driver, "_prepare_inputs", lambda cfg: (_stage_inputs(root), [str(root / "shifts_xy.csv")]))
+    monkeypatch.setattr(driver, "_git_text", lambda repo, *args: "abc123")
+    monkeypatch.setattr(driver, "_installed_linum_basic_revision", lambda: "def456")
+    monkeypatch.setattr(
+        driver,
+        "disk_block",
+        lambda stat_fn, findmnt_fn: {
+            "tmp_source": "/dev/nvme0n1p1",
+            "subject_source": "/dev/nvme0n1p2",
+            "work_source": "/dev/nvme0n1p2",
+            "tmp_st_dev": 66305,
+            "subject_st_dev": 66306,
+            "work_st_dev": 66306,
+            "same_filesystem": False,
+        },
+    )
+    mode = {"value": "missing"}
+    entered: list[bool] = []
+    original_finalize = driver.finalize
+
+    def spy_finalize(payload: dict[str, object], timing_root: Path = driver.TIMING_ROOT) -> dict[str, object]:
+        del timing_root
+        assert not record.exists()
+        checked = original_finalize(payload, timing_root=root)
+        assert not record.exists()
+        entered.append(True)
+        return checked
+
+    monkeypatch.setattr(driver, "finalize", spy_finalize)
+
+    def fake_time(spec: dict[str, object], timing_root: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
+        del timing_root
+        name = spec.get("name")
+        assert isinstance(name, str)
+        if mode["value"] == "missing" and name == "stitch":
+            raise ValueError("missing stage diffusion_blend")
+        output_path = spec.get("output_path")
+        assert isinstance(output_path, str)
+        if mode["value"] == "escape" and name == "illumination":
+            output_path = "/etc/passwd"
+        device = "cuda" if name == "illumination" else spec.get("device_rule")
+        outer = {
+            "name": name,
+            "argv": spec.get("argv"),
+            "seconds": 0.2,
+            "duration_source": "perf_counter",
+            "device": device,
+            "flags": spec.get("flags"),
+            "output_path": output_path,
+        }
+        inners: list[dict[str, object]] = []
+        if name == "stitch" and spec.get("slice_id") == 45:
+            for inner_name, inner_seconds in (("stitch_scoring", 1.5), ("diffusion_blend", 0.4)):
+                inners.append(
+                    {
+                        "name": inner_name,
+                        "argv": spec.get("argv"),
+                        "seconds": inner_seconds,
+                        "duration_source": "perf_counter",
+                        "device": "cpu",
+                        "flags": spec.get("flags"),
+                        "output_path": output_path,
+                        "parent": "stitch",
+                        "count": 1,
+                        "functions": ["score"] if inner_name == "stitch_scoring" else ["blend"],
+                    }
+                )
+        if name == "stack":
+            inners.extend(
+                [
+                    {
+                        "name": "stack_reads",
+                        "argv": spec.get("argv"),
+                        "seconds": 0.8,
+                        "duration_source": "perf_counter",
+                        "device": "cpu",
+                        "flags": spec.get("flags"),
+                        "output_path": output_path,
+                        "parent": "stack",
+                        "count": 3,
+                        "functions": [],
+                    },
+                    {
+                        "name": "per_plane_resample",
+                        "argv": spec.get("argv"),
+                        "seconds": 0.7,
+                        "duration_source": "perf_counter",
+                        "device": "cpu",
+                        "flags": spec.get("flags"),
+                        "output_path": output_path,
+                        "parent": "stack",
+                        "count": 2,
+                        "functions": ["apply_transform_to_volume", "skipped"],
+                    },
+                ]
+            )
+        return outer, inners
+
+    monkeypatch.setattr(driver, "_time_spec", fake_time)
+    with pytest.raises(ValueError, match="diffusion_blend"):
+        driver._run_measurement()
+    assert entered == []
+    assert not record.exists()
+
+    mode["value"] = "escape"
+    with pytest.raises(ValueError, match="timing"):
+        driver._run_measurement()
+    assert entered == []
+    assert not record.exists()
+
+    mode["value"] = "ok"
+    driver._run_measurement()
+    assert entered == [True]
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    assert payload["slice_ids"] == [45, 46, 47]
+    assert payload["page_cache"] == "not_dropped"
+    assert payload["task_hash"] is None
+    assert payload["scratch_copy"]["status"] == "not_taken"
+    assert payload["scratch_copy"]["seconds"] is None
+    assert payload["provenance_flags"]["align_to_ras_enabled"] is True
+    stages = {row["name"]: row for row in payload["stages"]}
+    assert set(stages) == set(_REQUIRED_STAGES)
+    assert "align_to_ras" not in stages
+    assert stages["illumination"]["device"] == "cuda"
+    assert stages["zip"]["device"] == "host"
+    assert stages["stitch"]["seconds"] == pytest.approx(0.6)
+    assert stages["stitch_scoring"]["seconds"] == 1.5
+    assert stages["diffusion_blend"]["seconds"] == 0.4
+    assert stages["per_plane_resample"]["functions"] == ["apply_transform_to_volume", "skipped"]
+    assert all(row["duration_source"] == "perf_counter" for row in stages.values())
