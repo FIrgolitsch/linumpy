@@ -5,6 +5,8 @@ import json
 import math
 import os
 import time
+from collections.abc import Sequence
+from typing import TypeGuard
 
 _SECONDS: dict[str, float] = {}
 _COUNTS: dict[str, int] = {}
@@ -179,6 +181,8 @@ _TOP_LEVEL = (
     "sources_read",
 )
 _TASK_HASH_REASON = "direct command has no Nextflow task hash"
+_PER_SLICE_STAGES = ("illumination", "stitch", "attenuation")
+_STACK_DEVICE_FOR_Z_MATCH = {"cuda": "mixed", "cpu": "cpu"}
 
 
 def _as_record(value: object, label: str) -> dict[str, object]:
@@ -196,7 +200,7 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _is_measured(value: object) -> bool:
+def _is_measured(value: object) -> TypeGuard[int | float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     return math.isfinite(value) and value >= 0
@@ -261,6 +265,77 @@ def _check_stage(stage: dict[str, object], timing_root: str) -> tuple[str, str |
     return name, parent
 
 
+def _check_per_slice(name: str, stage: dict[str, object], slice_ids: Sequence[object], timing_root: str) -> None:
+    entries = stage.get("per_slice")
+    if not isinstance(entries, list):
+        raise ValueError(f"{name} per_slice must be a list")
+    seen: list[object] = []
+    devices: list[str] = []
+    total = 0.0
+    for entry in entries:
+        item = _as_record(entry, f"{name} per_slice entry")
+        seen.append(item.get("slice_id"))
+        seconds = item.get("seconds")
+        if not _is_measured(seconds):
+            raise ValueError(f"{name} per_slice seconds must be finite and non-negative")
+        total += seconds
+        device = item.get("device")
+        if not isinstance(device, str) or not device:
+            raise ValueError(f"{name} per_slice device must be a non-empty string")
+        devices.append(device)
+        if not isinstance(item.get("argv"), list):
+            raise ValueError(f"{name} per_slice argv must be a list")
+        output = item.get("output_path")
+        if not isinstance(output, str) or not _inside_timing_root(output, timing_root):
+            raise ValueError(f"{name} per_slice output_path resolves outside the timing root: {output}")
+        if not isinstance(item.get("flags"), dict):
+            raise ValueError(f"{name} per_slice flags must be an object")
+    if seen != slice_ids:
+        raise ValueError(f"{name} per_slice slice_ids {seen} are not the timed slices {slice_ids}")
+    stage_seconds = stage.get("seconds")
+    if not _is_measured(stage_seconds) or not math.isclose(total, stage_seconds, rel_tol=1e-6, abs_tol=1e-6):
+        raise ValueError(f"{name} per_slice seconds add up to {total}, not the stage seconds {stage_seconds}")
+    shared = devices[0] if all(device == devices[0] for device in devices) else "mixed"
+    if stage.get("device") != shared:
+        raise ValueError(f"{name} device {stage.get('device')} contradicts its per_slice devices {devices}")
+
+
+def _check_scope(stage: dict[str, object], slice_ids: Sequence[object]) -> None:
+    scope = stage.get("scope")
+    if not isinstance(scope, dict):
+        raise ValueError("common_space scope must be an object")
+    record = _as_record(scope, "common_space scope")
+    if record.get("slice_ids") != slice_ids:
+        raise ValueError(f"common_space scope slice_ids {record.get('slice_ids')} are not the timed slices {slice_ids}")
+    for key in ("slice_count", "input_count"):
+        count = record.get(key)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise ValueError(f"common_space scope {key} must be an int")
+    if record["slice_count"] != len(slice_ids):
+        raise ValueError(f"common_space scope slice_count {record['slice_count']} is not the {len(slice_ids)} timed slices")
+    if record["input_count"] != record["slice_count"]:
+        raise ValueError(
+            f"common_space scope input_count {record['input_count']} is not its slice_count {record['slice_count']}"
+        )
+
+
+def _check_stack_device(stack: dict[str, object], z_match: dict[str, object] | None) -> None:
+    argv = stack.get("argv")
+    device = stack.get("device")
+    if not isinstance(argv, list) or "--use_gpu" not in argv:
+        expected = "cpu"
+        basis = "its argv has no --use_gpu"
+    elif z_match is None:
+        expected = "unknown"
+        basis = "its argv has --use_gpu and the record has no stack_z_match row"
+    else:
+        reported = z_match.get("device")
+        expected = _STACK_DEVICE_FOR_Z_MATCH.get(reported, "unknown") if isinstance(reported, str) else "unknown"
+        basis = f"its stack_z_match device {reported}"
+    if device != expected:
+        raise ValueError(f"stack device {device} contradicts the run, because {basis}; expected {expected}")
+
+
 def _check_thread_env(value: object) -> None:
     if not isinstance(value, dict):
         raise ValueError("thread_env must be an object")
@@ -274,6 +349,13 @@ def _check_thread_env(value: object) -> None:
 def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) -> None:
     """Reject a record that is not a perf_counter measurement.
 
+    Beyond the perf_counter and path rules, the record must say what each row
+    covers. ``illumination``, ``stitch``, and ``attenuation`` carry a
+    ``per_slice`` list that names slices 45, 46, and 47 in order, sums to the
+    row's seconds, and agrees with the row's device (``mixed`` when the slices
+    disagree). ``common_space`` carries a ``scope`` of exactly those slices.
+    The ``stack`` device must follow from its argv and its ``stack_z_match`` row.
+
     Parameters
     ----------
     payload : object
@@ -281,6 +363,11 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
     timing_root : str
         Directory stage outputs must stay inside. Defaults to the subject
         timing directory.
+
+    Raises
+    ------
+    ValueError
+        The record breaks any of those rules.
     """
     record = _as_record(payload, "timing record")
     for key in _TOP_LEVEL:
@@ -290,7 +377,8 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
         raise ValueError("task_hash must be null")
     if record["task_hash_reason"] != _TASK_HASH_REASON:
         raise ValueError("task_hash_reason must explain the missing task_hash")
-    if record["slice_ids"] != [45, 46, 47]:
+    slice_ids = record["slice_ids"]
+    if not isinstance(slice_ids, list) or slice_ids != [45, 46, 47]:
         raise ValueError("slice_ids must stay 45, 46, and 47")
     if record["page_cache"] != "not_dropped":
         raise ValueError("page_cache must stay not_dropped")
@@ -335,7 +423,8 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
     stages = record["stages"]
     if not isinstance(stages, list):
         raise ValueError("stages must be a list")
-    checked = [_check_stage(_as_record(item, "stage"), timing_root) for item in stages]
+    stage_records = [_as_record(item, "stage") for item in stages]
+    checked = [_check_stage(item, timing_root) for item in stage_records]
     names = [name for name, _parent in checked]
     if len(names) != len(set(names)):
         raise ValueError("duplicate stage name")
@@ -345,6 +434,12 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
     for required in _REQUIRED_STAGES:
         if required not in names:
             raise ValueError(f"missing stage {required}")
+    by_name = dict(zip(names, stage_records, strict=True))
+    for name, stage in by_name.items():
+        if name in _PER_SLICE_STAGES or "per_slice" in stage:
+            _check_per_slice(name, stage, slice_ids, timing_root)
+    _check_scope(by_name["common_space"], slice_ids)
+    _check_stack_device(by_name["stack"], by_name.get("stack_z_match"))
 
     sources = record["sources_read"]
     if not isinstance(sources, list):

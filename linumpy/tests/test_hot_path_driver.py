@@ -135,6 +135,24 @@ def test_disk_block_unequal_devices():
     assert calls == [_find_argv(path) for path in _DISK_PATHS]
 
 
+_PER_SLICE_STAGES = ("illumination", "stitch", "attenuation")
+
+
+def _per_slice_entries(name: str, root: Path, seconds: float, device: object) -> list[dict[str, object]]:
+    """Split ``seconds`` evenly over slices 45 to 47 so the entries sum to the stage row."""
+    return [
+        {
+            "slice_id": slice_id,
+            "seconds": seconds / 3,
+            "device": device,
+            "argv": ["linum", name, f"z{slice_id}"],
+            "output_path": str(root / name / f"z{slice_id}"),
+            "flags": {"slice_id": f"z{slice_id}"},
+        }
+        for slice_id in (45, 46, 47)
+    ]
+
+
 def _stage(name: str, root: Path, **overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "name": name,
@@ -150,6 +168,11 @@ def _stage(name: str, root: Path, **overrides: object) -> dict[str, object]:
         row["parent"] = parent
         row["count"] = 1
     row.update(overrides)
+    seconds = row["seconds"]
+    if name in _PER_SLICE_STAGES and "per_slice" not in row and isinstance(seconds, float):
+        row["per_slice"] = _per_slice_entries(name, root, seconds, row["device"])
+    if name == "common_space" and "scope" not in row:
+        row["scope"] = {"slice_ids": [45, 46, 47], "slice_count": 3, "input_count": 3}
     return row
 
 
@@ -1366,8 +1389,9 @@ def _fake_time_for(mode: dict[str, str], z_match_device: str | None):
             "flags": spec.get("flags"),
             "output_path": output_path,
         }
-        if "slice_id" in spec:
-            outer["slice_id"] = spec["slice_id"]
+        for key in ("slice_id", "scope"):
+            if key in spec:
+                outer[key] = spec[key]
         return outer, inners
 
     return fake_time
@@ -1414,6 +1438,7 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
         assert "slice_id" not in stages[name]
     assert [entry["device"] for entry in stages["illumination"]["per_slice"]] == ["cuda", "cuda", "cuda"]
     assert all("per_slice" not in stages[name] for name in ("common_space", "stack", "zip", "screenshot"))
+    assert stages["common_space"]["scope"] == {"slice_ids": [45, 46, 47], "slice_count": 3, "input_count": 3}
     assert stages["per_plane_resample"]["functions"] == ["apply_transform_to_volume", "skipped"]
     assert all(row["duration_source"] == "perf_counter" for row in stages.values())
 
