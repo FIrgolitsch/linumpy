@@ -2,6 +2,7 @@
 
 import ast
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,15 +28,48 @@ def _isolated_stage_timing(monkeypatch, tmp_path):
     _drop_totals()
 
 
-def test_unset_is_noop(tmp_path, monkeypatch):
-    timing_path = tmp_path / "stages.jsonl"
+def _state_left_with_gate_closed(monkeypatch) -> list[str]:
+    """Run a span and a direct add with the variable unset. Name every dictionary left non-empty."""
     monkeypatch.delenv("LINUMPY_STAGE_TIMING", raising=False)
-    sentinel = object()
     with stage_timing.span("diffusion_blend", device="cpu"):
-        observed = sentinel
-    assert observed is sentinel
+        pass
+    stage_timing.add("stitch_scoring", 1.0, device="cpu", function="score")
+    totals = {
+        "_SECONDS": stage_timing._SECONDS,
+        "_COUNTS": stage_timing._COUNTS,
+        "_META": stage_timing._META,
+    }
+    return [name for name, table in totals.items() if table]
+
+
+def test_unset_is_noop(tmp_path, monkeypatch):
+    assert _state_left_with_gate_closed(monkeypatch) == []
+    timing_path = tmp_path / "stages.jsonl"
+    monkeypatch.setenv("LINUMPY_STAGE_TIMING", str(timing_path))
     stage_timing.flush()
     assert not timing_path.exists()
+
+
+def test_unset_check_notices_a_leaky_gate(monkeypatch):
+    def leaky_add(stage: str, seconds: float, **_meta: object) -> None:
+        stage_timing._SECONDS[stage] = stage_timing._SECONDS.get(stage, 0.0) + seconds
+
+    monkeypatch.setattr(stage_timing, "add", leaky_add)
+    assert _state_left_with_gate_closed(monkeypatch) == ["_SECONDS"]
+
+
+def test_set_gate_records_elapsed(tmp_path, monkeypatch):
+    timing_path = tmp_path / "stages.jsonl"
+    monkeypatch.setenv("LINUMPY_STAGE_TIMING", str(timing_path))
+    with stage_timing.span("stitch_scoring", device="cpu"):
+        time.sleep(0.02)
+    stage_timing.flush()
+    rows = [json.loads(line) for line in timing_path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "stitch_scoring"
+    assert rows[0]["count"] == 1
+    assert rows[0]["device"] == "cpu"
+    assert rows[0]["seconds"] >= 0.015
 
 
 def test_diffusion_values_unchanged(tmp_path, monkeypatch):
