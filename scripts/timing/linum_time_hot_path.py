@@ -423,6 +423,7 @@ def _spec(
     flags: dict[str, object],
     slice_id: int | None = None,
     source_paths: list[str] | None = None,
+    scope: dict[str, object] | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "name": name,
@@ -436,6 +437,8 @@ def _spec(
         row["slice_id"] = slice_id
     if source_paths is not None:
         row["source_paths"] = source_paths
+    if scope is not None:
+        row["scope"] = scope
     return row
 
 
@@ -563,6 +566,11 @@ def _common_space_spec(cfg: dict[str, object], inputs: dict[str, object], root: 
         argv.append("--refine_unreliable")
     raw_sources = inputs.get("common_space")
     source_paths = [item for item in raw_sources if isinstance(item, str)] if isinstance(raw_sources, list) else []
+    scope: dict[str, object] = {
+        "slice_ids": list(SLICE_IDS),
+        "slice_count": len(SLICE_IDS),
+        "input_count": len(source_paths),
+    }
     return _spec(
         "common_space",
         argv,
@@ -571,6 +579,7 @@ def _common_space_spec(cfg: dict[str, object], inputs: dict[str, object], root: 
         "cpu",
         {},
         source_paths=source_paths,
+        scope=scope,
     )
 
 
@@ -857,6 +866,40 @@ def resolve_common_space_inputs(command_sh_text: str, work_dir: Path | None = No
     if not paths:
         raise ValueError("common-space inputs are not in the command script")
     return paths
+
+
+def scope_common_space_inputs(paths: list[str]) -> list[str]:
+    """Return the one common-space input for each timed slice, in slice order.
+
+    Parameters
+    ----------
+    paths : list[str]
+        Candidate input zarrs, such as every normalize volume a full-subject
+        common-space run read.
+
+    Returns
+    -------
+    list[str]
+        Exactly one path per entry of ``SLICE_IDS``, in that order. A slice id
+        matches only the last path component and only as a whole number, so
+        ``z45`` never matches ``z450`` or ``z145``.
+
+    Raises
+    ------
+    ValueError
+        A timed slice has no path, or more than one.
+    """
+    scoped: list[str] = []
+    for slice_id in SLICE_IDS:
+        pattern = re.compile(rf"(?<!\d)z{slice_id}(?!\d)")
+        found = [path for path in paths if pattern.search(Path(path).name)]
+        if len(found) != 1:
+            wanted = ", ".join(str(item) for item in SLICE_IDS)
+            raise ValueError(
+                f"common-space inputs must be one path per timed slice ({wanted}): slice {slice_id} matched {len(found)}"
+            )
+        scoped.append(found[0])
+    return scoped
 
 
 def _json_object(line: str) -> dict[str, object]:
@@ -1273,9 +1316,11 @@ def _prepare_inputs(cfg: dict[str, object]) -> tuple[dict[str, object], list[str
             transforms[str(slice_id)] = transform
             _remember_source(sources, transform)
     common_file = _newest_command_file("linum-align-mosaics-3d-from-shifts", None)
-    common_paths = resolve_common_space_inputs(
-        common_file.read_text(encoding="utf-8", errors="replace"),
-        common_file.parent,
+    common_paths = scope_common_space_inputs(
+        resolve_common_space_inputs(
+            common_file.read_text(encoding="utf-8", errors="replace"),
+            common_file.parent,
+        )
     )
     for path in common_paths:
         _remember_source(sources, path)
@@ -1363,6 +1408,9 @@ def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], 
         "flags": flags if isinstance(flags, dict) else {},
         "output_path": str(output),
     }
+    scope = spec.get("scope")
+    if isinstance(scope, dict):
+        outer["scope"] = dict(scope)
     if jsonl_path is None:
         return outer, []
     text = jsonl_path.read_text(encoding="utf-8") if jsonl_path.is_file() else ""
