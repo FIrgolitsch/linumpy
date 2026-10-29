@@ -193,6 +193,32 @@ def crop_moving_volume(vol: np.ndarray, moving_z_start: int = 0) -> np.ndarray:
     return vol[mz:]
 
 
+def resolve_z_match_backend(use_gpu: bool) -> str:
+    """Return the backend the Z-overlap sweep runs on.
+
+    This is the one place that decides between the CPU and CUDA sweep.
+    :func:`find_z_overlap` selects its array module from the answer, and the
+    stage timer labels the same call with it, so the label cannot drift from
+    the branch that ran.
+
+    Parameters
+    ----------
+    use_gpu : bool
+        Whether the caller asked for GPU acceleration.
+
+    Returns
+    -------
+    str
+        ``"cuda"`` only when ``use_gpu`` is true and ``linumpy.gpu.GPU_AVAILABLE``
+        is true, otherwise ``"cpu"``.
+    """
+    if not use_gpu:
+        return "cpu"
+    from linumpy.gpu import GPU_AVAILABLE
+
+    return "cuda" if GPU_AVAILABLE else "cpu"
+
+
 def find_z_overlap(
     fixed_vol: np.ndarray,
     moving_vol: np.ndarray,
@@ -244,13 +270,10 @@ def find_z_overlap(
     x_slice = slice(margin, w - margin)
 
     xp: Any = np
-    if use_gpu:
-        from linumpy.gpu import GPU_AVAILABLE
+    if resolve_z_match_backend(use_gpu) == "cuda":
+        import cupy as cp
 
-        if GPU_AVAILABLE:
-            import cupy as cp
-
-            xp = cp
+        xp = cp
 
     fixed_xp = xp.asarray(fixed_vol[-max_overlap:, y_slice, x_slice].astype(np.float32))
     moving_xp = xp.asarray(moving_vol[:max_overlap, y_slice, x_slice].astype(np.float32))

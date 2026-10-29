@@ -38,6 +38,8 @@ _INNER_REQUIRED = {
     "stitch": ("stitch_scoring", "diffusion_blend"),
     "stack": ("stack_reads", "per_plane_resample"),
 }
+_OPTIONAL_STAGES = ("stack_z_match",)
+_INNER_OPTIONAL: dict[str, tuple[str, ...]] = {"stack": _OPTIONAL_STAGES}
 _RECORD_STAGES = (
     "illumination",
     "stitch",
@@ -730,8 +732,9 @@ def _stack_and_archive(cfg: dict[str, object], inputs: dict[str, object], root: 
     argv = ["linum-stack-slices-motor", str(slices_dir), shifts, str(output)]
     _append_stack_options(argv, stack_cfg, root)
     env = _stage_env(cfg, inputs, illumination=False)
+    use_gpu = _flag_bool(cfg, "use_gpu", True)
     rows = [
-        _spec("stack", argv, env, output, "cpu", {"use_gpu": _flag_bool(cfg, "use_gpu", True)}),
+        _spec("stack", argv, env, output, "reported" if use_gpu else "cpu", {"use_gpu": use_gpu}),
     ]
     zip_path = stack_dir / "sub-21.ome.zarr.zip"
     png = stack_dir / "sub-21.png"
@@ -914,7 +917,9 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
     Returns
     -------
     list[dict[str, object]]
-        Inner stages with the parent command's argv, flags, and output path.
+        The required inner stages in order, then any optional inner stage the
+        process reported (``stack_z_match`` under ``stack``). Each row carries
+        the parent command's argv, flags, and output path.
 
     Raises
     ------
@@ -968,7 +973,45 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
     missing = [stage for stage in required if stage not in grouped]
     if missing:
         raise ValueError(f"missing stage {missing[0]}")
-    return [grouped[stage] for stage in required] if required else list(grouped.values())
+    if not required:
+        return list(grouped.values())
+    optional = [stage for stage in _INNER_OPTIONAL.get(parent_name, ()) if stage in grouped]
+    return [grouped[stage] for stage in (*required, *optional)]
+
+
+def stack_device(argv: list[str], inners: list[dict[str, object]]) -> str:
+    """Return the stack row's device from what the stack process reported.
+
+    The ``--use_gpu`` flag only says the GPU was allowed. The stage may never
+    reach the GPU branch, so the label is read from the ``stack_z_match`` row
+    the process wrote and never from the flag.
+
+    Parameters
+    ----------
+    argv : list[str]
+        The stack command that ran.
+    inners : list[dict[str, object]]
+        Inner rows collected from the stack's stage timing file.
+
+    Returns
+    -------
+    str
+        ``cpu`` when ``--use_gpu`` is not in ``argv``. Otherwise ``mixed`` for a
+        ``cuda`` Z-match report, ``cpu`` for a ``cpu`` report (including the
+        skipped marker), and ``unknown`` when no report or any other device came back.
+    """
+    if "--use_gpu" not in argv:
+        return "cpu"
+    for row in inners:
+        if row.get("name") != "stack_z_match":
+            continue
+        device = row.get("device")
+        if device == "cuda":
+            return "mixed"
+        if device == "cpu":
+            return "cpu"
+        return "unknown"
+    return "unknown"
 
 
 def linum_basic_revision(
@@ -1218,6 +1261,8 @@ def _stage_device(spec: dict[str, object], stdout: str) -> str:
     rule = spec.get("device_rule")
     if rule == "stdout":
         return illumination_device(stdout)
+    if rule == "reported":
+        return "unknown"
     if isinstance(rule, str) and rule:
         return rule
     return "cpu"
@@ -1266,7 +1311,10 @@ def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], 
     if jsonl_path is None:
         return outer, []
     text = jsonl_path.read_text(encoding="utf-8") if jsonl_path.is_file() else ""
-    return outer, collect_inner_stages(spec, completed.stdout, text)
+    inners = collect_inner_stages(spec, completed.stdout, text)
+    if name == "stack":
+        outer["device"] = stack_device(argv, inners)
+    return outer, inners
 
 
 def _run_measurement() -> None:
@@ -1327,7 +1375,7 @@ def _run_measurement() -> None:
         "task_hash": None,
         "task_hash_reason": "direct command has no Nextflow task hash",
         "provenance_flags": provenance,
-        "stages": [by_name[name] for name in _RECORD_STAGES],
+        "stages": [by_name[name] for name in (*_RECORD_STAGES, *_OPTIONAL_STAGES) if name in by_name],
         "sources_read": sources,
     }
     checked = finalize(payload)

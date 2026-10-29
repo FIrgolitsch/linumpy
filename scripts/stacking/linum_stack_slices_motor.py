@@ -48,6 +48,7 @@ from linumpy.mosaic.stacking import (
     overlap_z_gain_curve,
     paste_tissue,
     registration_z_overlap,
+    resolve_z_match_backend,
     rigid_euler_pad,
     scale_slice_to_median,
     slice_tissue_median,
@@ -763,6 +764,7 @@ def main() -> None:
 
     prev_vol = first_vol
     prev_id = first_id
+    z_match_calls = 0
 
     for _i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
@@ -784,9 +786,11 @@ def main() -> None:
             # not the overlap chosen in the manual tool and not the
             # slicing-interval guess. Do not crop the incoming cut face.
             res_z_um = res_z_mm * 1000
-            overlap, corr = find_z_overlap(
-                prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
-            )
+            with span("stack_z_match", device=resolve_z_match_backend(args.use_gpu), function="find_z_overlap"):
+                overlap, corr = find_z_overlap(
+                    prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
+                )
+            z_match_calls += 1
             moving_z = 0
             if args.z_overlap_min_corr > 0 and corr < args.z_overlap_min_corr:
                 interval_voxels = int(args.slicing_interval_mm / res_z_mm)
@@ -916,9 +920,11 @@ def main() -> None:
         else:
             # find_z_overlap expects resolution in µm for its internal calculation
             res_z_um = res_z_mm * 1000
-            overlap, corr = find_z_overlap(
-                prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
-            )
+            with span("stack_z_match", device=resolve_z_match_backend(args.use_gpu), function="find_z_overlap"):
+                overlap, corr = find_z_overlap(
+                    prev_vol, vol, args.slicing_interval_mm, args.search_range_mm, res_z_um, use_gpu=args.use_gpu
+                )
+            z_match_calls += 1
             # Fall back to expected overlap when correlation is too low to trust.
             # Preserve the measured correlation in the CSV so a sensible
             # min_corr threshold can be derived from real numbers; signal the
@@ -1011,6 +1017,12 @@ def main() -> None:
         total_z += max(0, contribution)
         prev_vol = vol
         prev_id = slice_id
+
+    # No find_z_overlap call ran (for example --use_expected_overlap without
+    # --z_from_registration), so --use_gpu changed nothing in this stage.
+    # Report that as a zero-second skip instead of leaving the flag to be read.
+    if z_match_calls == 0:
+        add("stack_z_match", 0.0, device="cpu", function="skipped")
 
     # Save Z-matches if requested
     if args.output_z_matches:
