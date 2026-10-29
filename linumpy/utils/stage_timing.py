@@ -2,6 +2,7 @@
 
 import atexit
 import json
+import math
 import os
 import time
 
@@ -147,7 +148,7 @@ _REQUIRED_STAGES = (
     "screenshot",
     "screenshot_annotated",
 )
-_INNER_STAGES = frozenset({"stitch_scoring", "diffusion_blend", "stack_reads", "per_plane_resample"})
+_INNER_STAGES = frozenset({"stitch_scoring", "diffusion_blend", "stack_reads", "per_plane_resample", "stack_z_match"})
 _DISK_KEYS = (
     "tmp_source",
     "subject_source",
@@ -195,6 +196,12 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_measured(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and value >= 0
+
+
 def _require_text(record: dict[str, object], key: str) -> None:
     value = record.get(key)
     if not isinstance(value, str) or not value:
@@ -214,7 +221,7 @@ def _inside_timing_root(path: str, timing_root: str) -> bool:
     return path_real.startswith(prefix)
 
 
-def _check_stage(stage: dict[str, object], timing_root: str) -> str:
+def _check_stage(stage: dict[str, object], timing_root: str) -> tuple[str, str | None]:
     name = stage.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError("stage name must be a non-empty string")
@@ -227,8 +234,8 @@ def _check_stage(stage: dict[str, object], timing_root: str) -> str:
     seconds = stage.get("seconds")
     if source == "not_taken" and _is_number(seconds):
         raise ValueError(f"not_taken stage {name} must not carry numeric seconds")
-    if source == "perf_counter" and not _is_number(seconds):
-        raise ValueError(f"perf_counter stage {name} requires numeric seconds")
+    if source == "perf_counter" and not _is_measured(seconds):
+        raise ValueError(f"perf_counter stage {name} requires finite non-negative seconds")
     output = stage.get("output_path")
     if not isinstance(output, str) or not _inside_timing_root(output, timing_root):
         raise ValueError(f"output_path resolves outside the timing root: {output}")
@@ -239,13 +246,29 @@ def _check_stage(stage: dict[str, object], timing_root: str) -> str:
         raise ValueError(f"{name} device must be a string")
     if not isinstance(stage.get("flags"), dict):
         raise ValueError(f"{name} flags must be an object")
+    functions = stage.get("functions")
+    if "functions" in stage and not (isinstance(functions, list) and all(isinstance(item, str) for item in functions)):
+        raise ValueError(f"{name} functions must be a list of strings")
+    parent: str | None = None
     if name in _INNER_STAGES:
-        if not isinstance(stage.get("parent"), str) or not stage.get("parent"):
+        parent_name = stage.get("parent")
+        if not isinstance(parent_name, str) or not parent_name:
             raise ValueError(f"{name} missing parent")
+        parent = parent_name
         count = stage.get("count")
         if not isinstance(count, int) or isinstance(count, bool):
             raise ValueError(f"{name} count must be an int")
-    return name
+    return name, parent
+
+
+def _check_thread_env(value: object) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("thread_env must be an object")
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise ValueError("thread_env keys must be strings")
+        if isinstance(item, bool) or not isinstance(item, (str, int)):
+            raise ValueError(f"thread_env {key} must be a string or an integer")
 
 
 def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) -> None:
@@ -273,10 +296,8 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
         raise ValueError("page_cache must stay not_dropped")
     for key in _TEXT_KEYS:
         _require_text(record, key)
-    if not isinstance(record["thread_env"], dict):
-        raise ValueError("thread_env must be an object")
-    if not isinstance(record["provenance_flags"], dict):
-        raise ValueError("provenance_flags must be an object")
+    _check_thread_env(record["thread_env"])
+    provenance = _as_record(record["provenance_flags"], "provenance_flags")
 
     disk = _as_record(record["disk"], "disk")
     for key in _DISK_KEYS:
@@ -288,6 +309,8 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
         dev = disk[key]
         if not isinstance(dev, int) or isinstance(dev, bool):
             raise ValueError(f"disk {key} must be an int")
+    if disk["same_filesystem"] != (disk["tmp_st_dev"] == disk["subject_st_dev"]):
+        raise ValueError("disk same_filesystem disagrees with the st_dev values")
     for key in ("tmp_source", "subject_source", "work_source"):
         source_text = disk[key]
         if not isinstance(source_text, str) or not source_text:
@@ -304,13 +327,21 @@ def validate_record(payload: object, timing_root: str = _DEFAULT_TIMING_ROOT) ->
         raise ValueError("not_taken scratch_copy must not carry numeric seconds")
     if status not in {"not_taken", "perf_counter"}:
         raise ValueError("scratch_copy status must be perf_counter or not_taken")
+    if status == "perf_counter" and not _is_measured(scratch["seconds"]):
+        raise ValueError("perf_counter scratch_copy requires finite non-negative seconds")
+    if "scratch_dir" in provenance and provenance["scratch_dir"] is not scratch["scratch_dir"]:
+        raise ValueError("provenance_flags scratch_dir contradicts scratch_copy scratch_dir")
 
     stages = record["stages"]
     if not isinstance(stages, list):
         raise ValueError("stages must be a list")
-    names = [_check_stage(_as_record(item, "stage"), timing_root) for item in stages]
+    checked = [_check_stage(_as_record(item, "stage"), timing_root) for item in stages]
+    names = [name for name, _parent in checked]
     if len(names) != len(set(names)):
         raise ValueError("duplicate stage name")
+    for name, parent in checked:
+        if parent is not None and parent not in names:
+            raise ValueError(f"{name} parent {parent} names no stage in the record")
     for required in _REQUIRED_STAGES:
         if required not in names:
             raise ValueError(f"missing stage {required}")
