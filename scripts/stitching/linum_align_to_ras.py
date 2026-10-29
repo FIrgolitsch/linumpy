@@ -69,6 +69,17 @@ def _crop_plane_to_content(img: np.ndarray, margin: int = 8) -> np.ndarray:
     return plane[r0:r1, c0:c1]
 
 
+def _background_value(values: np.ndarray) -> float:
+    """Fill value for voxels the transform pulls from outside the input.
+
+    The 1st percentile of all voxels, zeros included, matches the input's own
+    background: 0 when agarose was zeroed, the agarose floor otherwise. Taking
+    it over non-zero voxels only returned a tissue level on masked volumes and
+    framed the brain in a grey box.
+    """
+    return float(np.percentile(values, 1)) if values.size else 0.0
+
+
 def _debug_log(message: str, **fields: Any) -> None:
     """Append an NDJSON line describing a slicing/labelling decision.
 
@@ -373,17 +384,13 @@ def apply_transform_to_zarr(
         # original so the SITK conversion only adds one full-volume copy.
         vol = np.ascontiguousarray(vol)
 
-    # Compute a tissue-representative background value on the numpy array
-    # BEFORE allocating the (potentially large) SimpleITK float32 copy.  Using
-    # this as the default pixel value avoids black borders that would skew
-    # downstream normalization and visualization.  Subsample to keep the
-    # boolean-mask gather from allocating a multi-GB temp on a level-0 brain.
+    # Estimate the background fill on the numpy array BEFORE allocating the
+    # (potentially large) SimpleITK float32 copy.  Subsample to keep the
+    # percentile from allocating a multi-GB temp on a level-0 brain.
     flat = vol.reshape(-1)
     stride = max(1, flat.size // 10_000_000)  # cap sample at ~10M voxels
-    sample = flat[::stride]
-    nonzero_sample = sample[sample > 0]
-    bg_value = float(np.percentile(nonzero_sample, 1)) if nonzero_sample.size else 0.0
-    del flat, sample, nonzero_sample
+    bg_value = _background_value(flat[::stride])
+    del flat
 
     # Convert to SimpleITK
     vol_sitk = allen.numpy_to_sitk_image(vol, resolution, cast_dtype=np.float32)
@@ -567,9 +574,7 @@ def create_alignment_preview(
         # Create reference and centered transform
         reference, centered_transform = compute_centered_reference_and_transform(vol_sitk, transform)
 
-        vol_arr = sitk.GetArrayViewFromImage(vol_sitk)
-        nonzero = vol_arr[vol_arr > 0]
-        bg_value = float(np.percentile(nonzero, 1)) if len(nonzero) > 0 else 0.0
+        bg_value = _background_value(sitk.GetArrayViewFromImage(vol_sitk))
         resampler = sitk.ResampleImageFilter()
         resampler.SetReferenceImage(reference)
         resampler.SetInterpolator(sitk.sitkLinear)

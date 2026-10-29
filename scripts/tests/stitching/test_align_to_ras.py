@@ -284,3 +284,15 @@ def test_crop_plane_to_content_empty_is_noop(align_module):
     img = np.zeros((8, 8), dtype=np.float32)
     out = align_module._crop_plane_to_content(img)
     assert out.shape == (8, 8)
+
+
+def test_background_value_is_zero_when_agarose_was_zeroed(align_module):
+    vol = np.zeros((20, 20, 20), dtype=np.float32)
+    vol[5:15, 5:15, 5:15] = np.linspace(0.1, 1.0, 1000).reshape(10, 10, 10)
+    assert align_module._background_value(vol) == 0.0
+
+
+def test_background_value_follows_agarose_floor(align_module):
+    vol = np.full((20, 20, 20), 0.02, dtype=np.float32)
+    vol[5:15, 5:15, 5:15] = 0.5
+    assert align_module._background_value(vol) == pytest.approx(0.02)
