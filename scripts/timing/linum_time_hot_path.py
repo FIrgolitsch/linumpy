@@ -952,7 +952,8 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
     Parameters
     ----------
     parent : dict[str, object]
-        The command that produced the JSONL. argv, flags, and output_path are copied.
+        The command that produced the JSONL. argv, flags, output_path, and
+        slice_id (when the parent has one) are copied.
     stdout : str
         Child stdout. Illumination uses it for the device; stitch and stack do not.
     jsonl_text : str
@@ -963,7 +964,8 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
     list[dict[str, object]]
         The required inner stages in order, then any optional inner stage the
         process reported (``stack_z_match`` under ``stack``). Each row carries
-        the parent command's argv, flags, and output path.
+        the parent command's argv, flags, and output path, and its slice id
+        when the parent is a per-slice command.
 
     Raises
     ------
@@ -972,6 +974,7 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
     """
     del stdout
     parent_name, argv, flags, output_path = _parent_command(parent)
+    parent_slice = parent.get("slice_id")
     grouped: dict[str, dict[str, object]] = {}
     for line in jsonl_text.splitlines():
         if not line.strip():
@@ -1003,6 +1006,8 @@ def collect_inner_stages(parent: dict[str, object], stdout: str, jsonl_text: str
                 "count": count,
                 "functions": _functions(row),
             }
+            if isinstance(parent_slice, int) and not isinstance(parent_slice, bool):
+                grouped[stage]["slice_id"] = parent_slice
             continue
         previous = current["seconds"]
         if isinstance(previous, int | float) and not isinstance(previous, bool):
@@ -1213,33 +1218,113 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _row_slice_id(name: str, row: dict[str, object]) -> int:
+    value = row.get("slice_id")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} slice_id must be an int")
+    return value
+
+
+def _row_seconds(name: str, row: dict[str, object]) -> float:
+    value = row.get("seconds")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} seconds must be numeric")
+    return float(value)
+
+
+def _shared_device(rows: list[dict[str, object]]) -> object:
+    """Return the device every row names, or ``mixed`` when they disagree."""
+    first = rows[0].get("device")
+    return first if all(row.get("device") == first for row in rows) else "mixed"
+
+
+def _flag_map(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _shared_flags(rows: list[dict[str, object]]) -> dict[str, object]:
+    """Return the flag keys whose values are identical in every row."""
+    flag_sets = [_flag_map(row.get("flags")) for row in rows]
+    return {
+        key: value
+        for key, value in flag_sets[0].items()
+        if all(key in flags and flags[key] == value for flags in flag_sets[1:])
+    }
+
+
+def _per_slice(name: str, ordered: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        {
+            "slice_id": _row_slice_id(name, row),
+            "seconds": _row_seconds(name, row),
+            "device": row.get("device"),
+            "argv": row.get("argv"),
+            "output_path": row.get("output_path"),
+            "flags": row.get("flags"),
+        }
+        for row in ordered
+    ]
+
+
+def _collapse_rows(name: str, rows: list[dict[str, object]]) -> dict[str, object]:
+    merged = dict(rows[0])
+    for row in rows[1:]:
+        previous = merged.get("seconds")
+        added = row.get("seconds")
+        if isinstance(previous, int | float) and isinstance(added, int | float) and not isinstance(previous, bool):
+            merged["seconds"] = float(previous) + float(added)
+        if "count" in row and isinstance(row["count"], int) and not isinstance(row["count"], bool):
+            previous_count = merged.get("count", 0)
+            if isinstance(previous_count, int) and not isinstance(previous_count, bool):
+                merged["count"] = previous_count + row["count"]
+        extra = row.get("functions")
+        if isinstance(extra, list):
+            merged["functions"] = [*_functions(merged), *extra]
+    if len(rows) > 1:
+        merged["device"] = _shared_device(rows)
+    sliced = [row for row in rows if "slice_id" in row]
+    if not sliced:
+        return merged
+    if len(sliced) != len(rows):
+        raise ValueError(f"{name} rows disagree about carrying a slice id")
+    ordered = sorted(rows, key=lambda item: _row_slice_id(name, item))
+    merged["seconds"] = sum(_row_seconds(name, row) for row in ordered)
+    merged["device"] = _shared_device(rows)
+    merged["flags"] = _shared_flags(rows)
+    merged["per_slice"] = _per_slice(name, ordered)
+    del merged["slice_id"]
+    return merged
+
+
 def _collapse_stages(rows: list[dict[str, object]]) -> dict[str, dict[str, object]]:
-    grouped: dict[str, dict[str, object]] = {}
+    """Merge the rows of each stage into one row per stage name.
+
+    Seconds and counts add and function lists join. A row that carries a
+    ``slice_id`` also gets a ``per_slice`` entry (slice id, seconds, device,
+    argv, output path, flags), sorted by slice id, and the merged row keeps only
+    the flag keys every slice shares. The merged device is the shared device,
+    or ``mixed`` when the rows disagree. The top-level argv and output path are
+    those of the first row, because the record schema requires them.
+
+    Parameters
+    ----------
+    rows : list[dict[str, object]]
+        Timed rows, in run order.
+
+    Returns
+    -------
+    dict[str, dict[str, object]]
+        One merged row per stage name.
+    """
+    grouped: dict[str, list[dict[str, object]]] = {}
     for row in rows:
         name = row.get("name")
         if not isinstance(name, str):
             raise ValueError("stage name must be a string")
-        current = grouped.get(name)
-        if current is None:
-            grouped[name] = dict(row)
-            continue
-        previous = current.get("seconds")
-        added = row.get("seconds")
-        if isinstance(previous, int | float) and isinstance(added, int | float) and not isinstance(previous, bool):
-            current["seconds"] = float(previous) + float(added)
-        if "count" in row and isinstance(row["count"], int) and not isinstance(row["count"], bool):
-            previous_count = current.get("count", 0)
-            if isinstance(previous_count, int) and not isinstance(previous_count, bool):
-                current["count"] = previous_count + row["count"]
-        extra = row.get("functions")
-        if isinstance(extra, list):
-            current["functions"] = [*_functions(current), *extra]
-        if current.get("device") != row.get("device"):
-            if name == "illumination":
-                current["device"] = "cpu"
-            else:
-                raise ValueError(f"{name} device disagrees")
-    return grouped
+        grouped.setdefault(name, []).append(row)
+    return {name: _collapse_rows(name, members) for name, members in grouped.items()}
 
 
 def _stat_dev(path: str) -> int:
@@ -1408,6 +1493,9 @@ def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], 
         "flags": flags if isinstance(flags, dict) else {},
         "output_path": str(output),
     }
+    slice_id = spec.get("slice_id")
+    if isinstance(slice_id, int) and not isinstance(slice_id, bool):
+        outer["slice_id"] = slice_id
     scope = spec.get("scope")
     if isinstance(scope, dict):
         outer["scope"] = dict(scope)

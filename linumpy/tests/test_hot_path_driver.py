@@ -1312,6 +1312,8 @@ def _inner_row(spec: dict[str, object], output_path: str, name: str, **fields: o
         "count": 1,
         "functions": [],
     }
+    if "slice_id" in spec:
+        row["slice_id"] = spec["slice_id"]
     row.update(fields)
     return row
 
@@ -1331,9 +1333,9 @@ def _fake_time_for(mode: dict[str, str], z_match_device: str | None):
             output_path = "/etc/passwd"
         device = "cuda" if name == "illumination" else spec.get("device_rule")
         inners: list[dict[str, object]] = []
-        if name == "stitch" and spec.get("slice_id") == 45:
-            inners.append(_inner_row(spec, output_path, "stitch_scoring", seconds=1.5, functions=["score"]))
-            inners.append(_inner_row(spec, output_path, "diffusion_blend", seconds=0.4, functions=["blend"]))
+        if name == "stitch":
+            inners.append(_inner_row(spec, output_path, "stitch_scoring", seconds=0.5, functions=["score"]))
+            inners.append(_inner_row(spec, output_path, "diffusion_blend", seconds=0.2, functions=["blend"]))
         if name == "stack":
             inners.append(_inner_row(spec, output_path, "stack_reads", seconds=0.8, count=3))
             inners.append(
@@ -1364,6 +1366,8 @@ def _fake_time_for(mode: dict[str, str], z_match_device: str | None):
             "flags": spec.get("flags"),
             "output_path": output_path,
         }
+        if "slice_id" in spec:
+            outer["slice_id"] = spec["slice_id"]
         return outer, inners
 
     return fake_time
@@ -1401,8 +1405,15 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
     assert stages["zip"]["device"] == "host"
     assert stages["stack"]["device"] == "unknown"
     assert stages["stitch"]["seconds"] == pytest.approx(0.6)
-    assert stages["stitch_scoring"]["seconds"] == 1.5
-    assert stages["diffusion_blend"]["seconds"] == 0.4
+    assert stages["stitch_scoring"]["seconds"] == pytest.approx(1.5)
+    assert stages["diffusion_blend"]["seconds"] == pytest.approx(0.6)
+    for name in ("illumination", "stitch", "attenuation", "stitch_scoring", "diffusion_blend"):
+        per_slice = stages[name]["per_slice"]
+        assert [entry["slice_id"] for entry in per_slice] == [45, 46, 47]
+        assert sum(entry["seconds"] for entry in per_slice) == pytest.approx(stages[name]["seconds"])
+        assert "slice_id" not in stages[name]
+    assert [entry["device"] for entry in stages["illumination"]["per_slice"]] == ["cuda", "cuda", "cuda"]
+    assert all("per_slice" not in stages[name] for name in ("common_space", "stack", "zip", "screenshot"))
     assert stages["per_plane_resample"]["functions"] == ["apply_transform_to_volume", "skipped"]
     assert all(row["duration_source"] == "perf_counter" for row in stages.values())
 
