@@ -1065,6 +1065,197 @@ def test_outer_clock_stays_off_the_inner_seconds(tmp_path: Path, monkeypatch: py
     assert not (root / "hot_path.json").exists()
 
 
+def _sliced_row(
+    name: str,
+    slice_id: int | None,
+    seconds: float,
+    device: str = "cuda",
+    flags: dict[str, object] | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    """Build one timed row the way ``_time_spec`` returns it, with a slice id when ``slice_id`` is given."""
+    tag = "all" if slice_id is None else f"z{slice_id}"
+    row: dict[str, object] = {
+        "name": name,
+        "argv": [f"linum-{name}", tag],
+        "seconds": seconds,
+        "duration_source": "perf_counter",
+        "device": device,
+        "flags": {"use_gpu": True} if flags is None else flags,
+        "output_path": f"/timing/out/{name}/{tag}",
+    }
+    if slice_id is not None:
+        row["slice_id"] = slice_id
+    row.update(fields)
+    return row
+
+
+_ENTRY_FIELDS = {"slice_id", "seconds", "device", "argv", "output_path", "flags"}
+
+
+def test_collapse_keeps_each_slice():
+    rows = [
+        _sliced_row("illumination", 46, 2.0),
+        _sliced_row("illumination", 45, 1.0),
+        _sliced_row("illumination", 47, 3.0),
+    ]
+    row = _driver_fn("_collapse_stages")(rows)["illumination"]
+    assert "per_slice" in row
+    per_slice = row["per_slice"]
+    assert [entry["slice_id"] for entry in per_slice] == [45, 46, 47]
+    assert [entry["seconds"] for entry in per_slice] == [1.0, 2.0, 3.0]
+    for entry in per_slice:
+        assert set(entry) == _ENTRY_FIELDS
+        assert entry["device"] == "cuda"
+        assert entry["argv"] == ["linum-illumination", f"z{entry['slice_id']}"]
+        assert entry["output_path"] == f"/timing/out/illumination/z{entry['slice_id']}"
+        assert entry["flags"] == {"use_gpu": True}
+    assert row["seconds"] == 6.0
+    assert row["seconds"] == sum(entry["seconds"] for entry in per_slice)
+    assert row["device"] == "cuda"
+    assert "slice_id" not in row
+    assert row["argv"] == rows[0]["argv"]
+    assert row["output_path"] == rows[0]["output_path"]
+
+
+def test_collapse_does_not_rewrite_a_mixed_device():
+    collapse = _driver_fn("_collapse_stages")
+    row = collapse(
+        [
+            _sliced_row("illumination", 45, 1.0, "cuda"),
+            _sliced_row("illumination", 46, 2.0, "cuda"),
+            _sliced_row("illumination", 47, 3.0, "cpu"),
+        ]
+    )["illumination"]
+    assert row["device"] == "mixed"
+    assert [entry["device"] for entry in row["per_slice"]] == ["cuda", "cuda", "cpu"]
+
+    stitched = collapse(
+        [_sliced_row("stitch", slice_id, 1.0, "cuda" if slice_id == 47 else "cpu") for slice_id in (45, 46, 47)]
+    )
+    assert stitched["stitch"]["device"] == "mixed"
+
+    agreed = collapse([_sliced_row("attenuation", slice_id, 1.0, "cpu") for slice_id in (45, 46, 47)])
+    assert agreed["attenuation"]["device"] == "cpu"
+
+    unsliced = collapse([_sliced_row("screenshot", None, 1.0, "cpu"), _sliced_row("screenshot", None, 2.0, "cuda")])
+    assert unsliced["screenshot"]["device"] == "mixed"
+    assert "per_slice" not in unsliced["screenshot"]
+
+
+def test_collapse_drops_per_slice_keys_from_the_top_level_flags():
+    collapse = _driver_fn("_collapse_stages")
+    shared = {"per_z_fit": True, "use_gpu": True}
+    row = collapse(
+        [_sliced_row("illumination", slice_id, 1.0, flags={**shared, "slice_id": f"z{slice_id}"}) for slice_id in (45, 46, 47)]
+    )["illumination"]
+    assert row["flags"] == shared
+    assert [entry["flags"]["slice_id"] for entry in row["per_slice"]] == ["z45", "z46", "z47"]
+    assert all(entry["flags"]["per_z_fit"] is True for entry in row["per_slice"])
+
+    diverged = collapse(
+        [
+            _sliced_row("illumination", slice_id, 1.0, flags={**shared, "use_gpu": slice_id != 47, "slice_id": f"z{slice_id}"})
+            for slice_id in (45, 46, 47)
+        ]
+    )["illumination"]
+    assert diverged["flags"] == {"per_z_fit": True}
+    assert [entry["flags"]["use_gpu"] for entry in diverged["per_slice"]] == [True, True, False]
+
+
+def test_rows_without_a_slice_id_collapse_as_before():
+    collapse = _driver_fn("_collapse_stages")
+    singles = [
+        _sliced_row("stack", None, 5.0, "mixed"),
+        _sliced_row("zip", None, 1.5, "host", flags={}),
+        _sliced_row("screenshot", None, 0.5, "cpu", flags={}),
+    ]
+    collapsed = collapse(singles)
+    for row in singles:
+        assert collapsed[row["name"]] == row
+        assert "per_slice" not in collapsed[row["name"]]
+
+    twice = collapse(
+        [
+            _sliced_row("diffusion_blend", None, 1.0, "cpu", count=2, functions=["a"]),
+            _sliced_row("diffusion_blend", None, 2.0, "cpu", count=3, functions=["b"]),
+        ]
+    )["diffusion_blend"]
+    assert twice["seconds"] == 3.0
+    assert twice["count"] == 5
+    assert twice["functions"] == ["a", "b"]
+    assert "per_slice" not in twice
+
+
+def test_outer_and_inner_rows_carry_the_slice_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "timing"
+    root.mkdir()
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), _stage_inputs(root))
+    spec_46 = next(stage for stage in stages if stage.get("name") == "stitch" and stage.get("slice_id") == 46)
+    illumination_45 = next(stage for stage in stages if stage.get("name") == "illumination" and stage.get("slice_id") == 45)
+
+    def stitch_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        timing = env.get("LINUMPY_STAGE_TIMING")
+        assert isinstance(timing, str)
+        rows = [
+            {"stage": "stitch_scoring", "seconds": 1.0, "count": 1, "device": "cpu"},
+            {"stage": "diffusion_blend", "seconds": 0.5, "count": 1, "device": "cpu"},
+        ]
+        Path(timing).write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", stitch_child)
+    outer, inners = _driver_fn("_time_spec")(spec_46, root)
+    assert outer.get("slice_id") == 46
+    assert [row["name"] for row in inners] == ["stitch_scoring", "diffusion_blend"]
+    assert [row.get("slice_id") for row in inners] == [46, 46]
+
+    def illumination_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        del env
+        return subprocess.CompletedProcess(argv, 0, stdout="field_mode=per_z backend=torch device=cuda\n", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", illumination_child)
+    illumination_outer, _none = _driver_fn("_time_spec")(illumination_45, root)
+    assert illumination_outer.get("slice_id") == 45
+
+    stack_outer, stack_inners = _time_stack(tmp_path / "stack", monkeypatch, list(_STACK_BASE_ROWS))
+    assert "slice_id" not in stack_outer
+    assert all("slice_id" not in row for row in stack_inners)
+
+
+def test_stitch_inner_rows_get_per_slice():
+    collect = _driver_fn("collect_inner_stages")
+    inners: list[dict[str, object]] = []
+    for slice_id in (45, 46, 47):
+        parent = {
+            "name": "stitch",
+            "argv": ["linum-stitch-3d-refined", f"z{slice_id}"],
+            "flags": {"blending_method": "diffusion"},
+            "output_path": f"/timing/out/stitch/z{slice_id}",
+            "slice_id": slice_id,
+        }
+        jsonl = "\n".join(
+            [
+                json.dumps({"stage": "stitch_scoring", "seconds": slice_id / 10, "count": 2, "device": "cpu"}),
+                json.dumps({"stage": "diffusion_blend", "seconds": 0.5, "count": 3, "device": "cpu", "functions": ["blend"]}),
+            ]
+        )
+        inners.extend(collect(parent, "", jsonl))
+    collapsed = _driver_fn("_collapse_stages")(inners)
+    for name in ("stitch_scoring", "diffusion_blend"):
+        row = collapsed[name]
+        assert "per_slice" in row
+        per_slice = row["per_slice"]
+        assert [entry["slice_id"] for entry in per_slice] == [45, 46, 47]
+        assert row["seconds"] == pytest.approx(sum(entry["seconds"] for entry in per_slice))
+        assert all(entry["argv"] == ["linum-stitch-3d-refined", f"z{entry['slice_id']}"] for entry in per_slice)
+        assert row["parent"] == "stitch"
+        assert row["flags"] == {"blending_method": "diffusion"}
+        assert "slice_id" not in row
+    assert collapsed["stitch_scoring"]["count"] == 6
+    assert collapsed["diffusion_blend"]["functions"] == ["blend", "blend", "blend"]
+
+
 def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, list[bool]]:
     """Point ``_run_measurement`` at a tmp tree and return the record path and the check spy."""
     root = tmp_path / "timing"
