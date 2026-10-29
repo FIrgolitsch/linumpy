@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -189,8 +190,20 @@ def run_argv(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProces
     -------
     subprocess.CompletedProcess[str]
         The completed child. A non-zero exit raises.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        The child exited non-zero. Its stderr is written to ``sys.stderr``
+        first, because the exception text does not carry it.
     """
-    return subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
+    try:
+        return subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
+    except subprocess.CalledProcessError as error:
+        stderr = error.stderr
+        if isinstance(stderr, str) and stderr:
+            sys.stderr.write(stderr if stderr.endswith("\n") else stderr + "\n")
+        raise
 
 
 def finalize(payload: dict[str, object], timing_root: Path | str = TIMING_ROOT) -> dict[str, object]:
@@ -1352,6 +1365,68 @@ def _installed_linum_basic_revision() -> str:
     return linum_basic_revision(Path(str(dist.locate_file(""))), direct, runner)
 
 
+def _refuse_unfit_run(cfg: dict[str, object]) -> None:
+    """Refuse a run whose record could not describe what ran.
+
+    Parameters
+    ----------
+    cfg : dict[str, object]
+        Merged workflow and server assignments.
+
+    Raises
+    ------
+    ValueError
+        ``scratch_dir`` is not false, because the record can only describe a
+        scratch copy that was not taken. Or tracked files in the linumpy
+        checkout differ from HEAD, because the stored revision would not
+        identify the code that ran. Untracked files do not count.
+    """
+    if cfg.get("scratch_dir") is not False:
+        raise ValueError("scratch_dir must be false: the record can only describe a scratch copy that was not taken")
+    dirty = _git_text(LINUMPY_REPO, "status", "--porcelain", "--untracked-files=no")
+    if dirty:
+        raise ValueError(
+            f"linumpy checkout has uncommitted changes to tracked files, so its revision would not identify the code:\n{dirty}"
+        )
+
+
+def _gather_provenance(cfg: dict[str, object]) -> dict[str, object]:
+    """Gather every cheap fact the record needs. Runs before the first stage.
+
+    Parameters
+    ----------
+    cfg : dict[str, object]
+        Merged workflow and server assignments.
+
+    Returns
+    -------
+    dict[str, object]
+        ``linumpy_git_rev``, ``linumpy_git_branch``, ``linum_basic_revision``,
+        ``thread_env``, ``disk``, ``provenance_flags``, and ``scratch_copy``.
+
+    Raises
+    ------
+    ValueError
+        A provenance key is missing from the merged config.
+    """
+    missing = [key for key in _PROVENANCE_KEYS if key not in cfg]
+    if missing:
+        raise ValueError(f"{missing[0]} is not set in the merged config")
+    return {
+        "linumpy_git_rev": _git_text(LINUMPY_REPO, "rev-parse", "HEAD"),
+        "linumpy_git_branch": _git_text(LINUMPY_REPO, "rev-parse", "--abbrev-ref", "HEAD"),
+        "linum_basic_revision": _installed_linum_basic_revision(),
+        "thread_env": thread_env(
+            _cpu_count({}),
+            max_cpus=int(_flag_number(cfg, "max_cpus", 44)),
+            processes=int(_flag_number(cfg, "processes", 8)),
+        ),
+        "disk": disk_block(_stat_dev, _findmnt_text),
+        "provenance_flags": {key: cfg[key] for key in _PROVENANCE_KEYS},
+        "scratch_copy": scratch_copy(),
+    }
+
+
 def _prepare_inputs(cfg: dict[str, object]) -> tuple[dict[str, object], list[str]]:
     sources: list[str] = []
     illumination: dict[str, str] = {}
@@ -1511,14 +1586,16 @@ def _time_spec(spec: dict[str, object], root: Path) -> tuple[dict[str, object], 
 def _run_measurement() -> None:
     if RECORD_PATH.exists():
         raise FileExistsError(RECORD_PATH)
-    TIMING_ROOT.mkdir(parents=True, exist_ok=True)
     workflow_path = Path(__file__).resolve().parents[2] / "workflows" / "reconst_3d" / "nextflow.config"
     server_path = SUBJECT_ROOT / "nextflow.config"
     cfg = merge_config(
         workflow_path.read_text(encoding="utf-8"),
         server_path.read_text(encoding="utf-8"),
     )
+    _refuse_unfit_run(cfg)
+    provenance = _gather_provenance(cfg)
     inputs, sources = _prepare_inputs(cfg)
+    TIMING_ROOT.mkdir(parents=True, exist_ok=True)
     stages = build_stage_commands(cfg, inputs)
     common = next(stage for stage in stages if stage.get("name") == "common_space")
     common_dir = TIMING_ROOT / "out" / "common_space_inputs"
@@ -1546,26 +1623,20 @@ def _run_measurement() -> None:
     missing = [name for name in _RECORD_STAGES if name not in by_name]
     if missing:
         raise ValueError(f"missing stage {missing[0]}")
-    threads = thread_env(
-        int(inputs["cpu_count"]) if isinstance(inputs["cpu_count"], int) else 1,
-        max_cpus=int(_flag_number(cfg, "max_cpus", 44)),
-        processes=int(_flag_number(cfg, "processes", 8)),
-    )
-    provenance = {key: cfg[key] for key in _PROVENANCE_KEYS}
     payload: dict[str, object] = {
         "subject": SUBJECT,
         "host": HOST,
         "slice_ids": list(SLICE_IDS),
         "page_cache": "not_dropped",
-        "linumpy_git_rev": _git_text(LINUMPY_REPO, "rev-parse", "HEAD"),
-        "linumpy_git_branch": _git_text(LINUMPY_REPO, "rev-parse", "--abbrev-ref", "HEAD"),
-        "linum_basic_revision": _installed_linum_basic_revision(),
-        "thread_env": threads,
-        "disk": disk_block(_stat_dev, _findmnt_text),
-        "scratch_copy": scratch_copy(),
+        "linumpy_git_rev": provenance["linumpy_git_rev"],
+        "linumpy_git_branch": provenance["linumpy_git_branch"],
+        "linum_basic_revision": provenance["linum_basic_revision"],
+        "thread_env": provenance["thread_env"],
+        "disk": provenance["disk"],
+        "scratch_copy": provenance["scratch_copy"],
         "task_hash": None,
         "task_hash_reason": "direct command has no Nextflow task hash",
-        "provenance_flags": provenance,
+        "provenance_flags": provenance["provenance_flags"],
         "stages": [by_name[name] for name in (*_RECORD_STAGES, *_OPTIONAL_STAGES) if name in by_name],
         "sources_read": sources,
     }
