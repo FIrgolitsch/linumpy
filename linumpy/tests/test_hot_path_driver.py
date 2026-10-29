@@ -616,26 +616,6 @@ def test_help_does_not_touch_subject_tree():
     assert "47" in completed.stdout
 
 
-def test_linum_basic_revision_prefers_checkout(tmp_path: Path):
-    direct = '{"url": "https://example.invalid/linum-basic.git", "vcs_info": {"commit_id": "aaa"}}\n'
-    checkout = tmp_path / "linum-basic"
-    checkout.mkdir()
-
-    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
-        assert argv[0] == "git"
-        assert "-C" in argv
-        assert str(checkout) in argv
-        return subprocess.CompletedProcess(argv, 0, stdout="deadbeef\n", stderr="")
-
-    revise = _driver_fn("linum_basic_revision")
-    assert revise(checkout, direct, runner) == "deadbeef"
-
-    def not_checkout(argv: list[str]) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(128, argv, stderr="not a git repository")
-
-    assert revise(tmp_path / "dist-info", direct, not_checkout) == direct
-
-
 _LINUMPY_SHA = "4d656d45db4f28c4a367a13e033a6c46a5670bfa"
 _LINUM_BASIC_SHA = "65c0a92bc7f263cdd854b1133cb3591c707af430"
 

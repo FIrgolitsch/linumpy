@@ -13,6 +13,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from linumpy.utils.stage_timing import validate_record
 
@@ -1014,34 +1015,88 @@ def stack_device(argv: list[str], inners: list[dict[str, object]]) -> str:
     return "unknown"
 
 
+def _direct_url_record(direct_url_text: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(direct_url_text)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {key: value for key, value in parsed.items() if isinstance(key, str)}
+
+
+def _recorded_commit(record: dict[str, object]) -> str:
+    vcs_info = record.get("vcs_info")
+    if not isinstance(vcs_info, dict):
+        return ""
+    commit = vcs_info.get("commit_id")
+    return commit.strip() if isinstance(commit, str) else ""
+
+
+def _own_checkout_head(
+    candidate: Path,
+    git_runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> str:
+    """Return HEAD of ``candidate`` only when it is the root of its own repository."""
+    try:
+        toplevel = git_runner(["git", "-C", str(candidate), "rev-parse", "--show-toplevel"]).stdout.strip()
+        if not toplevel or Path(toplevel).resolve() != candidate.resolve():
+            return ""
+        return git_runner(["git", "-C", str(candidate), "rev-parse", "HEAD"]).stdout.strip()
+    except subprocess.CalledProcessError, OSError:
+        return ""
+
+
 def linum_basic_revision(
     dist_path: Path,
     direct_url_text: str,
     git_runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
 ) -> str:
-    """Return the checkout SHA, or the raw direct-url text when it is not a checkout.
+    """Return the linum-basic revision from its install record, or from its own checkout.
+
+    ``direct_url.json`` is read first. Git is asked only about a directory that
+    git itself reports as its own repository root, so the enclosing linumpy
+    repository can never stand in for linum-basic.
 
     Parameters
     ----------
     dist_path : Path
         Installed distribution path.
     direct_url_text : str
-        Raw ``direct_url.json`` text. Stored unchanged when git cannot name a commit.
+        Raw ``direct_url.json`` text. Stored unchanged when it names no commit
+        and no own checkout exists.
     git_runner : Callable[[list[str]], subprocess.CompletedProcess[str]]
         Runs a git argv list.
 
     Returns
     -------
     str
-        The git SHA when the runner succeeds, otherwise ``direct_url_text``.
+        ``vcs_info.commit_id`` from the install record, else HEAD of a directory
+        that is its own repository root (the path named by a ``file://`` url,
+        then ``dist_path``), else ``direct_url_text``.
+
+    Raises
+    ------
+    ValueError
+        The record names no commit, no own checkout exists, and
+        ``direct_url_text`` is empty.
     """
-    try:
-        completed = git_runner(["git", "-C", str(dist_path), "rev-parse", "HEAD"])
-    except subprocess.CalledProcessError, OSError:
-        return direct_url_text
-    revision = completed.stdout.strip()
-    if revision:
-        return revision
+    record = _direct_url_record(direct_url_text)
+    commit = _recorded_commit(record)
+    if commit:
+        return commit
+    candidates: list[Path] = []
+    url = record.get("url")
+    if isinstance(url, str) and url.startswith("file://"):
+        candidates.append(Path(unquote(urlparse(url).path)))
+    if dist_path not in candidates:
+        candidates.append(dist_path)
+    for candidate in candidates:
+        head = _own_checkout_head(candidate, git_runner)
+        if head:
+            return head
+    if not direct_url_text.strip():
+        raise ValueError("linum-basic revision cannot be recovered: direct_url.json is empty and no own checkout was found")
     return direct_url_text
 
 
