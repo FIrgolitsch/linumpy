@@ -3,6 +3,7 @@
 import ast
 import inspect
 import json
+import os
 import subprocess
 import sys
 import types
@@ -1294,6 +1295,13 @@ def test_stitch_inner_rows_get_per_slice():
     assert collapsed["diffusion_blend"]["functions"] == ["blend", "blend", "blend"]
 
 
+def _run_archiving() -> None:
+    """Run the measurement with ``archive_previous``, failing plainly while the parameter does not exist."""
+    run = _driver_fn("_run_measurement")
+    assert "archive_previous" in inspect.signature(run).parameters
+    run(archive_previous=True)
+
+
 def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, list[bool]]:
     """Point ``_run_measurement`` at a tmp tree and return the record path and the check spy."""
     root = tmp_path / "timing"
@@ -1304,6 +1312,7 @@ def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple
     (subject / "nextflow.config").write_text(_SERVER_CONFIG, encoding="utf-8")
     monkeypatch.setattr(driver, "TIMING_ROOT", root)
     monkeypatch.setattr(driver, "RECORD_PATH", record)
+    monkeypatch.setattr(driver, "PARTIAL_PATH", root / "hot_path.partial.jsonl", raising=False)
     monkeypatch.setattr(driver, "SUBJECT_ROOT", subject)
     monkeypatch.setattr(driver, "_link_named", lambda directory, names: None)
     monkeypatch.setattr(driver, "_prepare_inputs", lambda cfg: (_stage_inputs(root), [str(root / "shifts_xy.csv")]))
@@ -1428,12 +1437,12 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
 
     mode["value"] = "escape"
     with pytest.raises(ValueError, match="timing"):
-        driver._run_measurement()
+        _run_archiving()
     assert entered == []
     assert not record.exists()
 
     mode["value"] = "ok"
-    driver._run_measurement()
+    _run_archiving()
     assert entered == [True]
     payload = json.loads(record.read_text(encoding="utf-8"))
     assert payload["slice_ids"] == [45, 46, 47]
@@ -1603,3 +1612,210 @@ def test_scratch_dir_true_is_refused_before_any_stage(tmp_path: Path, monkeypatc
     assert "time_spec" not in calls, "a stage ran although the record could not describe a scratch copy"
     assert "link" not in calls
     assert not record.exists()
+
+
+_STALE_BYTES = {
+    "hot_path.json": b'{"stale": "record"}\n',
+    "hot_path.partial.jsonl": b'{"outer": {"name": "illumination", "seconds": 99999.0}, "inners": []}\n',
+}
+_ARTIFACTS = ("hot_path.json", "hot_path.partial.jsonl", "out")
+
+
+def _write_stale_artifacts(root: Path, names: tuple[str, ...] = _ARTIFACTS) -> None:
+    """Leave the files a previous run would have left under ``root``."""
+    for name in names:
+        if name == "out":
+            (root / "out" / "stitch").mkdir(parents=True)
+            (root / "out" / "stitch" / "stale.bin").write_bytes(b"old stitch output")
+        else:
+            (root / name).write_bytes(_STALE_BYTES[name])
+
+
+def test_each_stage_is_persisted_as_it_finishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    partial = tmp_path / "timing" / "hot_path.partial.jsonl"
+    fake_time = _fake_time_for({"value": "ok"}, None)
+    started: list[object] = []
+
+    def fail_on_third(spec: dict[str, object], timing_root: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
+        started.append(spec.get("slice_id"))
+        if len(started) == 3:
+            raise RuntimeError("third stage failed")
+        return fake_time(spec, timing_root)
+
+    monkeypatch.setattr(driver, "_time_spec", fail_on_third)
+    with pytest.raises(RuntimeError, match="third stage failed"):
+        driver._run_measurement()
+    assert partial.exists(), "no finished stage reached disk before the failure"
+    rows = [json.loads(line) for line in partial.read_text(encoding="utf-8").splitlines()]
+    assert [(row["outer"]["name"], row["outer"]["slice_id"]) for row in rows] == [("illumination", 45), ("illumination", 46)]
+    assert all(row["inners"] == [] for row in rows)
+    assert not record.exists()
+
+
+def test_append_partial_writes_one_synced_json_line_per_spec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    append = _driver_fn("_append_partial")
+    synced: list[int] = []
+    real_fsync = os.fsync
+
+    def spy_fsync(descriptor: int) -> None:
+        synced.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", spy_fsync)
+    path = tmp_path / "hot_path.partial.jsonl"
+    outer = {"name": "stitch", "slice_id": 45, "seconds": 1.5}
+    inners = [{"name": "stitch_scoring", "seconds": 1.0}, {"name": "diffusion_blend", "seconds": 0.25}]
+    append(path, outer, inners)
+    assert path.read_text(encoding="utf-8").count("\n") == 1
+    assert len(synced) == 1, "the line was not synced to disk"
+    append(path, {"name": "zip", "seconds": 0.5}, [])
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [{"outer": outer, "inners": inners}, {"outer": {"name": "zip", "seconds": 0.5}, "inners": []}]
+    assert len(synced) == 2
+
+    with pytest.raises(ValueError, match="JSON"):
+        append(path, {"name": "stack", "seconds": float("nan")}, [])
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_record_is_replaced_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for({"value": "ok"}, None))
+    replaced: list[tuple[Path, Path]] = []
+    real_replace = os.replace
+
+    def spy_replace(source: Path, destination: Path) -> None:
+        replaced.append((Path(source), Path(destination)))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+    driver._run_measurement()
+    into_place = [pair for pair in replaced if pair[1] == record]
+    assert len(into_place) == 1, "the record did not reach its final name through os.replace"
+    source, _destination = into_place[0]
+    assert source != record
+    assert source.parent == record.parent
+    assert not source.exists()
+    assert sorted(path.name for path in record.parent.iterdir()) == ["hot_path.json", "hot_path.partial.jsonl"]
+    assert json.loads(record.read_text(encoding="utf-8"))["subject"] == "sub-21"
+
+    write = _driver_fn("_write_record")
+    refused = tmp_path / "refused"
+    refused.mkdir()
+    with pytest.raises(ValueError, match="JSON"):
+        write(refused / "hot_path.json", {"subject": "sub-21", "stages": [{"seconds": float("nan")}]})
+    assert list(refused.iterdir()) == []
+
+
+@pytest.mark.parametrize("artifact", _ARTIFACTS)
+def test_existing_artifacts_block_a_run_without_the_flag(artifact: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _patch_measurement(tmp_path, monkeypatch)
+    calls = _trace_measurement(monkeypatch)
+    root = tmp_path / "timing"
+    _write_stale_artifacts(root, (artifact,))
+    before = sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+    with pytest.raises(FileExistsError, match="--archive-previous"):
+        driver._run_measurement()
+    assert sorted(str(path.relative_to(root)) for path in root.rglob("*")) == before
+    assert calls == [], "the run did work before it refused the leftover files"
+
+
+def test_archive_previous_moves_aside_and_never_deletes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for({"value": "ok"}, None))
+    root = tmp_path / "timing"
+    _write_stale_artifacts(root)
+    _run_archiving()
+    fresh = json.loads(record.read_text(encoding="utf-8"))
+    assert fresh["subject"] == "sub-21"
+    [archived_record] = root.glob("hot_path.*.json")
+    [archived_partial] = root.glob("hot_path.partial.*.jsonl")
+    [archived_out] = root.glob("out.*")
+    assert archived_record.read_bytes() == _STALE_BYTES["hot_path.json"]
+    assert archived_partial.read_bytes() == _STALE_BYTES["hot_path.partial.jsonl"]
+    assert (archived_out / "stitch" / "stale.bin").read_bytes() == b"old stitch output"
+
+    archive = _driver_fn("_archive_previous")
+    stamp = "20261029T160000Z"
+
+    everything = tmp_path / "everything"
+    everything.mkdir()
+    _write_stale_artifacts(everything)
+    moved = archive(everything, stamp)
+    assert moved == [
+        everything / f"hot_path.{stamp}.json",
+        everything / f"hot_path.partial.{stamp}.jsonl",
+        everything / f"out.{stamp}",
+    ]
+    assert sorted(path.name for path in everything.iterdir()) == sorted(path.name for path in moved)
+    assert moved[0].read_bytes() == _STALE_BYTES["hot_path.json"]
+    assert (moved[2] / "stitch" / "stale.bin").read_bytes() == b"old stitch output"
+
+    after_first_run = tmp_path / "after-first-run"
+    after_first_run.mkdir()
+    _write_stale_artifacts(after_first_run, ("hot_path.json", "out"))
+    skipped = archive(after_first_run, stamp)
+    assert [path.name for path in skipped] == [f"hot_path.{stamp}.json", f"out.{stamp}"]
+    assert not (after_first_run / f"hot_path.partial.{stamp}.jsonl").exists()
+
+    collision = tmp_path / "collision"
+    collision.mkdir()
+    _write_stale_artifacts(collision)
+    (collision / f"out.{stamp}").mkdir()
+    (collision / f"out.{stamp}" / "keep.txt").write_text("already archived", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        archive(collision, stamp)
+    assert (collision / "hot_path.json").read_bytes() == _STALE_BYTES["hot_path.json"]
+    assert (collision / "hot_path.partial.jsonl").read_bytes() == _STALE_BYTES["hot_path.partial.jsonl"]
+    assert (collision / "out" / "stitch" / "stale.bin").exists()
+    assert (collision / f"out.{stamp}" / "keep.txt").read_text(encoding="utf-8") == "already archived"
+    assert not (collision / f"hot_path.{stamp}.json").exists()
+
+    escaping = tmp_path / "escaping"
+    escaping.mkdir()
+    server_data = tmp_path / "server-data"
+    server_data.mkdir()
+    (server_data / "data.bin").write_bytes(b"server data")
+    _write_stale_artifacts(escaping, ("hot_path.json",))
+    (escaping / "out").symlink_to(server_data)
+    with pytest.raises(ValueError, match="outside the timing root"):
+        archive(escaping, stamp)
+    assert sorted(path.name for path in escaping.iterdir()) == ["hot_path.json", "out"]
+    assert (escaping / "out").is_symlink()
+    assert (server_data / "data.bin").read_bytes() == b"server data"
+
+
+def test_partial_is_never_merged_into_a_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, _entered = _patch_measurement(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for({"value": "ok"}, None))
+    root = tmp_path / "timing"
+    partial = root / "hot_path.partial.jsonl"
+    _write_stale_artifacts(root, ("hot_path.partial.jsonl",))
+    _run_archiving()
+    assert "99999" not in record.read_text(encoding="utf-8")
+    stages = json.loads(record.read_text(encoding="utf-8"))["stages"]
+    assert max(row["seconds"] for row in stages) < 10
+    [archived] = root.glob("hot_path.partial.*.jsonl")
+    assert archived.read_bytes() == _STALE_BYTES["hot_path.partial.jsonl"]
+
+    rows = [json.loads(line) for line in partial.read_text(encoding="utf-8").splitlines()]
+    names = [row["outer"]["name"] for row in rows]
+    assert names == ["illumination"] * 3 + ["stitch"] * 3 + ["attenuation"] * 3 + ["common_space", "stack", "zip"] + [
+        "screenshot",
+        "screenshot_annotated",
+    ]
+    assert all(row["outer"]["seconds"] < 10 for row in rows)
+    stitch = next(row for row in rows if row["outer"]["name"] == "stitch")
+    assert [inner["name"] for inner in stitch["inners"]] == ["stitch_scoring", "diffusion_blend"]
+
+
+def test_help_lists_archive_previous():
+    completed = subprocess.run(
+        [sys.executable, "scripts/timing/linum_time_hot_path.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "--archive-previous" in completed.stdout
