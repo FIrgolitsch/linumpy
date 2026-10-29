@@ -319,6 +319,52 @@ Native GDS additionally requires:
 - A CUDA-aware filesystem on the source path (ext4 / xfs on local NVMe is fine; NFS, overlayfs, encrypted FS are not).
 - `/etc/cufile.json`: `properties.use_compat_mode = false`.
 - IOMMU disabled or in passthrough (`amd_iommu=off iommu=off` on AMD; `intel_iommu=off` on Intel).
-- nvidia-fs DKMS module loaded with matching ABI; verify `dmesg | grep nvidia_fs` shows no "no extended symbol version" warnings after driver/kernel updates.
+- PCI P2PDMA support in the CUDA driver, which needs an open NVIDIA kernel module, a large GPU BAR1 (Resizable BAR) and the `NVreg_RegistryDwords` options described under *P2PDMA requirements* below.
+- nvidia-fs DKMS module loaded with matching ABI; verify `dmesg | grep nvidia_fs` shows no "disagrees about version of symbol" or "no extended symbol version" messages after driver/kernel updates.
 
 If any of these are missing, kvikio silently falls back to a POSIX bounce-buffer (compat mode) and `read_zarr_to_gpu` will route around it.
+
+### Building nvidia-fs on Ubuntu 26.04 (kernel 7.0)
+
+Stock nvidia-fs builds on kernel 7.0 without local patches: 2.29.4 added the kernel-7.0 compilation fixes, and 2.30.2 and 2.31.5 compiled without source patches on `7.0.0-42-generic` (2.31.5 only needed the Makefile symvers argument described below). The former `shell_scripts/server_setup/nvfs_kernel7_patch.sh` workaround is no longer needed and was removed.
+
+The CUDA apt repo ships `nvidia-fs-dkms` (2.30.2 at the time of writing); newer releases are tagged at <https://github.com/NVIDIA/gds-nvidia-fs>. To install a newer tag by hand, copy `src/` to `/usr/src/nvidia-fs-<ver>`, reuse the packaged `dkms.conf` with `PACKAGE_VERSION` updated, then:
+
+```bash
+sudo dkms add -m nvidia-fs -v <ver>
+sudo dkms build -m nvidia-fs -v <ver> -k <kernel>
+sudo dkms install -m nvidia-fs -v <ver> -k <kernel>
+sudo apt-mark hold nvidia-fs-dkms   # keep apt from re-adding the older version
+```
+
+**Building for a kernel you are not running:** `create_nv.symvers.sh` takes the NVIDIA symbol versions from the *running* kernel unless it is passed one. The `nv_symbols` target in the Makefile does not pass it, so a build for another kernel embeds the wrong CRCs and `modprobe nvidia-fs` fails with `disagrees about version of symbol nvidia_p2p_dma_map_pages` (`Invalid argument`). Either build while booted into the target kernel, or change the Makefile line to `./create_nv.symvers.sh $(KVER)`. The NVIDIA driver must already be installed for the target kernel.
+
+The `nvidia-fs:warning: error retrieving numa node for device ...` messages are harmless on single-socket systems with no NUMA information (`numa_node=-1` for all PCI devices): when both devices are unknown, nvidia-fs treats them as local.
+
+### P2PDMA requirements and diagnosis
+
+On kernels with `CONFIG_PCI_P2PDMA` (and `block.nvme.use_pci_p2pdma = true` in `/etc/cufile.json`) GDS uses PCI P2PDMA, which depends on the CUDA driver exposing the GPU `pci_p2pdma` attribute. Check with:
+
+```bash
+/usr/local/cuda/gds/tools/gdscheck -p            # platform summary
+/usr/local/cuda/gds/tools/gdscheck -f <file>     # "GPUDirect Storage not supported on current file" = no native GDS
+```
+
+For details, run any cuFile program with `logging.level = TRACE` in a copy of `cufile.json` (point `CUFILE_ENV_PATH_JSON` at it). The line `gpu attribute pci_p2pdma not supported ... CUDA_ERROR_NOT_SUPPORTED` means the driver is not exposing P2PDMA, and KvikIO will fall back to compat mode.
+
+NVIDIA's GDS NVMe guide ([GDS Support for NVMe](https://docs.nvidia.com/deploy/gds-support-for-nvme/pdf/GDS_Support_for_NVME.pdf)) describes the P2PDMA path as requiring the open kernel module and static BAR1 with write-combine disabled, e.g. in `/etc/modprobe.d/nvidia-p2pdma.conf`:
+
+```
+options nvidia NVreg_RegistryDwords="RMForceStaticBar1=1;ForceP2P=0;RmForceDisableIomapWC=1;"
+```
+
+`ForceP2P=0` is NVIDIA's guidance for pre-Hopper GPUs (Ampere, e.g. A6000/A40). NVMe multipathing must also be off (`options nvme_core multipath=N` in `/etc/modprobe.d/nvme.conf`). Run `sudo update-initramfs -u -k $(uname -r)` after editing either file, then reboot.
+
+Static BAR1 needs a large BAR1, so Resizable BAR (and Above 4G Decoding) must be enabled in the BIOS, and `NVreg_EnableResizableBar=1` may be needed.
+
+**Two further gotchas found on the LIOM server (kernel 7.0.0-42, driver 615.71.10, nvidia-fs 2.31.5):**
+
+- **Boot framebuffer on the GPU.** If the firmware initialises a GPU for the console (a monitor on its DisplayPort), `simpledrm`/`BOOTFB` claims the start of that GPU's BAR1. The NVIDIA driver then cannot register the BAR as P2PDMA memory for that GPU (`/sys/bus/pci/devices/<bdf>/p2pmem/available` is `0`, and cuFile logs `gpu attribute pci_p2pdma not supported`). Since cuFile needs every GPU to support P2PDMA, native GDS is disabled for all of them. Check `grep -E 'BOOTFB|simpledrm' /proc/iomem`; the fix used here is `initcall_blacklist=sysfb_init` on the kernel command line (the console then lives on the ASPEED/VGA output only). `dmesg` should show `added peer-to-peer DMA memory` for every GPU.
+- **ext4 must list `data=ordered` in the mount table.** cuFile refuses ext4 files unless `data=ordered` appears explicitly in the mount options (`findmnt -T <path>`); a default mount that omits it fails with `EXT4 journal options not found in mount table`. `/scratch_nvme` has it in `/etc/fstab`; `/tmp` does not, so test GDS there rather than in `/tmp`.
+
+**Status on the LIOM server (2026-10-29):** native GDS works with the settings above. Both RTX A6000s have a 64 GiB BAR1 (Resizable BAR and Above 4G Decoding enabled, CSM disabled in the BIOS), `gdscheck -p` reports `NVMe : p2pdma`, `gdscheck -f` on `/scratch_nvme` passes the read verification on both GPUs, and `gdsio -x 0` (GPUD) and `kvikio.CuFile` read/write verified data (KvikIO `is_compat_mode_preferred()` is `False`). Throughput is limited by the NVMe drive (about 5.8 GiB/s read and 2.7 GiB/s write with `gdsio`), and the POSIX bounce path (`gdsio -x 2`) measured the same sequential read rate on that drive, so do not expect GDS to beat it on single-drive sequential reads.
