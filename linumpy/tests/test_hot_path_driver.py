@@ -636,6 +636,92 @@ def test_linum_basic_revision_prefers_checkout(tmp_path: Path):
     assert revise(tmp_path / "dist-info", direct, not_checkout) == direct
 
 
+_LINUMPY_SHA = "4d656d45db4f28c4a367a13e033a6c46a5670bfa"
+_LINUM_BASIC_SHA = "65c0a92bc7f263cdd854b1133cb3591c707af430"
+
+
+def _git_answers(toplevels: dict[str, str], heads: dict[str, str]) -> tuple[Callable[..., Any], list[list[str]]]:
+    """Build a git runner that answers per ``-C`` directory and records every call."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(argv))
+        assert argv[:2] == ["git", "-C"]
+        directory = argv[2]
+        if argv[3:] == ["rev-parse", "--show-toplevel"] and directory in toplevels:
+            return subprocess.CompletedProcess(argv, 0, stdout=toplevels[directory] + "\n", stderr="")
+        if argv[3:] == ["rev-parse", "HEAD"] and directory in heads:
+            return subprocess.CompletedProcess(argv, 0, stdout=heads[directory] + "\n", stderr="")
+        raise subprocess.CalledProcessError(128, argv, stderr="not a git repository")
+
+    return runner, calls
+
+
+def test_linum_basic_revision_reads_the_install_record(tmp_path: Path):
+    direct = json.dumps({"url": "https://example.invalid/linum-basic.git", "vcs_info": {"commit_id": _LINUM_BASIC_SHA}})
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"git ran although direct_url.json names the commit: {argv}")
+
+    assert _driver_fn("linum_basic_revision")(tmp_path / "site-packages", direct, runner) == _LINUM_BASIC_SHA
+
+
+def test_linum_basic_revision_uses_its_own_checkout(tmp_path: Path):
+    checkout = tmp_path / "linum-basic"
+    checkout.mkdir()
+    dist = tmp_path / "site-packages"
+    dist.mkdir()
+    direct = json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}})
+    runner, calls = _git_answers(
+        {str(checkout): str(checkout), str(dist): str(tmp_path)},
+        {str(checkout): "deadbeef", str(dist): _LINUMPY_SHA},
+    )
+    assert _driver_fn("linum_basic_revision")(dist, direct, runner) == "deadbeef"
+    assert ["git", "-C", str(dist), "rev-parse", "HEAD"] not in calls
+
+
+def test_linum_basic_revision_refuses_the_enclosing_repo(tmp_path: Path):
+    dist = tmp_path / "site-packages"
+    dist.mkdir()
+    direct = json.dumps({"url": "https://example.invalid/linum-basic.git"})
+    runner, calls = _git_answers({str(dist): str(tmp_path)}, {str(dist): _LINUMPY_SHA})
+    revision = _driver_fn("linum_basic_revision")(dist, direct, runner)
+    assert revision == direct
+    assert revision != _LINUMPY_SHA
+    assert all(call[3:] != ["rev-parse", "HEAD"] for call in calls), (
+        "HEAD was asked of a directory that is not its own repository"
+    )
+
+
+def test_linum_basic_revision_refuses_an_unrecoverable_revision(tmp_path: Path):
+    revise = _driver_fn("linum_basic_revision")
+    runner, _calls = _git_answers({}, {})
+    for empty in ("", "  \n"):
+        with pytest.raises(ValueError, match="linum-basic"):
+            revise(tmp_path / "site-packages", empty, runner)
+    assert revise(tmp_path / "site-packages", "{not json", runner) == "{not json"
+
+
+def test_installed_linum_basic_revision_uses_direct_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    direct = json.dumps({"url": "https://example.invalid/linum-basic.git", "vcs_info": {"commit_id": _LINUM_BASIC_SHA}})
+
+    class _Dist:
+        def read_text(self, name: str) -> str | None:
+            assert name == "direct_url.json"
+            return direct
+
+        def locate_file(self, path: str) -> Path:
+            return tmp_path / path
+
+    monkeypatch.setattr("importlib.metadata.distribution", lambda name: _Dist())
+
+    def refuse(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"git ran although direct_url.json names the commit: {argv}")
+
+    monkeypatch.setattr(driver, "run_argv", refuse)
+    assert _driver_fn("_installed_linum_basic_revision")() == _LINUM_BASIC_SHA
+
+
 def test_illumination_device_follows_the_printed_branch():
     printed = _driver_fn("illumination_device")
     cuda_line = "field_mode=per_z backend=torch device=cuda"
