@@ -683,8 +683,10 @@ def test_only_slices_45_to_47_are_timed_and_zip_stays_on_the_host(tmp_path: Path
     assert isinstance(illum_env, dict)
     assert illum_env.get("CUDA_VISIBLE_DEVICES") == "0,1"
     assert illum_env.get("TORCHINDUCTOR_FX_GRAPH_CACHE") == "1"
-    for name in ("stitch", "attenuation", "common_space", "stack", "zip", "screenshot", "screenshot_annotated"):
+    assert by_name["stack"][0]["device_rule"] == "reported"
+    for name in ("stitch", "attenuation", "common_space", "zip", "screenshot", "screenshot_annotated"):
         assert by_name[name][0]["device_rule"] == ("host" if name == "zip" else "cpu")
+    for name in ("stitch", "attenuation", "common_space", "stack", "zip", "screenshot", "screenshot_annotated"):
         env = by_name[name][0]["env"]
         assert isinstance(env, dict)
         assert "CUDA_VISIBLE_DEVICES" not in env
@@ -701,6 +703,90 @@ def test_only_slices_45_to_47_are_timed_and_zip_stays_on_the_host(tmp_path: Path
     assert isinstance(common_argv, list)
     assert "--refine_unreliable" not in common_argv
     assert "linum-align-to-ras" not in common_argv
+
+
+def _stack_spec(root: Path, server_text: str = _SERVER_CONFIG) -> dict[str, object]:
+    merged = _driver_fn("merge_config")(_WORKFLOW_CONFIG, server_text)
+    stages = _driver_fn("build_stage_commands")(merged, _stage_inputs(root))
+    return next(stage for stage in stages if isinstance(stage, dict) and stage.get("name") == "stack")
+
+
+def test_stack_with_use_gpu_is_not_planned_as_cpu(tmp_path: Path):
+    gpu_root = tmp_path / "gpu"
+    gpu_root.mkdir()
+    planned = _stack_spec(gpu_root)
+    argv = planned["argv"]
+    assert isinstance(argv, list)
+    assert "--use_gpu" in argv
+    assert planned["device_rule"] == "reported"
+    assert planned["device_rule"] != "cpu"
+
+    off_text = _SERVER_CONFIG.replace("use_gpu = true", "use_gpu = false")
+    assert off_text != _SERVER_CONFIG
+    cpu_root = tmp_path / "cpu"
+    cpu_root.mkdir()
+    cpu_planned = _stack_spec(cpu_root, off_text)
+    cpu_argv = cpu_planned["argv"]
+    assert isinstance(cpu_argv, list)
+    assert "--no-use_gpu" in cpu_argv
+    assert "--use_gpu" not in cpu_argv
+    assert cpu_planned["device_rule"] == "cpu"
+
+
+def _time_stack(root: Path, monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, object]]):
+    """Run ``_time_spec`` on the stack with a child that writes ``rows`` as its JSONL."""
+    root.mkdir()
+    spec = _stack_spec(root)
+
+    def stack_child(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        timing = env.get("LINUMPY_STAGE_TIMING")
+        assert isinstance(timing, str)
+        Path(timing).write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", stack_child)
+    return _driver_fn("_time_spec")(spec, root)
+
+
+_STACK_BASE_ROWS: list[dict[str, object]] = [
+    {"stage": "stack_reads", "seconds": 1.0, "count": 3, "device": "cpu"},
+    {"stage": "per_plane_resample", "seconds": 0.5, "count": 2, "device": "cpu", "functions": ["skipped", "skipped"]},
+]
+
+
+def test_time_spec_labels_the_stack_from_its_jsonl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cuda_row: dict[str, object] = {
+        "stage": "stack_z_match",
+        "seconds": 2.0,
+        "count": 2,
+        "device": "cuda",
+        "functions": ["find_z_overlap", "find_z_overlap"],
+    }
+    outer, inners = _time_stack(tmp_path / "cuda", monkeypatch, [*_STACK_BASE_ROWS, cuda_row])
+    assert outer["device"] == "mixed"
+    by_name = {row["name"]: row for row in inners}
+    assert list(by_name) == ["stack_reads", "per_plane_resample", "stack_z_match"]
+    assert by_name["stack_z_match"]["parent"] == "stack"
+    assert by_name["stack_z_match"]["device"] == "cuda"
+    assert by_name["stack_z_match"]["count"] == 2
+
+    skipped_row: dict[str, object] = {
+        "stage": "stack_z_match",
+        "seconds": 0.0,
+        "count": 1,
+        "device": "cpu",
+        "functions": ["skipped"],
+    }
+    outer, inners = _time_stack(tmp_path / "skipped", monkeypatch, [*_STACK_BASE_ROWS, skipped_row])
+    assert outer["device"] == "cpu"
+    assert [row["name"] for row in inners][-1] == "stack_z_match"
+
+    outer, inners = _time_stack(tmp_path / "silent", monkeypatch, list(_STACK_BASE_ROWS))
+    assert outer["device"] == "unknown"
+    assert [row["name"] for row in inners] == ["stack_reads", "per_plane_resample"]
+
+    with pytest.raises(ValueError, match="per_plane_resample"):
+        _time_stack(tmp_path / "missing", monkeypatch, [_STACK_BASE_ROWS[0], cuda_row])
 
 
 def test_outer_clock_stays_off_the_inner_seconds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -813,7 +899,8 @@ def test_outer_clock_stays_off_the_inner_seconds(tmp_path: Path, monkeypatch: py
     assert not (root / "hot_path.json").exists()
 
 
-def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _patch_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, list[bool]]:
+    """Point ``_run_measurement`` at a tmp tree and return the record path and the check spy."""
     root = tmp_path / "timing"
     root.mkdir()
     record = root / "hot_path.json"
@@ -840,7 +927,6 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
             "same_filesystem": False,
         },
     )
-    mode = {"value": "missing"}
     entered: list[bool] = []
     original_finalize = driver.finalize
 
@@ -853,6 +939,28 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
         return checked
 
     monkeypatch.setattr(driver, "finalize", spy_finalize)
+    return record, entered
+
+
+def _inner_row(spec: dict[str, object], output_path: str, name: str, **fields: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "name": name,
+        "argv": spec.get("argv"),
+        "seconds": 0.1,
+        "duration_source": "perf_counter",
+        "device": "cpu",
+        "flags": spec.get("flags"),
+        "output_path": output_path,
+        "parent": spec.get("name"),
+        "count": 1,
+        "functions": [],
+    }
+    row.update(fields)
+    return row
+
+
+def _fake_time_for(mode: dict[str, str], z_match_device: str | None):
+    """Build a ``_time_spec`` stand-in. ``z_match_device`` is the device a stack process reports, or None for silence."""
 
     def fake_time(spec: dict[str, object], timing_root: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
         del timing_root
@@ -865,6 +973,31 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
         if mode["value"] == "escape" and name == "illumination":
             output_path = "/etc/passwd"
         device = "cuda" if name == "illumination" else spec.get("device_rule")
+        inners: list[dict[str, object]] = []
+        if name == "stitch" and spec.get("slice_id") == 45:
+            inners.append(_inner_row(spec, output_path, "stitch_scoring", seconds=1.5, functions=["score"]))
+            inners.append(_inner_row(spec, output_path, "diffusion_blend", seconds=0.4, functions=["blend"]))
+        if name == "stack":
+            inners.append(_inner_row(spec, output_path, "stack_reads", seconds=0.8, count=3))
+            inners.append(
+                _inner_row(
+                    spec,
+                    output_path,
+                    "per_plane_resample",
+                    seconds=0.7,
+                    count=2,
+                    functions=["apply_transform_to_volume", "skipped"],
+                )
+            )
+            if z_match_device is not None:
+                inners.append(
+                    _inner_row(
+                        spec, output_path, "stack_z_match", seconds=0.3, device=z_match_device, functions=["find_z_overlap"]
+                    )
+                )
+            argv = spec.get("argv")
+            assert isinstance(argv, list)
+            device = _driver_fn("stack_device")(argv, inners)
         outer = {
             "name": name,
             "argv": spec.get("argv"),
@@ -874,55 +1007,15 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
             "flags": spec.get("flags"),
             "output_path": output_path,
         }
-        inners: list[dict[str, object]] = []
-        if name == "stitch" and spec.get("slice_id") == 45:
-            for inner_name, inner_seconds in (("stitch_scoring", 1.5), ("diffusion_blend", 0.4)):
-                inners.append(
-                    {
-                        "name": inner_name,
-                        "argv": spec.get("argv"),
-                        "seconds": inner_seconds,
-                        "duration_source": "perf_counter",
-                        "device": "cpu",
-                        "flags": spec.get("flags"),
-                        "output_path": output_path,
-                        "parent": "stitch",
-                        "count": 1,
-                        "functions": ["score"] if inner_name == "stitch_scoring" else ["blend"],
-                    }
-                )
-        if name == "stack":
-            inners.extend(
-                [
-                    {
-                        "name": "stack_reads",
-                        "argv": spec.get("argv"),
-                        "seconds": 0.8,
-                        "duration_source": "perf_counter",
-                        "device": "cpu",
-                        "flags": spec.get("flags"),
-                        "output_path": output_path,
-                        "parent": "stack",
-                        "count": 3,
-                        "functions": [],
-                    },
-                    {
-                        "name": "per_plane_resample",
-                        "argv": spec.get("argv"),
-                        "seconds": 0.7,
-                        "duration_source": "perf_counter",
-                        "device": "cpu",
-                        "flags": spec.get("flags"),
-                        "output_path": output_path,
-                        "parent": "stack",
-                        "count": 2,
-                        "functions": ["apply_transform_to_volume", "skipped"],
-                    },
-                ]
-            )
         return outer, inners
 
-    monkeypatch.setattr(driver, "_time_spec", fake_time)
+    return fake_time
+
+
+def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, entered = _patch_measurement(tmp_path, monkeypatch)
+    mode = {"value": "missing"}
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for(mode, None))
     with pytest.raises(ValueError, match="diffusion_blend"):
         driver._run_measurement()
     assert entered == []
@@ -949,8 +1042,27 @@ def test_hot_path_json_appears_only_after_the_record_check(tmp_path: Path, monke
     assert "align_to_ras" not in stages
     assert stages["illumination"]["device"] == "cuda"
     assert stages["zip"]["device"] == "host"
+    assert stages["stack"]["device"] == "unknown"
     assert stages["stitch"]["seconds"] == pytest.approx(0.6)
     assert stages["stitch_scoring"]["seconds"] == 1.5
     assert stages["diffusion_blend"]["seconds"] == 0.4
     assert stages["per_plane_resample"]["functions"] == ["apply_transform_to_volume", "skipped"]
     assert all(row["duration_source"] == "perf_counter" for row in stages.values())
+
+
+def test_record_carries_the_optional_stack_z_match_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    record, entered = _patch_measurement(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_time_spec", _fake_time_for({"value": "ok"}, "cuda"))
+    driver._run_measurement()
+    assert entered == [True]
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    names = [row["name"] for row in payload["stages"]]
+    assert names == [*_REQUIRED_STAGES, "stack_z_match"]
+    stages = {row["name"]: row for row in payload["stages"]}
+    assert stages["stack"]["device"] == "mixed"
+    z_match = stages["stack_z_match"]
+    assert z_match["parent"] == "stack"
+    assert z_match["device"] == "cuda"
+    assert z_match["functions"] == ["find_z_overlap"]
+    assert z_match["duration_source"] == "perf_counter"
+    assert stages["stack_reads"]["device"] == "cpu"
