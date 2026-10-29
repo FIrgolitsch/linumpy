@@ -382,6 +382,106 @@ def test_common_space_uses_staged_inputs(tmp_path: Path):
     assert found == [str(real.resolve())]
 
 
+_NORMALIZE_DIR = "/scratch_nvme/workspace/sub-21/output/normalize"
+
+
+def _normalize_path(number: int) -> str:
+    return f"{_NORMALIZE_DIR}/slice_z{number:02d}_normalize.ome.zarr"
+
+
+def _subject_normalize_paths() -> list[str]:
+    """Return the 67 normalize zarrs of a full subject, z05 through z71."""
+    paths = [_normalize_path(number) for number in range(5, 72)]
+    assert len(paths) == 67
+    return paths
+
+
+def test_common_space_inputs_are_scoped_to_the_timed_slices():
+    scope = _driver_fn("scope_common_space_inputs")
+    decoys = [
+        f"{_NORMALIZE_DIR}/slice_z450_normalize.ome.zarr",
+        f"{_NORMALIZE_DIR}/slice_z4_normalize.ome.zarr",
+        "/scratch_nvme/workspace/work/z46/slice_z05_normalize.ome.zarr",
+    ]
+    paths = [decoys[0], *reversed(_subject_normalize_paths()), *decoys[1:]]
+    assert scope(paths) == [_normalize_path(45), _normalize_path(46), _normalize_path(47)]
+
+
+def test_common_space_scope_refuses_a_missing_or_duplicate_slice():
+    scope = _driver_fn("scope_common_space_inputs")
+    for broken in (
+        [path for path in _subject_normalize_paths() if "z46" not in path],
+        [*_subject_normalize_paths(), "/scratch_nvme/workspace/other/slice_z45_normalize.ome.zarr"],
+        [f"{_NORMALIZE_DIR}/slice_z450_normalize.ome.zarr"],
+        [],
+    ):
+        with pytest.raises(ValueError, match=r"45.*46.*47"):
+            scope(broken)
+
+
+def test_common_space_row_names_its_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "timing"
+    root.mkdir()
+    stages = _driver_fn("build_stage_commands")(_merged_server_config(), _stage_inputs(root))
+    common = next(stage for stage in stages if stage.get("name") == "common_space")
+    expected = {"slice_ids": [45, 46, 47], "slice_count": 3, "input_count": 3}
+    assert common.get("scope") == expected
+    assert all("scope" not in stage for stage in stages if stage.get("name") != "common_space")
+
+    def fake_run(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        del env
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(driver, "run_argv", fake_run)
+    outer, inners = _driver_fn("_time_spec")(common, root)
+    assert outer.get("scope") == expected
+    assert inners == []
+
+    wide = _stage_inputs(root)
+    wide["common_space"] = _subject_normalize_paths()
+    wide_stages = _driver_fn("build_stage_commands")(_merged_server_config(), wide)
+    wide_common = next(stage for stage in wide_stages if stage.get("name") == "common_space")
+    wide_scope = wide_common.get("scope")
+    assert isinstance(wide_scope, dict)
+    assert wide_scope["slice_count"] == 3
+    assert wide_scope["input_count"] == 67
+
+
+def test_prepare_inputs_scopes_the_common_space_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    work = tmp_path / "work"
+    scripts: dict[tuple[str, int | None], Path] = {}
+
+    def write_script(name: str, text: str) -> Path:
+        script = work / name / ".command.sh"
+        script.parent.mkdir(parents=True)
+        script.write_text(text, encoding="utf-8")
+        return script
+
+    for slice_id in (45, 46, 47):
+        crop = tmp_path / "crop" / f"slice_z{slice_id}_crop_interface.ome.zarr"
+        crop.mkdir(parents=True)
+        attenuated = tmp_path / "out" / f"slice_z{slice_id}_attn_corr.ome.zarr"
+        scripts["linum-compensate-attenuation-inplace", slice_id] = write_script(
+            f"attenuation_{slice_id}", f"linum-compensate-attenuation-inplace {crop} {attenuated} --method li\n"
+        )
+        scripts["linum-stitch-3d-refined", slice_id] = write_script(
+            f"stitch_{slice_id}", f"linum-stitch-3d-refined in_z{slice_id}.ome.zarr out.ome.zarr\n"
+        )
+    scripts["linum-align-mosaics-3d-from-shifts", None] = write_script(
+        "common_space", "linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space\n"
+    )
+
+    def newest_command_file(cli_name: str, slice_id: int | None) -> Path:
+        return scripts[cli_name, slice_id]
+
+    monkeypatch.setattr(driver, "_newest_command_file", newest_command_file)
+    monkeypatch.setattr(driver, "resolve_common_space_inputs", lambda text, work_dir=None: _subject_normalize_paths())
+    inputs, sources = _driver_fn("_prepare_inputs")({})
+    expected = [_normalize_path(45), _normalize_path(46), _normalize_path(47)]
+    assert inputs["common_space"] == expected
+    assert [path for path in sources if "_normalize.ome.zarr" in path] == expected
+
+
 def test_staged_token_resolves_beside_the_command(tmp_path: Path):
     work = tmp_path / "task"
     work.mkdir()
