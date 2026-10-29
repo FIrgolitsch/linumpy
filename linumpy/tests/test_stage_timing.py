@@ -208,6 +208,141 @@ def test_rejects_cache_and_log(tmp_path):
         stage_timing.validate_record(timed_scratch, timing_root=str(root))
 
 
+def _timing_root(tmp_path) -> Path:
+    root = tmp_path / "timing"
+    root.mkdir()
+    return root
+
+
+def _copied_payload(root: Path, seconds: object):
+    payload = _valid_payload(root)
+    payload["scratch_copy"] = {"status": "perf_counter", "seconds": seconds, "scratch_dir": True}
+    payload["provenance_flags"] = {"scratch_dir": True}
+    return payload
+
+
+def test_rejects_unmeasured_scratch_copy(tmp_path):
+    root = _timing_root(tmp_path)
+    stage_timing.validate_record(_copied_payload(root, 2.5), timing_root=str(root))
+    for seconds in (None, "3.0", float("nan"), -1.0):
+        with pytest.raises(ValueError, match="scratch_copy"):
+            stage_timing.validate_record(_copied_payload(root, seconds), timing_root=str(root))
+
+    timed = _valid_payload(root)
+    timed["scratch_copy"] = {"status": "not_taken", "seconds": 12.0, "scratch_dir": False}
+    with pytest.raises(ValueError, match="not_taken"):
+        stage_timing.validate_record(timed, timing_root=str(root))
+
+
+def test_rejects_disk_block_that_disagrees_with_its_device_ids(tmp_path):
+    root = _timing_root(tmp_path)
+    stage_timing.validate_record(_valid_payload(root), timing_root=str(root))
+
+    claims_same = _valid_payload(root)
+    claims_same["disk"]["same_filesystem"] = True
+    with pytest.raises(ValueError, match="same_filesystem"):
+        stage_timing.validate_record(claims_same, timing_root=str(root))
+
+    claims_apart = _valid_payload(root)
+    claims_apart["disk"]["tmp_st_dev"] = claims_apart["disk"]["subject_st_dev"]
+    with pytest.raises(ValueError, match="same_filesystem"):
+        stage_timing.validate_record(claims_apart, timing_root=str(root))
+
+    same_disk = _valid_payload(root)
+    same_disk["disk"]["tmp_st_dev"] = same_disk["disk"]["subject_st_dev"]
+    same_disk["disk"]["same_filesystem"] = True
+    stage_timing.validate_record(same_disk, timing_root=str(root))
+
+
+def test_rejects_provenance_that_contradicts_scratch_copy(tmp_path):
+    root = _timing_root(tmp_path)
+    claims_copy = _valid_payload(root)
+    claims_copy["provenance_flags"] = {"scratch_dir": True}
+    with pytest.raises(ValueError, match="scratch_dir"):
+        stage_timing.validate_record(claims_copy, timing_root=str(root))
+
+    denies_copy = _copied_payload(root, 2.5)
+    denies_copy["provenance_flags"] = {"scratch_dir": False}
+    with pytest.raises(ValueError, match="scratch_dir"):
+        stage_timing.validate_record(denies_copy, timing_root=str(root))
+
+    silent = _valid_payload(root)
+    silent["provenance_flags"] = {}
+    stage_timing.validate_record(silent, timing_root=str(root))
+
+
+def test_rejects_non_finite_or_negative_seconds(tmp_path):
+    root = _timing_root(tmp_path)
+    for seconds in (float("nan"), float("inf"), -0.5):
+        bad = _valid_payload(root)
+        bad["stages"][0]["seconds"] = seconds
+        with pytest.raises(ValueError, match="seconds"):
+            stage_timing.validate_record(bad, timing_root=str(root))
+
+    unmeasured = _valid_payload(root)
+    unmeasured["stages"][0]["duration_source"] = "not_taken"
+    unmeasured["stages"][0]["seconds"] = float("nan")
+    with pytest.raises(ValueError, match="not_taken"):
+        stage_timing.validate_record(unmeasured, timing_root=str(root))
+
+
+def test_rejects_inner_stage_with_unknown_parent_or_bad_functions(tmp_path):
+    root = _timing_root(tmp_path)
+    orphan = _valid_payload(root)
+    for row in orphan["stages"]:
+        if row["name"] == "stitch_scoring":
+            row["parent"] = "nowhere"
+    with pytest.raises(ValueError, match="parent"):
+        stage_timing.validate_record(orphan, timing_root=str(root))
+
+    for functions in ("score", [1], ["score", None]):
+        bad = _valid_payload(root)
+        for row in bad["stages"]:
+            if row["name"] == "stitch_scoring":
+                row["functions"] = functions
+        with pytest.raises(ValueError, match="functions"):
+            stage_timing.validate_record(bad, timing_root=str(root))
+
+    named = _valid_payload(root)
+    for row in named["stages"]:
+        if row["name"] == "stitch_scoring":
+            row["functions"] = ["score", "score_again"]
+    stage_timing.validate_record(named, timing_root=str(root))
+    stage_timing.validate_record(_valid_payload(root), timing_root=str(root))
+
+
+def test_accepts_optional_stack_z_match_and_checks_it(tmp_path):
+    root = _timing_root(tmp_path)
+    stage_timing.validate_record(_valid_payload(root), timing_root=str(root))
+
+    with_row = _valid_payload(root)
+    with_row["stages"].append(_stage("stack_z_match", root, parent="stack", count=1))
+    stage_timing.validate_record(with_row, timing_root=str(root))
+
+    no_parent = _valid_payload(root)
+    no_parent["stages"].append(_stage("stack_z_match", root, count=1))
+    with pytest.raises(ValueError, match="parent"):
+        stage_timing.validate_record(no_parent, timing_root=str(root))
+
+    no_count = _valid_payload(root)
+    no_count["stages"].append(_stage("stack_z_match", root, parent="stack", count="1"))
+    with pytest.raises(ValueError, match="count"):
+        stage_timing.validate_record(no_count, timing_root=str(root))
+
+
+def test_rejects_malformed_thread_env(tmp_path):
+    root = _timing_root(tmp_path)
+    mixed = _valid_payload(root)
+    mixed["thread_env"] = {"OMP_NUM_THREADS": "5", "MKL_NUM_THREADS": 5}
+    stage_timing.validate_record(mixed, timing_root=str(root))
+
+    for env in ({"OMP_NUM_THREADS": [5]}, {"OMP_NUM_THREADS": True}, {"OMP_NUM_THREADS": 2.5}, {5: "x"}):
+        bad = _valid_payload(root)
+        bad["thread_env"] = env
+        with pytest.raises(ValueError, match="thread_env"):
+            stage_timing.validate_record(bad, timing_root=str(root))
+
+
 def test_device_id_inequality(monkeypatch):
     class _Stat:
         def __init__(self, dev):
