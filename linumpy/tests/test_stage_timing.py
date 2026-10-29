@@ -120,6 +120,31 @@ _INNER_PARENTS = {
 }
 
 
+_SLICE_IDS = (45, 46, 47)
+_PER_SLICE_STAGES = ("illumination", "stitch", "attenuation")
+
+
+def _per_slice_entries(name, root: Path, seconds: float, device: str, slice_ids=_SLICE_IDS):
+    """Split ``seconds`` evenly over ``slice_ids`` so the entries sum to the stage row."""
+    return [
+        {
+            "slice_id": slice_id,
+            "seconds": seconds / len(slice_ids),
+            "device": device,
+            "argv": ["linum", name, f"z{slice_id}"],
+            "output_path": str(root / name / f"z{slice_id}"),
+            "flags": {"slice_id": f"z{slice_id}"},
+        }
+        for slice_id in slice_ids
+    ]
+
+
+def _scope(**overrides):
+    scope = {"slice_ids": [45, 46, 47], "slice_count": 3, "input_count": 3}
+    scope.update(overrides)
+    return scope
+
+
 def _stage(name, root: Path, **overrides):
     row = {
         "name": name,
@@ -135,6 +160,10 @@ def _stage(name, root: Path, **overrides):
         row["parent"] = parent
         row["count"] = 1
     row.update(overrides)
+    if name in _PER_SLICE_STAGES and "per_slice" not in row:
+        row["per_slice"] = _per_slice_entries(name, root, row["seconds"], row["device"])
+    if name == "common_space" and "scope" not in row:
+        row["scope"] = _scope()
     return row
 
 
@@ -362,6 +391,157 @@ def test_accepts_optional_stack_z_match_and_checks_it(tmp_path):
     no_count["stages"].append(_stage("stack_z_match", root, parent="stack", count="1"))
     with pytest.raises(ValueError, match="count"):
         stage_timing.validate_record(no_count, timing_root=str(root))
+
+
+def _row(payload, name):
+    return next(row for row in payload["stages"] if row["name"] == name)
+
+
+def _entries(payload, name):
+    return _row(payload, name)["per_slice"]
+
+
+def test_rejects_collapsed_stage_without_per_slice(tmp_path):
+    root = _timing_root(tmp_path)
+    stage_timing.validate_record(_valid_payload(root), timing_root=str(root))
+    for name in _PER_SLICE_STAGES:
+        bare = _valid_payload(root)
+        del _row(bare, name)["per_slice"]
+        with pytest.raises(ValueError, match="per_slice"):
+            stage_timing.validate_record(bare, timing_root=str(root))
+
+    not_a_list = _valid_payload(root)
+    _row(not_a_list, "stitch")["per_slice"] = "45, 46, 47"
+    with pytest.raises(ValueError, match="per_slice"):
+        stage_timing.validate_record(not_a_list, timing_root=str(root))
+
+
+def test_rejects_per_slice_that_does_not_cover_the_timed_slices(tmp_path):
+    root = _timing_root(tmp_path)
+    for name in _PER_SLICE_STAGES:
+        for slice_ids in ((45, 46), (46, 47), (46, 45, 47), (45, 46, 47, 48), (45, 45, 46, 47), ()):
+            partial = _valid_payload(root)
+            row = _row(partial, name)
+            row["per_slice"] = _per_slice_entries(name, root, row["seconds"], row["device"], slice_ids)
+            with pytest.raises(ValueError, match="per_slice"):
+                stage_timing.validate_record(partial, timing_root=str(root))
+
+    inner = _valid_payload(root)
+    scoring = _row(inner, "stitch_scoring")
+    scoring["per_slice"] = _per_slice_entries("stitch_scoring", root, scoring["seconds"], "cpu")
+    stage_timing.validate_record(inner, timing_root=str(root))
+    scoring["per_slice"] = _per_slice_entries("stitch_scoring", root, scoring["seconds"], "cpu", (45, 46))
+    with pytest.raises(ValueError, match="per_slice"):
+        stage_timing.validate_record(inner, timing_root=str(root))
+
+
+def test_rejects_per_slice_seconds_that_do_not_sum(tmp_path):
+    root = _timing_root(tmp_path)
+    close = _valid_payload(root)
+    _entries(close, "illumination")[0]["seconds"] += 1e-9
+    stage_timing.validate_record(close, timing_root=str(root))
+
+    drifted = _valid_payload(root)
+    _entries(drifted, "illumination")[0]["seconds"] += 0.5
+    with pytest.raises(ValueError, match="per_slice"):
+        stage_timing.validate_record(drifted, timing_root=str(root))
+
+    for key in ("argv", "device", "seconds", "slice_id", "flags", "output_path"):
+        missing = _valid_payload(root)
+        del _entries(missing, "stitch")[1][key]
+        with pytest.raises(ValueError, match="per_slice"):
+            stage_timing.validate_record(missing, timing_root=str(root))
+
+    for key, value in (
+        ("seconds", "0.0333"),
+        ("seconds", float("nan")),
+        ("seconds", float("inf")),
+        ("seconds", -0.1),
+        ("seconds", True),
+        ("device", ""),
+        ("argv", "linum"),
+        ("flags", []),
+        ("output_path", "/etc/passwd"),
+    ):
+        malformed = _valid_payload(root)
+        _entries(malformed, "attenuation")[2][key] = value
+        with pytest.raises(ValueError, match="per_slice"):
+            stage_timing.validate_record(malformed, timing_root=str(root))
+
+
+def test_rejects_collapsed_device_that_hides_a_mix(tmp_path):
+    root = _timing_root(tmp_path)
+
+    def with_devices(name, devices, row_device):
+        payload = _valid_payload(root)
+        for entry, device in zip(_entries(payload, name), devices, strict=True):
+            entry["device"] = device
+        _row(payload, name)["device"] = row_device
+        return payload
+
+    for name in _PER_SLICE_STAGES:
+        stage_timing.validate_record(with_devices(name, ["cuda", "cuda", "cuda"], "cuda"), timing_root=str(root))
+        stage_timing.validate_record(with_devices(name, ["cuda", "cuda", "cpu"], "mixed"), timing_root=str(root))
+        for devices, row_device in (
+            (["cuda", "cuda", "cpu"], "cuda"),
+            (["cuda", "cuda", "cpu"], "cpu"),
+            (["cuda", "cuda", "cuda"], "mixed"),
+            (["cpu", "cpu", "cpu"], "cuda"),
+        ):
+            with pytest.raises(ValueError, match="device"):
+                stage_timing.validate_record(with_devices(name, devices, row_device), timing_root=str(root))
+
+
+def test_rejects_common_space_scope_wider_than_the_timed_slices(tmp_path):
+    root = _timing_root(tmp_path)
+    stage_timing.validate_record(_valid_payload(root), timing_root=str(root))
+
+    missing = _valid_payload(root)
+    del _row(missing, "common_space")["scope"]
+    with pytest.raises(ValueError, match="scope"):
+        stage_timing.validate_record(missing, timing_root=str(root))
+
+    for scope in (
+        "slices 45 to 47",
+        _scope(slice_count=67),
+        _scope(slice_ids=list(range(5, 72)), slice_count=67, input_count=67),
+        _scope(slice_ids=[45, 46], slice_count=2, input_count=2),
+        _scope(slice_ids=[47, 46, 45]),
+        _scope(input_count=67),
+        _scope(input_count=2),
+        _scope(slice_count=True, input_count=True),
+        {"slice_ids": [45, 46, 47], "slice_count": 3},
+    ):
+        wide = _valid_payload(root)
+        _row(wide, "common_space")["scope"] = scope
+        with pytest.raises(ValueError, match="scope"):
+            stage_timing.validate_record(wide, timing_root=str(root))
+
+
+def test_rejects_stack_device_that_contradicts_its_argv(tmp_path):
+    root = _timing_root(tmp_path)
+
+    def stack_record(argv, device, z_match_device=None):
+        payload = _valid_payload(root)
+        row = _row(payload, "stack")
+        row["argv"] = argv
+        row["device"] = device
+        if z_match_device is not None:
+            payload["stages"].append(_stage("stack_z_match", root, parent="stack", count=1, device=z_match_device))
+        return payload
+
+    plain = ["linum-stack-slices-motor", "--no-use_gpu"]
+    gpu = ["linum-stack-slices-motor", "--use_gpu"]
+    for argv, z_match_device, accepted, refused in (
+        (plain, None, "cpu", ("mixed", "unknown", "cuda")),
+        (gpu, None, "unknown", ("cpu", "mixed")),
+        (gpu, "cpu", "cpu", ("mixed", "unknown")),
+        (gpu, "cuda", "mixed", ("cpu", "unknown")),
+    ):
+        stage_timing.validate_record(stack_record(argv, accepted, z_match_device), timing_root=str(root))
+        for device in refused:
+            with pytest.raises(ValueError, match=r"stack_z_match|stack device"):
+                stage_timing.validate_record(stack_record(argv, device, z_match_device), timing_root=str(root))
 
 
 def test_rejects_malformed_thread_env(tmp_path):
