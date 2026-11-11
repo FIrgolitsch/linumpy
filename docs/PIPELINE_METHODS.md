@@ -397,6 +397,22 @@ separately in `offsets.txt`.
 manual transform, searching a tight residual (default 10 px, 2°)
 (<ref_file file="/Users/frans/code/linumpy/scripts/stitching/linum_refine_manual_transforms.py" />).
 
+The images it compares are mean projections of `refine_overlap_px` planes. By
+default these are the last planes of the fixed slab and the first planes of the
+moving slab, as in the manual-align tool. When the stack takes Z from the cut
+thickness (`use_expected_z_overlap = true`, `use_manual_z_overlap = false`) the
+workflow passes `--slicing_interval_mm`, and the fixed projection starts one cut
+thickness below the fixed surface instead. That is the tissue the top of the
+moving slab is joined to. For a slab deeper than the cut thickness plus
+`refine_overlap_px`, the last planes lie deeper than that tissue and the two
+projections do not show the same structures.
+
+`refine_coarse_max_translation_px > 0` adds a coarse search before the residual:
+phase correlation on the tissue outline and on band-passed texture proposes a
+translation, and it is kept only when tissue NCC rises by at least 0.05. Use it
+when manual transforms no longer fit because the slab placement under them
+changed.
+
 ### Stage 6.75 — Auto-exclude clusters (optional, `auto_exclude_enabled`)
 
 Consecutive pairs with $z_\text{correlation} < $ `auto_exclude_z_corr` (0.6)

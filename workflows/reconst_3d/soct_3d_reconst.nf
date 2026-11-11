@@ -1162,6 +1162,13 @@ process refine_manual_transforms {
     script:
     def manual_fp = Helpers.manualTransformsFingerprint(params)
     def manual_z_flag = params.use_manual_z_overlap ? "" : " --no-manual-z"
+    // The stack joins the slabs one cut thickness apart when it takes Z from
+    // the cut thickness and ignores the manual Z. Compare those planes then.
+    // Emitted only in that case, so other runs keep their cached refinements.
+    def joined_flag = (params.use_expected_z_overlap && !params.use_manual_z_overlap)
+        ? " --slicing_interval_mm ${params.registration_slicing_interval_mm}" : ""
+    def coarse_flag = params.refine_coarse_max_translation_px > 0
+        ? " --coarse_max_translation_px ${params.refine_coarse_max_translation_px}" : ""
     """
     # manual_transforms_fingerprint ${manual_fp}
     # refine_against_corrected_fixed 1
@@ -1171,7 +1178,7 @@ process refine_manual_transforms {
         --max_translation_px ${params.refine_max_translation_px} \
         --max_rotation_deg ${params.refine_max_rotation_deg} \
         --manual_transforms_dir ${manual_transforms} \
-        --overlap_px 20${manual_z_flag} \
+        --overlap_px ${params.refine_overlap_px}${manual_z_flag}${joined_flag}${coarse_flag} \
         -f
     """
 

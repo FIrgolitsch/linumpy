@@ -512,6 +512,8 @@ tight image-based registration.
 | `refine_manual_transforms` | `false` | Re-run pairwise registration on manual pairs, seeded from the manual transform |
 | `refine_max_translation_px` | `10` | Max residual translation searched during refinement (pixels) |
 | `refine_max_rotation_deg` | `2.0` | Max residual rotation searched during refinement (degrees) |
+| `refine_overlap_px` | `20` | Planes averaged for the refinement images. With `use_expected_z_overlap = true` and `use_manual_z_overlap = false` they are the planes the stack joins |
+| `refine_coarse_max_translation_px` | `0` | Coarse translation search before the residual (pixels); kept only on a clear NCC gain. `0` disables it |
 
 #### Previews & Reports
 

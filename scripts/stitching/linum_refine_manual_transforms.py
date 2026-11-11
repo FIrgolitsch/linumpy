@@ -6,7 +6,13 @@ For the given fixed/moving zarr pair:
 1. Loads the Z-indices from the automated offsets.txt in auto_transform_dir.
 2. If a manual transform exists in --manual_transforms_dir for this pair:
    a. Builds the overlap-edge AIP (same slabs the manual-align tool shows).
-   b. Warps the moving AIP with the manual transform.
+      With --slicing_interval_mm it builds the AIP of the planes the stack
+      joins instead: the fixed slab from one cut thickness down, against the
+      top of the moving slab.
+   b. Warps the moving AIP with the manual transform. With
+      --coarse_max_translation_px it first looks for a large translation that
+      clearly raises tissue NCC, for manuals that no longer fit the slab
+      placement.
    c. Runs a single-scale residual registration. If the unconstrained
       solution exceeds --max_translation_px / --max_rotation_deg, the
       residual is discarded (the manual overlay is kept). A post-hoc clamp
@@ -35,7 +41,7 @@ import SimpleITK as sitk
 
 from linumpy.cli.args import add_overwrite_arg
 from linumpy.io.zarr import read_omezarr
-from linumpy.registration.refinement import register_refinement, tissue_ncc
+from linumpy.registration.refinement import coarse_translation, register_refinement, tissue_ncc
 from linumpy.registration.transforms import create_transform
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -81,6 +87,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Z voxels for the overlap-edge AIP (fixed: last N, moving: first N). "
             "Must match the manual-align export --xy_overlap_px. [%(default)s]"
         ),
+    )
+    p.add_argument(
+        "--slicing_interval_mm",
+        type=float,
+        default=None,
+        help=(
+            "Cut thickness in mm. When set, compare the planes the stack joins: the fixed\n"
+            "slab from this depth down against the top of the moving slab. Use it when the\n"
+            "stack takes Z from the cut thickness. Slabs deeper than interval + overlap_px\n"
+            "otherwise compare planes that are not at the same physical depth.\n"
+            "Default: last / first --overlap_px planes."
+        ),
+    )
+    p.add_argument(
+        "--coarse_max_translation_px",
+        type=float,
+        default=0.0,
+        help=(
+            "Search up to this far for a translation before the bounded residual.\n"
+            "Recovers a manual that no longer fits the slab placement. 0 disables it. [%(default)s px]"
+        ),
+    )
+    p.add_argument(
+        "--coarse_min_ncc_gain",
+        type=float,
+        default=0.05,
+        help="Keep the coarse translation only if tissue NCC rises by at least this. [%(default)s]",
     )
     p.add_argument(
         "--ncc_min_improve",
@@ -238,6 +271,21 @@ def _overlap_aips(fixed_vol: np.ndarray, moving_vol: np.ndarray, overlap_px: int
     return fixed_aip, moving_aip
 
 
+def _joined_aips(fixed_vol: np.ndarray, moving_vol: np.ndarray, step: int, overlap_px: int) -> tuple[np.ndarray, np.ndarray]:
+    """Mean-project the planes the stack joins when Z comes from the cut thickness.
+
+    The moving slab's cut face sits ``step`` planes below the fixed slab's, so
+    fixed plane ``step + k`` and moving plane ``k`` are the same tissue. Falls
+    back to the edge slabs when the fixed slab is not deeper than one step.
+    """
+    n = min(int(overlap_px), int(fixed_vol.shape[0]) - int(step), int(moving_vol.shape[0]))
+    if step < 0 or n < 1:
+        return _overlap_aips(fixed_vol, moving_vol, overlap_px)
+    fixed_aip = np.asarray(fixed_vol[step : step + n]).mean(axis=0).astype(np.float32)
+    moving_aip = np.asarray(moving_vol[:n]).mean(axis=0).astype(np.float32)
+    return fixed_aip, moving_aip
+
+
 def _invert_rigid_2d(
     tx: float,
     ty: float,
@@ -304,6 +352,8 @@ def _write_metrics(
     unconstrained_ty: float | None = None,
     unconstrained_rot_deg: float | None = None,
     fixed_slice_id: int | None = None,
+    coarse_tx: float = 0.0,
+    coarse_ty: float = 0.0,
 ) -> None:
     """Write pairwise_registration_metrics.json with source='manual_refined'."""
     mag = float(np.sqrt(tx**2 + ty**2))
@@ -326,6 +376,8 @@ def _write_metrics(
             "delta_tx": delta_tx,
             "delta_ty": delta_ty,
             "delta_rot_deg": delta_rot,
+            "coarse_tx": coarse_tx,
+            "coarse_ty": coarse_ty,
             "max_translation_px": max_translation_px,
             "max_rotation_deg": max_rotation_deg,
             "fixed_path": str(fixed_path) if fixed_path is not None else None,
@@ -398,16 +450,22 @@ def main() -> None:
         logger.warning("z%d: offsets.txt missing, using z=0 for both slices", slice_id)
 
     # Load zarr volumes; residual registration uses the overlap-edge AIP.
-    fixed_vol, _res = read_omezarr(fixed_zarr)
+    fixed_vol, fixed_res = read_omezarr(fixed_zarr)
     moving_vol, _res = read_omezarr(moving_zarr)
 
     fixed_z = max(0, min(fixed_z, fixed_vol.shape[0] - 1))
     moving_z = max(0, min(moving_z, moving_vol.shape[0] - 1))
 
-    fixed_aip, moving_aip = _overlap_aips(np.asarray(fixed_vol), np.asarray(moving_vol), args.overlap_px)
+    if args.slicing_interval_mm is not None:
+        # Same conversion as the stack, so both steps agree on the joint.
+        step = int(args.slicing_interval_mm / float(fixed_res[0]))
+        fixed_aip, moving_aip = _joined_aips(np.asarray(fixed_vol), np.asarray(moving_vol), step, args.overlap_px)
+        logger.info("z%d: joined-plane AIP, fixed from plane %d, up to %s px", slice_id, step, args.overlap_px)
+    else:
+        fixed_aip, moving_aip = _overlap_aips(np.asarray(fixed_vol), np.asarray(moving_vol), args.overlap_px)
+        logger.info("z%d: overlap AIP %s px (fixed last / moving first)", slice_id, args.overlap_px)
     fixed_aip = _normalize(fixed_aip)
     moving_aip = _normalize(moving_aip)
-    logger.info("z%d: overlap AIP %s px (fixed last / moving first)", slice_id, args.overlap_px)
 
     # Load manual transform parameters (full-resolution pixels)
     man_tx, man_ty, man_rot, man_cx, man_cy = _load_manual_transform(manual_tfm_path)
@@ -438,13 +496,34 @@ def main() -> None:
     fixed_target = _warp_moving(fixed_aip, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
     moving_on_fixed = _warp_moving(warped_moving, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
     ncc_before = tissue_ncc(fixed_target, moving_on_fixed)
+
+    # A manual can be tens of pixels off when the slab placement under it
+    # changed. The bounded residual cannot reach that, so look for a large
+    # translation first and keep it only on a clear NCC gain.
+    coarse_tx, coarse_ty = 0.0, 0.0
+    ncc_start = ncc_before
+    start_moving = moving_on_fixed
+    if args.coarse_max_translation_px > 0:
+        cand_tx, cand_ty, cand_ncc = coarse_translation(fixed_target, moving_on_fixed, args.coarse_max_translation_px)
+        gained = np.isfinite(cand_ncc) and (not np.isfinite(ncc_before) or cand_ncc >= ncc_before + args.coarse_min_ncc_gain)
+        if gained and (cand_tx != 0.0 or cand_ty != 0.0):
+            coarse_tx, coarse_ty, ncc_start = cand_tx, cand_ty, cand_ncc
+            start_moving = _warp_moving(moving_on_fixed, coarse_tx, coarse_ty, 0.0, final_center[0], final_center[1])
+            logger.info(
+                "z%d: coarse translation tx=%.1f ty=%.1f, tissue NCC %.4f -> %.4f",
+                slice_id,
+                coarse_tx,
+                coarse_ty,
+                ncc_before,
+                ncc_start,
+            )
     mask_f = fixed_target > 0.01
-    mask_m = moving_on_fixed > 0.01
+    mask_m = start_moving > 0.01
 
     diag: dict = {}
     delta_tx, delta_ty, delta_rot, _metric = register_refinement(
         fixed_target,
-        moving_on_fixed,
+        start_moving,
         enable_rotation=True,
         max_rotation_deg=args.max_rotation_deg,
         max_translation_px=args.max_translation_px,
@@ -469,24 +548,34 @@ def main() -> None:
     if diag.get("rejected"):
         reject_reason = "bound"
         delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0
-        ncc_after = ncc_before
-        logger.info("z%d: keeping manual — optimizer exceeded residual bound", slice_id)
+        ncc_after = ncc_start
+        logger.info("z%d: residual dropped — optimizer exceeded residual bound", slice_id)
     else:
         cx = fixed_aip.shape[1] / 2.0
         cy = fixed_aip.shape[0] / 2.0
-        refined_moving = _warp_moving(moving_on_fixed, delta_tx, delta_ty, delta_rot, cx, cy)
+        refined_moving = _warp_moving(start_moving, delta_tx, delta_ty, delta_rot, cx, cy)
         ncc_after = tissue_ncc(fixed_target, refined_moving)
-        if not _accept_residual(ncc_before, ncc_after, args.ncc_min_improve):
+        if not _accept_residual(ncc_start, ncc_after, args.ncc_min_improve):
             reject_reason = "ncc"
             delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0
             logger.info(
-                "z%d: keeping manual — tissue NCC %.4f -> %.4f",
+                "z%d: residual dropped — tissue NCC %.4f -> %.4f",
                 slice_id,
-                ncc_before,
+                ncc_start,
                 ncc_after,
             )
         else:
-            logger.info("z%d: accepted residual, tissue NCC %.4f -> %.4f", slice_id, ncc_before, ncc_after)
+            logger.info("z%d: accepted residual, tissue NCC %.4f -> %.4f", slice_id, ncc_start, ncc_after)
+
+    # The coarse translation was applied before the residual, so as a point
+    # map it comes last: total(p) = residual(p) + coarse. An accepted coarse
+    # translation is a refinement even when the residual on top is dropped.
+    delta_tx += coarse_tx
+    delta_ty += coarse_ty
+    if coarse_tx != 0.0 or coarse_ty != 0.0:
+        if reject_reason:
+            ncc_after = ncc_start
+        reject_reason = None
 
     # Residual was measured in the corrected-fixed frame. Fold it back:
     # inv(fixed) ∘ delta ∘ fixed ∘ manual, which is manual ∘ delta when the
@@ -566,6 +655,8 @@ def main() -> None:
         unconstrained_ty=diag.get("unconstrained_ty"),
         unconstrained_rot_deg=diag.get("unconstrained_rot_deg"),
         fixed_slice_id=fixed_slice_id,
+        coarse_tx=coarse_tx,
+        coarse_ty=coarse_ty,
     )
     logger.info("z%d: done", slice_id)
 

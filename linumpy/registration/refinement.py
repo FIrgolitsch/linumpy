@@ -2,7 +2,8 @@
 
 import numpy as np
 import SimpleITK as sitk
-from scipy.ndimage import center_of_mass, sobel
+from scipy.ndimage import binary_erosion, center_of_mass, gaussian_filter, sobel
+from scipy.ndimage import shift as nd_shift
 from skimage.registration import phase_cross_correlation
 
 
@@ -85,6 +86,64 @@ def tissue_ncc(fixed: np.ndarray, moving: np.ndarray, threshold: float = 0.01) -
     if den == 0.0:
         return float("nan")
     return float((av * bv).sum() / den)
+
+
+def coarse_translation(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    max_translation_px: float,
+    threshold: float = 0.01,
+    min_overlap: float = 0.5,
+) -> tuple[float, float, float]:
+    """Find a translation of *moving* onto *fixed* that is too large for the bounded optimizer.
+
+    Phase correlation proposes candidates from the tissue outlines and from the
+    band-passed texture inside the tissue. The candidate with the highest
+    tissue NCC wins; identity is always a candidate, so the result is never
+    worse than doing nothing.
+
+    Returns
+    -------
+    tx, ty : float
+        Translation in the SimpleITK output->input convention used by the
+        pairwise transforms (positive ``tx`` moves content left).
+    ncc : float
+        Tissue NCC at that translation.
+    """
+    fixed = fixed.astype(np.float32)
+    moving = moving.astype(np.float32)
+    mask_f = fixed > threshold
+    mask_m = moving > threshold
+    best_ncc = tissue_ncc(fixed, moving, threshold)
+    best = (0.0, 0.0)
+    if max_translation_px <= 0 or not mask_f.any() or not mask_m.any():
+        return 0.0, 0.0, best_ncc
+
+    def _texture(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        band = gaussian_filter(image, 1.5) - gaussian_filter(image, 15.0)
+        return band * binary_erosion(mask, iterations=5)
+
+    pairs = [
+        (mask_f.astype(np.float32), mask_m.astype(np.float32), None),
+        (_texture(fixed, mask_f), _texture(moving, mask_m), None),
+        (_texture(fixed, mask_f), _texture(moving, mask_m), "phase"),
+    ]
+    smaller = float(min(mask_f.sum(), mask_m.sum()))
+    for ref, mov, normalization in pairs:
+        if not ref.any() or not mov.any():
+            continue
+        shift, _error, _phase = phase_cross_correlation(ref, mov, upsample_factor=2, normalization=normalization)
+        dy, dx = float(shift[0]), float(shift[1])
+        if float(np.hypot(dy, dx)) > max_translation_px:
+            continue
+        shifted = nd_shift(moving, (dy, dx), order=1, mode="constant", cval=0.0)
+        if float((mask_f & (shifted > threshold)).sum()) < min_overlap * smaller:
+            continue
+        ncc = tissue_ncc(fixed, shifted, threshold)
+        if np.isfinite(ncc) and (not np.isfinite(best_ncc) or ncc > best_ncc):
+            best_ncc = ncc
+            best = (-dx, -dy)
+    return best[0], best[1], best_ncc
 
 
 def apply_refinement_bounds(

@@ -298,3 +298,121 @@ def pytest_approx(expected, rel=1e-6, abs_=1e-6):
     import pytest
 
     return pytest.approx(expected, rel=rel, abs=abs_)
+
+
+def test_joined_aips_pairs_planes_one_cut_apart():
+    module = _load_script_module()
+    fixed = np.zeros((9, 4, 4), dtype=np.float32)
+    moving = np.zeros((6, 4, 4), dtype=np.float32)
+    fixed[4:6] = 3.0  # the two planes just below one cut thickness
+    fixed[6:] = 9.0  # deeper planes the edge-slab AIP would have used
+    moving[:2] = 5.0
+    fa, ma = module._joined_aips(fixed, moving, step=4, overlap_px=2)
+    assert float(fa.mean()) == 3.0
+    assert float(ma.mean()) == 5.0
+
+
+def test_joined_aips_shrinks_to_the_planes_that_exist():
+    module = _load_script_module()
+    fixed = np.arange(6, dtype=np.float32)[:, None, None] * np.ones((6, 2, 2), dtype=np.float32)
+    moving = np.ones((6, 2, 2), dtype=np.float32)
+    fa, _ma = module._joined_aips(fixed, moving, step=4, overlap_px=5)
+    assert float(fa.mean()) == 4.5  # planes 4 and 5 only
+
+
+def test_joined_aips_falls_back_to_edge_slabs_when_fixed_is_too_shallow():
+    module = _load_script_module()
+    fixed = np.zeros((4, 2, 2), dtype=np.float32)
+    moving = np.zeros((4, 2, 2), dtype=np.float32)
+    fixed[-2:] = 3.0
+    moving[:2] = 5.0
+    fa, ma = module._joined_aips(fixed, moving, step=4, overlap_px=2)
+    assert float(fa.mean()) == 3.0
+    assert float(ma.mean()) == 5.0
+
+
+def _write_volume(path, data, scale_mm=0.01):
+    store = zarr.storage.LocalStore(str(path))
+    root = zarr.open_group(store, mode="w")
+    arr = root.create_array("0", shape=data.shape, chunks=data.shape, dtype=np.float32)
+    arr[:] = data
+    root.attrs["multiscales"] = [
+        {
+            "axes": [
+                {"name": "z", "type": "space", "unit": "millimeter"},
+                {"name": "y", "type": "space", "unit": "millimeter"},
+                {"name": "x", "type": "space", "unit": "millimeter"},
+            ],
+            "datasets": [{"path": "0", "coordinateTransformations": [{"type": "scale", "scale": [scale_mm] * 3}]}],
+            "version": "0.4",
+        }
+    ]
+
+
+def _blob(seed, shape=(160, 160)):
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[: shape[0], : shape[1]]
+    mask = ((yy - 70) / 45.0) ** 2 + ((xx - 85) / 55.0) ** 2 < 1.0
+    texture = gaussian_filter(rng.random(shape), 3.0)
+    texture = (texture - texture.min()) / (texture.max() - texture.min())
+    return ((0.2 + 0.8 * texture) * mask).astype(np.float32)
+
+
+def test_joined_planes_and_coarse_search_recover_a_stale_manual(tmp_path, script_runner):
+    """A deep fixed slab and a manual 30+ px off: the joined planes still line up."""
+    from scipy.ndimage import shift as nd_shift
+
+    module = _load_script_module()
+    shared = _blob(1)
+    fixed = np.stack([_blob(2)] * 20 + [shared] * 10 + [_blob(3)] * 20)  # 50 planes, cut step 20
+    moved = nd_shift(shared, (-22.0, 31.0), order=1)
+    moving = np.stack([moved] * 10 + [_blob(4)] * 10)
+
+    fixed_zarr = tmp_path / "slice_z04.ome.zarr"
+    moving_zarr = tmp_path / "slice_z05.ome.zarr"
+    _write_volume(fixed_zarr, fixed)
+    _write_volume(moving_zarr, moving)
+
+    auto_dir = tmp_path / "auto_transforms"
+    auto_dir.mkdir()
+    _make_transform(auto_dir / "transform.tfm", cx=80.0, cy=80.0)
+    np.savetxt(str(auto_dir / "offsets.txt"), [45, 4], fmt="%d")
+    manual_pair = tmp_path / "manual" / "slice_z05"
+    manual_pair.mkdir(parents=True)
+    _make_transform(manual_pair / "transform.tfm", cx=80.0, cy=80.0)
+
+    base = [
+        "linum-refine-manual-transforms",
+        str(fixed_zarr),
+        str(moving_zarr),
+        str(auto_dir),
+        "--manual_transforms_dir",
+        str(tmp_path / "manual"),
+        "--no-manual-z",
+        "--overlap_px",
+        "10",
+        "-f",
+    ]
+
+    def _ncc_after(out_dir, extra):
+        ret = script_runner.run([*base[:4], str(out_dir), *base[4:], *extra])
+        assert ret.success, ret.stderr
+        tx, ty, rot, cx, cy = module._load_manual_transform(out_dir / "transform.tfm")
+        warped = module._warp_moving(moved, tx, ty, rot, cx, cy)
+        mask = (shared > 0.01) & (warped > 0.01)
+        return float(np.corrcoef(shared[mask], warped[mask])[0, 1]), json.loads(
+            (out_dir / "pairwise_registration_metrics.json").read_text()
+        )
+
+    # Edge slabs compare unrelated planes and the bound is 10 px: nothing moves.
+    ncc_edge, meta_edge = _ncc_after(tmp_path / "edge", [])
+    assert ncc_edge < 0.5
+    assert meta_edge["source"] == "manual"
+
+    ncc_joined, meta = _ncc_after(tmp_path / "joined", ["--slicing_interval_mm", "0.2", "--coarse_max_translation_px", "60"])
+    assert ncc_joined > 0.9
+    assert meta["source"] == "manual_refined"
+    assert meta["refinement"]["coarse_tx"] == pytest_approx(31.0, abs_=1.5)
+    assert meta["refinement"]["coarse_ty"] == pytest_approx(-22.0, abs_=1.5)
