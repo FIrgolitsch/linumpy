@@ -746,6 +746,9 @@ def _append_stack_options(argv: list[str], cfg: dict[str, object], root: Path) -
             "--notch_slice_seams",
         ]
     )
+    cut_face_planes = _flag_number(cfg, "stack_blend_cut_face_planes", 0)
+    if cut_face_planes > 0:
+        argv.extend(["--blend_cut_face_planes", _num(cut_face_planes)])
     if _flag_bool(cfg, "z_overlap_from_registration", False):
         argv.append("--z_from_registration")
 

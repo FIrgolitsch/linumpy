@@ -1275,13 +1275,15 @@ process stack {
     def flatten_flag = " --no-flatten_z_profile"
     def outline_flag = " --max_outline_step_px 0"
     def notch_flag = params.stack_notch_seams ? " --notch_slice_seams" : ""
+    // Emitted only when set, so subjects that leave it at 0 keep their cached stack.
+    def cut_face_flag = params.stack_blend_cut_face_planes > 0 ? " --blend_cut_face_planes ${params.stack_blend_cut_face_planes}" : ""
     def zreg_flag = params.z_overlap_from_registration ? " --z_from_registration" : ""
     def ignore_manual_z_flag = params.use_manual_z_overlap ? "" : " --ignore_manual_z"
     // In the hashed script block so a default-only Python change cannot cache-hit.
     def blend_tissue_flag = " --blend_tissue_threshold ${params.stack_overlap_z_gain_threshold}"
     def blend_refine_flag = " --blend_refinement_px ${params.blend_refinement_px} --blend_refinement_ncc_min_improve ${params.blend_refinement_ncc_min_improve} --blend_refinement_ncc_min_absolute ${params.blend_refinement_ncc_min_absolute ?: 0.2}"
     def slice_step_flag = " --max_slice_step_px ${params.stack_max_slice_step_px}"
-    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag + flatten_flag + outline_flag + notch_flag + zreg_flag + ignore_manual_z_flag
+    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag + flatten_flag + outline_flag + notch_flag + cut_face_flag + zreg_flag + ignore_manual_z_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def manual_fp = Helpers.manualTransformsFingerprint(params)
@@ -1309,6 +1311,7 @@ process stack {
     # good_stack_geometry 1
     # notch_slice_seams 1
     # annotated_panel_vmax 1
+    # rim_keeps_own_value 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png

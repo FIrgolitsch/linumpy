@@ -601,8 +601,10 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
         blended[moving_only] = moving_region[moving_only]
 
     # A one-sided rim is a hard line: the other slice's tissue is off to
-    # the side, so the Z Hann never sees it. Mix that rim with nearby
-    # tissue from the other slice (~8 px). Interior overlap stays sharp.
+    # the side, so the Z Hann never sees it. Pull that rim toward the level
+    # of the other slice's nearby tissue (~8 px). Each voxel keeps its own
+    # value and only its gain changes: writing the local means instead blurred
+    # dim tissue and painted a tissue-bright halo where neither slice has any.
     # A 160 px translation gap is not closed here.
     if np.any(fixed_only) or np.any(moving_only):
         from scipy.ndimage import gaussian_filter
@@ -614,11 +616,54 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
         moving_mean = gaussian_filter(np.where(moving_valid, moving_region, 0.0).astype(np.float32), sigma=sigma)
         fixed_mean = fixed_mean / np.maximum(fixed_weight, 1e-6)
         moving_mean = moving_mean / np.maximum(moving_weight, 1e-6)
-        rim = (fixed_weight > 0.02) & (moving_weight > 0.02) & ~both_valid
+        near_both = (fixed_weight > 0.02) & (moving_weight > 0.02)
+        rim = near_both & fixed_only
         if np.any(rim):
-            blended[rim] = ((1.0 - alphas) * fixed_mean + alphas * moving_mean)[rim]
+            gain = np.clip(moving_mean / np.maximum(fixed_mean, 1e-6), 0.5, 2.0)
+            blended[rim] = (fixed_region * ((1.0 - alphas) + alphas * gain))[rim]
+        rim = near_both & moving_only
+        if np.any(rim):
+            gain = np.clip(fixed_mean / np.maximum(moving_mean, 1e-6), 0.5, 2.0)
+            blended[rim] = (moving_region * (alphas + (1.0 - alphas) * gain))[rim]
 
     return blended
+
+
+def blend_cut_face(
+    existing: np.ndarray,
+    incoming: np.ndarray,
+    planes: int,
+    tissue_threshold: float = 0.01,
+) -> np.ndarray:
+    """Cross-fade the first ``planes`` of an overlap, then keep the incoming slab.
+
+    ``blend_overlap_z`` fades over the whole overlap, so the previous slab's
+    deepest planes carry weight down to its last one. Deep OCT planes are dim
+    and can invert contrast against the next slab's surface. Here the previous
+    slab hands over within ``planes`` of the incoming cut face and the incoming
+    slab's shallow planes fill the rest of the overlap. Incoming background
+    never erases existing tissue.
+
+    Parameters
+    ----------
+    existing : np.ndarray
+        3D array (Z, Y, X) already in the stack over the overlap.
+    incoming : np.ndarray
+        3D array (Z, Y, X) from the new slab, plane 0 at its cut face.
+    planes : int
+        Depth of the cross-fade, clamped to the overlap.
+    tissue_threshold : float
+        Intensity at or below this is background. Default 0.01.
+
+    Returns
+    -------
+    np.ndarray
+        The overlap region to write back.
+    """
+    n = min(max(1, int(planes)), existing.shape[0])
+    out = paste_tissue(existing, incoming, threshold=tissue_threshold)
+    out[:n] = blend_overlap_z(existing[:n], incoming[:n], tissue_threshold=tissue_threshold)
+    return out
 
 
 def paste_tissue(

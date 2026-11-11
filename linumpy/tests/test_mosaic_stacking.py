@@ -10,6 +10,7 @@ from linumpy.mosaic.stacking import (
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
     apply_xy_shift,
+    blend_cut_face,
     blend_overlap_xy,
     blend_overlap_z,
     crop_moving_volume,
@@ -279,6 +280,54 @@ def test_blend_overlap_z_softens_a_shifted_edge():
     # pulls moving intensity in, so it is no longer a flat 2.
     gap = result[2, 16, 10]
     assert gap > 2.05
+
+
+def test_blend_overlap_z_leaves_the_gap_between_two_slabs_empty():
+    """Agarose that neither slab covers stays empty, even right next to both."""
+    fixed = np.zeros((4, 32, 32), dtype=np.float32)
+    moving = np.zeros((4, 32, 32), dtype=np.float32)
+    fixed[:, 8:24, 6:14] = 2.0
+    moving[:, 8:24, 18:26] = 4.0
+    result = blend_overlap_z(fixed, moving)
+    assert float(result[:, 8:24, 14:18].max()) == 0.0
+
+
+def test_blend_overlap_z_rim_keeps_its_own_texture():
+    """The feathered rim changes gain only, so neighbouring voxels keep their ratio."""
+    fixed = np.zeros((4, 32, 32), dtype=np.float32)
+    moving = np.zeros((4, 32, 32), dtype=np.float32)
+    fixed[:, 8:24, 8:20] = 2.0
+    fixed[:, 8:24:2, 8:20] = 1.0
+    moving[:, 8:24, 12:24] = 3.0
+    result = blend_overlap_z(fixed, moving)
+    # Column 10 is fixed-only. Rows 15 and 16 held 2 and 1 going in.
+    assert result[2, 15, 10] / result[2, 16, 10] == pytest.approx(2.0, rel=0.05)
+
+
+def test_blend_cut_face_hands_over_within_the_first_planes():
+    existing = np.full((10, 8, 8), 1.0, dtype=np.float32)
+    incoming = np.full((10, 8, 8), 3.0, dtype=np.float32)
+    out = blend_cut_face(existing, incoming, planes=4)
+    np.testing.assert_allclose(out[0], 1.0)
+    assert 1.0 < float(out[1, 0, 0]) < float(out[2, 0, 0]) < 3.0
+    np.testing.assert_allclose(out[3:], 3.0)
+
+
+def test_blend_cut_face_keeps_existing_tissue_under_incoming_background():
+    existing = np.full((10, 8, 8), 1.0, dtype=np.float32)
+    incoming = np.full((10, 8, 8), 3.0, dtype=np.float32)
+    incoming[:, :, 4:] = 0.0
+    out = blend_cut_face(existing, incoming, planes=4)
+    assert float(out[:, :, 4:].min()) >= 1.0
+    np.testing.assert_allclose(out[4:, :, 4:], 1.0)
+    np.testing.assert_allclose(out[6, :, :4], 3.0)
+
+
+def test_blend_cut_face_clamps_planes_to_the_overlap():
+    existing = np.full((3, 8, 8), 1.0, dtype=np.float32)
+    incoming = np.full((3, 8, 8), 3.0, dtype=np.float32)
+    out = blend_cut_face(existing, incoming, planes=50)
+    np.testing.assert_allclose(out, blend_overlap_z(existing, incoming))
 
 
 def test_blend_overlap_z_does_not_mix_tissue_with_agarose():

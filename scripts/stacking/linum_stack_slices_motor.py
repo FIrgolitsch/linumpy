@@ -36,6 +36,7 @@ from linumpy.mosaic.stacking import (
     apply_seam_notch,
     apply_transform_to_volume,
     apply_xy_shift,
+    blend_cut_face,
     blend_overlap_z,
     crop_moving_volume,
     enforce_z_consistency,
@@ -237,6 +238,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--blend_depth", type=int, default=None, help="Number of z-slices to blend. Auto-derived from overlap when None."
+    )
+    p.add_argument(
+        "--blend_cut_face_planes",
+        type=int,
+        default=0,
+        help="Cross-fade only this many planes at the incoming cut face, then\n"
+        "let the incoming slab fill the rest of the overlap. The default Hann\n"
+        "spans the whole overlap and keeps the previous slab down to its last\n"
+        "plane; with slabs much deeper than the slicing interval that is mostly\n"
+        "dim, deep data. 0 = whole-overlap Hann. [%(default)s]",
     )
     p.add_argument(
         "--blend_refinement_px",
@@ -1316,6 +1327,16 @@ def main() -> None:
             overlap_z_start = z_cursor - blend_overlap
             overlap_z_end = z_cursor
             overlap_depth = blend_overlap
+            # Planes of the blend window that meet at the incoming cut face.
+            face_planes = overlap_depth
+            if args.blend_cut_face_planes > 0:
+                # Hand over at the incoming cut face: the window is the whole
+                # overlap, cross-faded over its first planes only.
+                s_blend_start = 0
+                overlap_z_start = z_start
+                overlap_z_end = min(z_cursor, z_end)
+                overlap_depth = overlap_z_end - overlap_z_start
+                face_planes = min(args.blend_cut_face_planes, overlap_depth)
 
             if overlap_depth > 0:
                 # Get overlap regions from output and shifted
@@ -1331,8 +1352,8 @@ def main() -> None:
                 # would otherwise leave as a hard line. Bound stays tight.
                 if args.blend_refinement_px > 0:
                     dy, dx, ref_mag = estimate_z_blend_xy_shift(
-                        existing,
-                        moving_overlap,
+                        existing[:face_planes],
+                        moving_overlap[:face_planes],
                         args.blend_refinement_px,
                         ncc_min_improve=args.blend_refinement_ncc_min_improve,
                         ncc_min_absolute=args.blend_refinement_ncc_min_absolute,
@@ -1357,7 +1378,12 @@ def main() -> None:
                         )
 
                 # Blend
-                blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
+                if args.blend_cut_face_planes > 0:
+                    blended = blend_cut_face(
+                        existing, moving_overlap, face_planes, tissue_threshold=args.blend_tissue_threshold
+                    )
+                else:
+                    blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
                 output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1] = blended
 
                 # New contribution (always shifted[overlap:] to preserve z-spacing)
