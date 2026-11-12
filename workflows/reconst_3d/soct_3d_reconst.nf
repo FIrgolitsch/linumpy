@@ -366,8 +366,8 @@ workflow {
             .map { list -> list.size() > 1 ? list.subList(1, list.size()) : [] }
             .flatten()
         // Key pairs by moving zarr basename (= transform dir name)
-        refine_pairs_keyed = refine_fixed
-            .merge(refine_moving)
+        refine_all_pairs = refine_fixed.merge(refine_moving)
+        refine_pairs_keyed = refine_all_pairs
             .filter { fixed, moving -> Helpers.isConsecutiveSlicePair(fixed, moving) }
             .map { fixed, moving -> tuple(moving.getName().replace('.ome.zarr', ''), fixed, moving) }
         // Key auto transform dirs by dir name
@@ -386,7 +386,20 @@ workflow {
             .map { _id, fixed, moving, auto_tfm, manuals ->
                 tuple(fixed, moving, auto_tfm, manuals)
             }
-        refine_manual_transforms(refine_input)
+        // A slab that follows a missing slice has no automated transform, so
+        // the join above drops it and the stack applies its manual transform
+        // as it is. When the stack takes Z from the cut thickness, the depth
+        // at which that slab meets the one before it is known, so its manual
+        // can be refined too. The manual stands in for the automated result.
+        refine_gaps = params.use_expected_z_overlap && !params.use_manual_z_overlap
+        refine_gap_input = refine_all_pairs
+            .filter { fixed, moving -> refine_gaps && Helpers.sliceIdStep(fixed, moving) > 1 }
+            .map { fixed, moving ->
+                tuple(fixed, moving, file("${params.manual_transforms_dir}/slice_z${Helpers.extractSliceId(moving)}"))
+            }
+            .filter { _fixed, _moving, manual_dir -> manual_dir.exists() }
+            .combine(manual_transforms_ch)
+        refine_manual_transforms(refine_input.mix(refine_gap_input))
         transforms_for_stack = refine_manual_transforms.out.collect()
     }
     else {

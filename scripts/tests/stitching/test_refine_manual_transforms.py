@@ -312,6 +312,14 @@ def test_joined_aips_pairs_planes_one_cut_apart():
     assert float(ma.mean()) == 5.0
 
 
+def test_joined_step_counts_the_missing_slices():
+    module = _load_script_module()
+    assert module._joined_step(0.2, 0.01, 4, 5) == 20
+    # z21 is missing between z20 and z22: two cuts between the cut faces.
+    assert module._joined_step(0.19, 0.01, 20, 22) == 38
+    assert module._joined_step(0.2, 0.01, None, 5) == 20
+
+
 def test_joined_aips_shrinks_to_the_planes_that_exist():
     module = _load_script_module()
     fixed = np.arange(6, dtype=np.float32)[:, None, None] * np.ones((6, 2, 2), dtype=np.float32)

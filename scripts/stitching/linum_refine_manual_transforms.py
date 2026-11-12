@@ -97,6 +97,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "slab from this depth down against the top of the moving slab. Use it when the\n"
             "stack takes Z from the cut thickness. Slabs deeper than interval + overlap_px\n"
             "otherwise compare planes that are not at the same physical depth.\n"
+            "When slice ids between the two slabs are missing, the depth is one cut per\n"
+            "missing id further down.\n"
             "Default: last / first --overlap_px planes."
         ),
     )
@@ -286,6 +288,18 @@ def _joined_aips(fixed_vol: np.ndarray, moving_vol: np.ndarray, step: int, overl
     return fixed_aip, moving_aip
 
 
+def _joined_step(slicing_interval_mm: float, res_z_mm: float, fixed_slice_id: int | None, moving_slice_id: int) -> int:
+    """Planes between the cut faces of the two slabs.
+
+    One cut thickness for neighbours. When slices between them are missing,
+    the moving slab sits that many cuts further down, as it does in the stack.
+    """
+    step = int(slicing_interval_mm / res_z_mm)
+    if fixed_slice_id is None:
+        return step
+    return step * max(1, int(moving_slice_id) - int(fixed_slice_id))
+
+
 def _invert_rigid_2d(
     tx: float,
     ty: float,
@@ -456,9 +470,12 @@ def main() -> None:
     fixed_z = max(0, min(fixed_z, fixed_vol.shape[0] - 1))
     moving_z = max(0, min(moving_z, moving_vol.shape[0] - 1))
 
+    fixed_id_match = re.search(r"z(\d+)", fixed_zarr.name)
+    fixed_slice_id = int(fixed_id_match.group(1)) if fixed_id_match is not None else None
+
     if args.slicing_interval_mm is not None:
         # Same conversion as the stack, so both steps agree on the joint.
-        step = int(args.slicing_interval_mm / float(fixed_res[0]))
+        step = _joined_step(args.slicing_interval_mm, float(fixed_res[0]), fixed_slice_id, slice_id)
         fixed_aip, moving_aip = _joined_aips(np.asarray(fixed_vol), np.asarray(moving_vol), step, args.overlap_px)
         logger.info("z%d: joined-plane AIP, fixed from plane %d, up to %s px", slice_id, step, args.overlap_px)
     else:
@@ -477,8 +494,6 @@ def main() -> None:
     # manual so the saved delta stays in the original-neighbour frame.
     final_center = [fixed_aip.shape[1] / 2.0, fixed_aip.shape[0] / 2.0]
     fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy = 0.0, 0.0, 0.0, final_center[0], final_center[1]
-    fixed_id_match = re.search(r"z(\d+)", fixed_zarr.name)
-    fixed_slice_id = int(fixed_id_match.group(1)) if fixed_id_match is not None else None
     if args.manual_transforms_dir and fixed_slice_id is not None:
         fixed_manual = Path(args.manual_transforms_dir) / f"slice_z{fixed_slice_id:02d}" / "transform.tfm"
         if fixed_manual.exists():

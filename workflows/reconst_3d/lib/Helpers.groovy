@@ -12,7 +12,8 @@ import org.slf4j.LoggerFactory
  * Categories:
  *   - Slice ID parsing      : extractSliceId, extractSliceIdInt, toSliceTuple,
  *                             extractSliceIdsString, detectSingleGaps,
- *                             isConsecutiveSlicePair, parseDebugSlices
+ *                             isConsecutiveSlicePair, sliceIdStep,
+ *                             parseDebugSlices
  *   - Path utilities        : normalizePath, joinPath, resolveSubjectName,
  *                             partitionSlicesAndTransforms
  *   - Slice config parsing  : parseSliceConfig
@@ -59,6 +60,13 @@ class Helpers {
         }
         log.warn("Skipping pairwise registration across missing-slice gap (${a}→${b}); stack will use motor XY and expected Z gap")
         return false
+    }
+
+    /** Difference between the two slice ids; 1 for neighbours, -1 when an id is unknown. */
+    static int sliceIdStep(fixed, moving) {
+        def a = extractSliceIdInt(fixed)
+        def b = extractSliceIdInt(moving)
+        return (a >= 0 && b >= 0) ? (b - a) : -1
     }
 
     /** Return [slice_id, file] for a given file path. */

@@ -407,6 +407,11 @@ moving slab is joined to. For a slab deeper than the cut thickness plus
 `refine_overlap_px`, the last planes lie deeper than that tissue and the two
 projections do not show the same structures.
 
+In that mode a slab that follows a missing slice is refined too. It has no
+automated transform, so its manual transform stands in for one, and the fixed
+projection starts one cut thickness per missing slice further down. Without
+this the stack applies that manual transform unchanged.
+
 `refine_coarse_max_translation_px > 0` adds a coarse search before the residual:
 phase correlation on the tissue outline and on band-passed texture proposes a
 translation, and it is kept only when tissue NCC rises by at least 0.05. Use it
