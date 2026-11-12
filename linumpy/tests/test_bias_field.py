@@ -1,5 +1,7 @@
 """Tests for linumpy/intensity/bias_field.py (and gpu/bias_field.py)."""
 
+from itertools import pairwise
+
 import numpy as np
 import pytest
 
@@ -7,8 +9,10 @@ from linumpy.gpu import GPU_AVAILABLE
 from linumpy.intensity.bias_field import (
     apply_bias_field,
     compute_tissue_mask,
+    drop_small_mask_components,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_between_cut_faces,
     tissue_mask_section_silhouettes,
     tissue_mask_silhouette_xy,
 )
@@ -93,6 +97,28 @@ def test_compute_tissue_mask_oblique_section():
     bot_xs = np.argwhere(mask[-1])[:, 1]
     assert top_xs.size > 0 and bot_xs.size > 0
     assert bot_xs.mean() > top_xs.mean() + 5  # large oblique displacement
+
+
+def test_compute_tissue_mask_threshold_scale_keeps_dim_tissue():
+    """Zeroed background leaves Otsu between dim and bright tissue; the scale recovers the dim rim."""
+    rng = np.random.default_rng(0)
+    vol = np.zeros((6, 64, 64), dtype=np.float32)
+    vol[:, 8:56, 8:56] = 0.15  # dim tissue
+    vol[:, 20:44, 20:44] = 0.6  # bright core
+    vol[vol > 0] += rng.normal(0, 0.01, int((vol > 0).sum())).astype(np.float32)
+
+    otsu_mask = compute_tissue_mask(vol, smoothing_sigma=1.0, closing_radius=0, z_closing_sections=0)
+    scaled_mask = compute_tissue_mask(vol, smoothing_sigma=1.0, closing_radius=0, z_closing_sections=0, threshold_scale=0.3)
+
+    assert not otsu_mask[3, 12, 12]
+    assert scaled_mask[3, 12, 12]
+    assert scaled_mask[3, 32, 32]
+    assert not scaled_mask[3, 2, 2]
+
+
+def test_compute_tissue_mask_rejects_non_positive_threshold_scale():
+    with pytest.raises(ValueError, match="threshold_scale"):
+        compute_tissue_mask(np.ones((2, 8, 8), dtype=np.float32), threshold_scale=0.0)
 
 
 def test_tissue_mask_silhouette_keeps_overlap_drops_agarose():
@@ -355,3 +381,63 @@ def test_slab_bounds_round_trip(tmp_path):
     write_slab_z_starts(tmp_path / "v.ome.zarr", [0, 4], 12)
     assert read_slab_bounds(tmp_path / "v.ome.zarr", 12) == [(0, 4), (4, 12)]
     assert read_slab_bounds(tmp_path / "v.ome.zarr", 6) == [(0, 2), (2, 6)]
+
+
+def _receding_block_mask() -> np.ndarray:
+    """Two 10-plane sections. Tissue ends at x=40 on the first cut face and x=20 on the second.
+
+    The first section carries signal over its whole cut-face footprint at every
+    depth, as a slab does under a receding edge.
+    """
+    mask = np.zeros((20, 30, 60), dtype=bool)
+    mask[:10, 5:25, 5:40] = True
+    mask[10:, 5:25, 5:20] = True
+    return mask
+
+
+def test_cut_face_outline_tapers_a_receding_edge():
+    mask = _receding_block_mask()
+    out = tissue_mask_between_cut_faces(mask, 2)
+
+    right_edge = [int(np.nonzero(out[z, 15])[0].max()) for z in range(10)]
+    assert right_edge[0] == 39
+    assert all(a >= b for a, b in pairwise(right_edge))
+    assert right_edge[-1] <= 23
+    # The last section has no following cut face and stays as it was.
+    assert np.array_equal(out[10:], mask[10:])
+    assert not (out & ~mask).any()
+
+
+def test_cut_face_outline_keeps_tissue_that_widens_with_depth():
+    mask = _receding_block_mask()[::-1].copy()
+    out = tissue_mask_between_cut_faces(mask, 2)
+    assert np.array_equal(out, mask)
+
+
+def test_cut_face_outline_margin_keeps_more():
+    mask = _receding_block_mask()
+    tight = tissue_mask_between_cut_faces(mask, 2)
+    loose = tissue_mask_between_cut_faces(mask, 2, margin_px=4)
+    assert loose.sum() > tight.sum()
+    assert not (tight & ~loose).any()
+
+
+def test_cut_face_outline_skips_a_section_where_tissue_stops():
+    """A footprint far smaller than the section's planes is not an outline."""
+    mask = np.zeros((20, 30, 60), dtype=bool)
+    mask[:10, 5:25, 5:40] = True
+    mask[10:13, 5:25, 5:40] = True  # tissue ends three planes into the second section
+    out = tissue_mask_between_cut_faces(mask, 2)
+    assert np.array_equal(out, mask)
+
+
+def test_drop_small_mask_components_removes_debris_only():
+    mask = np.zeros((16, 40, 40), dtype=bool)
+    mask[2:14, 5:30, 5:30] = True
+    mask[4:6, 36:38, 36:38] = True  # speck in the agarose
+    mask[8, 31, 20] = True  # within a block of the tissue: treated as part of it
+    out = drop_small_mask_components(mask.copy(), 0.01)
+    assert out[8, 15, 15]
+    assert not out[4:6, 36:38, 36:38].any()
+    assert out[8, 31, 20]
+    assert np.array_equal(drop_small_mask_components(mask.copy(), 0.0), mask)

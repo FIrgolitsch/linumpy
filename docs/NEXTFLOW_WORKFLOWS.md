@@ -401,8 +401,10 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 | `bias_mode` | `'two_pass'` | Correction mode: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global) |
 | `bias_strength` | `1.0` | Correction mixing strength (0 = passthrough, 1 = full correction) |
 | `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask. Keep `true` to drop agarose. |
-| `bias_zero_mask_mode` | `'section'` | `'section'` = per-section Otsu (can punch dim overlap). `'silhouette'` = global OR-Z (keeps other slices' agarose FOVs). `'section_silhouette'` = OR within each serial section only. |
-| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on silhouette modes. Ignored in `'section'` mode. |
+| `bias_zero_mask_mode` | `'section'` | `'section'` = per-section Otsu (can punch dim overlap). `'silhouette'` = global OR-Z (keeps other slices' agarose FOVs). `'section_silhouette'` = OR within each serial section only (the outline steps at every slab). `'section_outline'` = per-section mask limited to the outline interpolated between consecutive cut faces; removes the dim blocks under a receding tissue edge. |
+| `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on silhouette modes, or margin outside the outline in `'section_outline'`. Ignored in `'section'` mode. |
+| `bias_mask_threshold_scale` | `1.0` | Factor on each section's Otsu threshold for the tissue mask. Once the stack has zeroed the agarose, Otsu falls between dim and bright tissue and the mask drops the dim rim in sections with bright white matter; `0.3` moves it into the gap between background and tissue. |
+| `bias_mask_min_component_fraction` | `0` | Drop tissue-mask components smaller than this fraction of the largest (debris, bubbles). `0.001` is safe for a whole brain. |
 
 #### Atlas Registration (RAS Alignment)
 

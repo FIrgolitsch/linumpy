@@ -33,6 +33,7 @@ def _compute_tissue_mask_gpu(
     closing_radius: int,
     z_closing_sections: int,
     bounds: list[tuple[int, int]] | None = None,
+    threshold_scale: float = 1.0,
 ) -> np.ndarray:
     """GPU implementation of :func:`compute_tissue_mask`.
 
@@ -72,7 +73,7 @@ def _compute_tissue_mask_gpu(
             del smoothed_g, nonzero_g
             cp.get_default_memory_pool().free_all_blocks()
             continue
-        thresh = float(_otsu_threshold_gpu(nonzero_g))
+        thresh = float(_otsu_threshold_gpu(nonzero_g)) * threshold_scale
         del nonzero_g
 
         section_mask_g = smoothed_g > thresh
@@ -143,6 +144,7 @@ def compute_tissue_mask(
     smoothing_sigma_z: float = 1.0,
     use_gpu: bool = False,
     bounds: list[tuple[int, int]] | None = None,
+    threshold_scale: float = 1.0,
 ) -> np.ndarray:
     """Return a 3-D boolean mask where *True* indicates tissue (not agarose).
 
@@ -181,6 +183,12 @@ def compute_tissue_mask(
     bounds : list of (start, end), optional
         Z span of each section, for slabs of unequal depth. Replaces the equal
         chunks implied by *n_serial_slices*.
+    threshold_scale : float
+        Factor applied to each section's Otsu threshold. Once the stack has
+        zeroed the agarose, the nonzero histogram is mostly tissue and Otsu
+        lands between dim and bright tissue, so the mask drops the dim rim
+        in sections with bright white matter. A value below 1 (e.g. 0.3)
+        moves the threshold down into the gap between background and tissue.
     use_gpu : bool
         If True, run the dominant 3-D ``gaussian_filter`` on GPU via
         CuPy (Z-chunked for memory safety). Falls back to CPU silently
@@ -199,6 +207,9 @@ def compute_tissue_mask(
 
     from linumpy.gpu import is_cupy_array
 
+    if threshold_scale <= 0:
+        raise ValueError(f"threshold_scale must be > 0; got {threshold_scale}")
+
     # Cupy input always goes through the GPU path; the CPU fallback uses
     # numpy/scipy ops that don't accept cupy arrays.
     if use_gpu or is_cupy_array(vol):
@@ -211,6 +222,7 @@ def compute_tissue_mask(
                 closing_radius=closing_radius,
                 z_closing_sections=z_closing_sections,
                 bounds=bounds,
+                threshold_scale=threshold_scale,
             )
         except ImportError:
             if is_cupy_array(vol):
@@ -231,7 +243,7 @@ def compute_tissue_mask(
         if nonzero.size < 100:
             mask[s:e] = True
             continue
-        thresh = threshold_otsu(nonzero)
+        thresh = threshold_otsu(nonzero) * threshold_scale
         section_mask = section_smooth > thresh
         # Per-Z hole filling and closing (oblique masks differ across Z).
         for z in range(section_mask.shape[0]):
@@ -351,6 +363,172 @@ def tissue_mask_section_silhouettes(
 
         return cp.asarray(out)
     return out
+
+
+def tissue_mask_between_cut_faces(
+    mask: np.ndarray,
+    n_serial_slices: int,
+    margin_px: int = 0,
+    bounds: list[tuple[int, int]] | None = None,
+    presence: float = 0.8,
+) -> np.ndarray:
+    """Limit a per-voxel tissue mask to the outline that joins consecutive cut faces.
+
+    A slab images tissue from its cut face down. Where the tissue edge recedes
+    with depth, the planes under the edge still carry a dim signal over the
+    whole cut-face footprint, so in the stack every slab ends in a block with
+    vertical walls and the surface looks like a staircase. The next slab's cut
+    face shows where the tissue really ends at that depth, so the true outline
+    inside a slab lies between its own cut-face footprint and the next one.
+
+    For each section the footprint is the XY region that is tissue on at least
+    *presence* of its planes. Inside a section a voxel is kept when it is in
+    *mask* and either lies in the next section's footprint (tissue that widens
+    with depth is seen through the agarose and is real) or lies inside the
+    outline interpolated between the two footprints (signed-distance blend by
+    depth). The last section, and sections whose footprint is not reliable,
+    keep *mask* unchanged.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean tissue mask ``(Z, Y, X)`` from :func:`compute_tissue_mask`.
+    n_serial_slices : int
+        Number of serial sections (same chunking as the Otsu mask).
+    margin_px : int
+        Extra XY margin in pixels kept outside the interpolated outline.
+    bounds : list of (start, end), optional
+        Z span of each section. Use this when slabs are not equal in depth;
+        *n_serial_slices* is then ignored. Defaults to equal chunks.
+    presence : float
+        Fraction of a section's planes on which a pixel must be tissue to
+        belong to that section's footprint.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array of shape ``(Z, Y, X)``. CuPy when *mask* is CuPy.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    from linumpy.gpu import is_cupy_array
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
+    if bounds is None and n_serial_slices < 1:
+        raise ValueError(f"n_serial_slices must be >= 1; got {n_serial_slices}")
+    if margin_px < 0:
+        raise ValueError(f"margin_px must be >= 0; got {margin_px}")
+    if not 0 < presence <= 1:
+        raise ValueError(f"presence must be in (0, 1]; got {presence}")
+
+    cupy_input = is_cupy_array(mask)
+    if cupy_input:
+        import cupy as cp
+
+        mask_np = np.asarray(cp.asnumpy(mask), dtype=bool)
+    else:
+        mask_np = np.asarray(mask, dtype=bool)
+
+    section_bounds = bounds if bounds is not None else _chunk_boundaries(mask_np.shape[0], n_serial_slices)
+
+    def _footprint(start: int, end: int) -> np.ndarray | None:
+        section = mask_np[start:end]
+        areas = section.reshape(section.shape[0], -1).sum(axis=1)
+        if not (areas > 0).any():
+            return None
+        counts = section.sum(axis=0, dtype=np.int32)
+        footprint = counts >= int(np.ceil(presence * section.shape[0]))
+        # A footprint much smaller than the section's planes means the tissue
+        # starts or stops inside the section; it says nothing about the outline.
+        if footprint.sum() < 0.5 * float(np.median(areas[areas > 0])) or footprint.all():
+            return None
+        return footprint
+
+    def _signed_distance(footprint: np.ndarray) -> np.ndarray:
+        inside = distance_transform_edt(footprint)
+        outside = distance_transform_edt(~footprint)
+        return (inside - outside).astype(np.float32)
+
+    out = mask_np.copy()
+    current = _footprint(*section_bounds[0]) if section_bounds else None
+    current_sd = _signed_distance(current) if current is not None else None
+    for k, (start, end) in enumerate(section_bounds):
+        following = _footprint(*section_bounds[k + 1]) if k + 1 < len(section_bounds) else None
+        following_sd = _signed_distance(following) if following is not None else None
+        if current_sd is not None and following is not None and following_sd is not None:
+            depth = end - start
+            for z in range(start, end):
+                candidates = out[z] & ~following
+                if not candidates.any():
+                    continue
+                t = (z - start) / depth
+                blended = (1.0 - t) * current_sd[candidates] + t * following_sd[candidates]
+                out[z][candidates] = blended > -margin_px
+        current, current_sd = following, following_sd
+
+    if cupy_input:
+        import cupy as cp
+
+        return cp.asarray(out)
+    return out
+
+
+def drop_small_mask_components(mask: np.ndarray, min_fraction: float, coarsen: int = 4) -> np.ndarray:
+    """Remove mask components much smaller than the largest one, in place.
+
+    Debris and bubbles in the agarose pass an intensity threshold but are not
+    attached to the brain. Components are labelled on a mask reduced by
+    *coarsen* along every axis (a block is set when any of its voxels is), so
+    anything within a few voxels of the tissue counts as part of it.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean mask ``(Z, Y, X)``; modified in place.
+    min_fraction : float
+        Components smaller than this fraction of the largest one are cleared.
+        ``0`` keeps everything.
+    coarsen : int
+        Reduction factor used for labelling.
+
+    Returns
+    -------
+    np.ndarray
+        *mask*, for chaining.
+    """
+    from scipy.ndimage import label
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
+    if not 0 <= min_fraction < 1:
+        raise ValueError(f"min_fraction must be in [0, 1); got {min_fraction}")
+    if coarsen < 1:
+        raise ValueError(f"coarsen must be >= 1; got {coarsen}")
+    if min_fraction == 0:
+        return mask
+
+    nz, ny, nx = mask.shape
+    z_starts = np.arange(0, nz, coarsen)
+    y_starts = np.arange(0, ny, coarsen)
+    x_starts = np.arange(0, nx, coarsen)
+    coarse = np.zeros((len(z_starts), len(y_starts), len(x_starts)), dtype=bool)
+    for i, z in enumerate(z_starts):
+        plane = mask[z : z + coarsen].any(axis=0)
+        coarse[i] = np.logical_or.reduceat(np.logical_or.reduceat(plane, y_starts, axis=0), x_starts, axis=1)
+
+    labels, n_labels = label(coarse, structure=np.ones((3, 3, 3), dtype=bool))
+    if n_labels < 2:
+        return mask
+    sizes = np.bincount(labels.ravel(), minlength=n_labels + 1)
+    sizes[0] = 0
+    keep = sizes >= min_fraction * sizes.max()
+    keep[0] = False
+    keep_coarse = keep[labels]
+    for i, z in enumerate(z_starts):
+        fine = np.repeat(np.repeat(keep_coarse[i], coarsen, axis=0), coarsen, axis=1)[:ny, :nx]
+        mask[z : z + coarsen] &= fine
+    return mask
 
 
 # ---------------------------------------------------------------------------

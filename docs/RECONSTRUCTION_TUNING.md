@@ -303,8 +303,10 @@ and slow inter-slice intensity drift.
 | `bias_tissue_threshold` | `0.005` | Voxels at or below this intensity are considered background and excluded from histogram matching. Lower if tissue is being treated as background. |
 | `bias_zprofile_smooth_sigma` | `2.0` | Gaussian smoothing (sigma in Z-planes) of a residual scalar gain after HM. Eliminates the small inter-slice steps HM cannot remove. `0` = disabled. Typical range 2–4. |
 | `bias_zero_outside_mask` | `true` | Zero voxels outside the output mask (agarose suppression). N4 still fits on the per-section Otsu mask. Keep `true`. Runs even when `correct_bias_field` is false (`mask_only`). |
-| `bias_zero_mask_mode` | `'section'` | `'section'` applies the per-section Otsu mask (can punch dim overlap). `'silhouette'` ORs that mask along Z, hole-fills, and extrudes the XY footprint so overlap inside the brain is kept. |
+| `bias_zero_mask_mode` | `'section'` | `'section'` applies the per-section Otsu mask (can punch dim overlap). `'silhouette'` ORs that mask along Z, hole-fills, and extrudes the XY footprint so overlap inside the brain is kept. `'section_outline'` keeps the per-section mask but limits it to the outline interpolated between consecutive cut faces, so an oblique surface is smooth in the orthogonal views instead of stepping at every slab. |
 | `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette after hole-fill. Ignored in `'section'` mode. |
+| `bias_mask_threshold_scale` | `1.0` | Factor on each section's Otsu threshold for the tissue mask. Lower it (`0.3`) when the masked volume has rectangular holes or blocks missing at the brain edge: the stack has already zeroed the agarose, so Otsu splits dim from bright tissue instead of tissue from background. |
+| `bias_mask_min_component_fraction` | `0` | Drop mask components smaller than this fraction of the largest (debris and bubbles in the agarose). |
 
 **Recipe — visible intensity steps between slices:**
 

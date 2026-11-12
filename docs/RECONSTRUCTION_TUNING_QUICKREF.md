@@ -38,6 +38,8 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Optimizer-boundary translation hits | Keep `skip_warning_transforms=true`; **don't** zero them via `stack_max_pairwise_translation` unless they're clearly worse than zero |
 | Visible inter-slice intensity steps | `correct_bias_field=true`, `bias_histogram_match_per_zplane=true`, `bias_zprofile_smooth_sigma=2.0` (raise to 4 if persists) |
 | N4 punching black stripes in overlap / orthogonal views | `bias_zero_mask_mode='silhouette'` (keep `bias_zero_outside_mask=true`) |
+| Rectangular holes or a stepped outline at the brain edge in orthogonal views | `bias_mask_threshold_scale=0.3`, `bias_zero_mask_mode='section_outline'` |
+| Specks or bubbles left around the brain | `bias_mask_min_component_fraction=0.001` |
 | Bias correction over-flattening tissue | Lower `bias_strength` (1.0 → 0.7) |
 | Atlas overlay rotated 90° / flipped | `ras_orientation_preview=true`, then tune `ras_input_orientation` and `ras_initial_rotation` |
 

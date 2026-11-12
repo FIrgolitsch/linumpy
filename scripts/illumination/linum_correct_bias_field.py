@@ -31,8 +31,10 @@ import numpy as np
 from linumpy.cli.args import add_processes_arg, parse_processes_arg
 from linumpy.intensity.bias_field import (
     compute_tissue_mask,
+    drop_small_mask_components,
     n4_correct,
     n4_correct_per_section,
+    tissue_mask_between_cut_faces,
     tissue_mask_section_silhouettes,
     tissue_mask_silhouette_xy,
 )
@@ -103,6 +105,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="Gaussian smoothing sigma for tissue mask estimation. [%(default)s]",
     )
+    p.add_argument(
+        "--mask_threshold_scale",
+        type=float,
+        default=1.0,
+        help="Factor applied to each section's Otsu threshold for the tissue mask.\n"
+        "Below 1 (e.g. 0.3) keeps dim tissue that Otsu puts on the background\n"
+        "side in sections with bright white matter. [%(default)s]",
+    )
+    p.add_argument(
+        "--mask_min_component_fraction",
+        type=float,
+        default=0.0,
+        help="Drop tissue-mask components smaller than this fraction of the largest\n"
+        "one (debris and bubbles in the agarose). 0 = keep all. [%(default)s]",
+    )
 
     # Histogram-matching pre-pass (corrects inter-section intensity drift)
     p.add_argument(
@@ -172,21 +189,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--zero_mask_mode",
-        choices=("section", "silhouette", "section_silhouette"),
+        choices=("section", "silhouette", "section_silhouette", "section_outline"),
         default="section",
         help="Which mask is applied when --zero_outside_mask is on.\n"
         "'section' uses the per-section Otsu mask (can punch dim overlap).\n"
         "'silhouette' ORs that mask along all Z, hole-fills, and extrudes the\n"
         "XY footprint (keeps other slices' agarose FOVs).\n"
         "'section_silhouette' ORs within each serial section only so overlap\n"
-        "inside that cut is kept and other slices' agarose is dropped. [%(default)s]",
+        "inside that cut is kept and other slices' agarose is dropped.\n"
+        "'section_outline' uses the per-section mask and limits it to the outline\n"
+        "interpolated between consecutive cut faces, which drops the dim signal\n"
+        "under a receding tissue edge (staircase on oblique surfaces). [%(default)s]",
     )
     p.add_argument(
         "--zero_mask_dilate_px",
         type=int,
         default=0,
         help="Extra XY dilation (pixels) applied to the silhouette after\n"
-        "hole-filling.  Ignored in 'section' mode. [%(default)s]",
+        "hole-filling, or margin kept outside the interpolated outline in\n"
+        "'section_outline' mode.  Ignored in 'section' mode. [%(default)s]",
     )
 
     # Output options
@@ -324,7 +345,10 @@ def main() -> None:
         n_serial_slices=args.n_serial_slices,
         bounds=slab_bounds,
         use_gpu=use_gpu_chunks,
+        threshold_scale=args.mask_threshold_scale,
     )
+    if args.mask_min_component_fraction > 0:
+        mask = drop_small_mask_components(_to_host(mask), args.mask_min_component_fraction)
     logger.info("Tissue mask: %d/%d voxels", int(mask.sum()), mask.size)
 
     run_n4 = args.mode != "mask_only"
@@ -524,6 +548,19 @@ def main() -> None:
             out_mask = tissue_mask_section_silhouettes(mask, n_sec, dilate_px=args.zero_mask_dilate_px, bounds=slab_bounds)
             logger.info(
                 "Zeroing outside per-section silhouettes (%d/%d voxels, %d sections, dilate=%d)\u2026",
+                int(out_mask.sum()),
+                out_mask.size,
+                n_sec,
+                args.zero_mask_dilate_px,
+            )
+            corrected *= _as_same_module(out_mask, corrected)
+        elif args.zero_mask_mode == "section_outline":
+            n_sec = args.n_serial_slices if args.n_serial_slices and args.n_serial_slices > 0 else 1
+            if slab_bounds is not None:
+                n_sec = len(slab_bounds)
+            out_mask = tissue_mask_between_cut_faces(mask, n_sec, margin_px=args.zero_mask_dilate_px, bounds=slab_bounds)
+            logger.info(
+                "Zeroing outside the outline between cut faces (%d/%d voxels, %d sections, margin=%d)\u2026",
                 int(out_mask.sum()),
                 out_mask.size,
                 n_sec,

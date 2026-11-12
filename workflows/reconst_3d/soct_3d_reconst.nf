@@ -1366,6 +1366,8 @@ process correct_bias_field {
     def zero_mask_flag = params.bias_zero_outside_mask ? "--zero_outside_mask" : "--no-zero_outside_mask"
     def zero_mask_mode_flag = "--zero_mask_mode ${params.bias_zero_mask_mode}"
     def zero_mask_dilate_flag = "--zero_mask_dilate_px ${params.bias_zero_mask_dilate_px}"
+    def mask_scale_flag = params.bias_mask_threshold_scale != 1.0 ? "--mask_threshold_scale ${params.bias_mask_threshold_scale}" : ""
+    def mask_component_flag = params.bias_mask_min_component_fraction > 0 ? "--mask_min_component_fraction ${params.bias_mask_min_component_fraction}" : ""
     def gpu_pin_block = Helpers.gpuPinBlock(params, "correct_bias_field ${subject_name}")
     """
     ${gpu_pin_block}
@@ -1386,6 +1388,8 @@ process correct_bias_field {
         ${zero_mask_flag} \
         ${zero_mask_mode_flag} \
         ${zero_mask_dilate_flag} \
+        ${mask_scale_flag} \
+        ${mask_component_flag} \
         ${Helpers.pyramidArgs(params)}
 
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
