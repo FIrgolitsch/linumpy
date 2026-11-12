@@ -11,6 +11,20 @@ from typing import Any, cast
 import numpy as np
 
 
+def shared_display_max(panels: list[np.ndarray], percentile_max: float = 99.9) -> float:
+    """Return one upper display limit for several panels of the same volume.
+
+    The limit is the given percentile of the positive pixels of all panels
+    together. A limit per panel makes the same tissue look brighter in a panel
+    without bright outliers than in one that has them.
+    """
+    positive = [np.asarray(panel)[np.asarray(panel) > 0].ravel() for panel in panels]
+    positive = [values for values in positive if values.size > 0]
+    if not positive:
+        return 1.0
+    return float(np.percentile(np.concatenate(positive), percentile_max))
+
+
 def save_orthogonal_views(
     image: np.ndarray,
     out_path: str,
@@ -33,7 +47,8 @@ def save_orthogonal_views(
     cmap : str
         Colormap (default 'magma').
     percentile_max : float
-        Values above this percentile are clipped for display.
+        Values above this percentile of the three panels together are clipped
+        for display. The three panels share one intensity scale.
     """
     import matplotlib
 
@@ -52,17 +67,15 @@ def save_orthogonal_views(
 
     width_ratio = [i.shape[1] for i in (image_z, image_x, image_y)]
 
-    def _panel_vmax(arr: np.ndarray) -> float:
-        pos = arr[arr > 0]
-        return float(np.percentile(pos, percentile_max)) if pos.size > 0 else 1.0
+    vmax = shared_display_max([image_z, image_x, image_y], percentile_max)
 
     fig, ax = plt.subplots(1, 3, width_ratios=width_ratio)
     fig.set_size_inches(24, 10)
     fig.set_dpi(512)
 
-    ax[0].imshow(image_z, cmap=cmap, origin="lower", vmin=0, vmax=_panel_vmax(image_z))
-    ax[1].imshow(image_x, cmap=cmap, origin="lower", vmin=0, vmax=_panel_vmax(image_x))
-    ax[2].imshow(image_y, cmap=cmap, origin="lower", vmin=0, vmax=_panel_vmax(image_y))
+    ax[0].imshow(image_z, cmap=cmap, origin="lower", vmin=0, vmax=vmax)
+    ax[1].imshow(image_x, cmap=cmap, origin="lower", vmin=0, vmax=vmax)
+    ax[2].imshow(image_y, cmap=cmap, origin="lower", vmin=0, vmax=vmax)
 
     for a in ax:
         a.set_axis_off()

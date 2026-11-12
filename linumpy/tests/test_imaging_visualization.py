@@ -7,6 +7,7 @@ from linumpy.imaging.visualization import (
     estimate_n_slices_from_zarr,
     save_annotated_views,
     save_orthogonal_views,
+    shared_display_max,
 )
 
 
@@ -33,6 +34,23 @@ def test_save_orthogonal_views_custom_slices(tmp_path):
     out = tmp_path / "views_custom.png"
     save_orthogonal_views(vol, str(out), z_slice=5, x_slice=10, y_slice=15)
     assert out.exists()
+
+
+def test_shared_display_max_pools_the_panels():
+    flat = np.full((10, 10), 0.2, dtype=np.float32)
+    with_outliers = flat.copy()
+    with_outliers[:5] = 0.9
+    # Alone, the flat panel would be drawn at full scale and look brighter
+    # than the same tissue in the other panel.
+    assert shared_display_max([flat]) < 0.25
+    assert shared_display_max([flat, with_outliers]) > 0.85
+
+
+def test_shared_display_max_ignores_background_and_empty_panels():
+    panel = np.zeros((8, 8), dtype=np.float32)
+    panel[2:4, 2:4] = 0.5
+    assert shared_display_max([panel, np.zeros((4, 4), dtype=np.float32)]) == 0.5
+    assert shared_display_max([np.zeros((4, 4), dtype=np.float32)]) == 1.0
 
 
 # ---------------------------------------------------------------------------
