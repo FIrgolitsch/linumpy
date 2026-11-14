@@ -1015,9 +1015,11 @@ process bring_to_common_space {
         ? "--refine_min_correlation ${params.common_space_refine_min_correlation}"
         : ""
 
+    // Emitted only when set, so other runs keep their cache.
+    def overrides_arg = params.common_space_shift_overrides ? " --shift_overrides ${params.common_space_shift_overrides}" : ""
     """
     linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space \
-        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}
+        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}${overrides_arg}
     mv common_space/* .
     """
 

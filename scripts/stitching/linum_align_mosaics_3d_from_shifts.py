@@ -91,6 +91,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "quality is too low, indicating an unreliable shift estimate.",
     )
 
+    p.add_argument(
+        "--shift_overrides",
+        default=None,
+        help="CSV with columns fixed_id, moving_id, x_shift_mm, y_shift_mm. The listed\n"
+        "transitions take these shifts and are treated as reliable, so --refine_unreliable\n"
+        "does not estimate them again. Use it to keep the slab placement of an earlier run:\n"
+        "the image-based estimate is accepted or dropped on a correlation threshold, and a\n"
+        "change upstream can flip that decision and move every slab after it.",
+    )
+
     add_overwrite_arg(p)
     return p
 
@@ -189,6 +199,43 @@ def handle_excluded_slice_shifts(shifts_df: Any, excluded_slice_ids: Any, mode: 
             df.loc[idx, "y_shift"] = replacement["y_shift"]
 
     return df
+
+
+def apply_shift_overrides(shifts_df: Any, overrides_df: Any) -> int:
+    """Set the shift of the transitions listed in ``overrides_df``, in place.
+
+    Overridden transitions are marked reliable. The pixel columns, when
+    present, are rescaled with the pixel-per-mm ratio of the file itself.
+
+    Returns
+    -------
+    int
+        Number of transitions that were overridden.
+    """
+    wanted = {
+        (int(row["fixed_id"]), int(row["moving_id"])): (float(row["x_shift_mm"]), float(row["y_shift_mm"]))
+        for _, row in overrides_df.iterrows()
+    }
+    px_per_mm = None
+    if "x_shift" in shifts_df.columns:
+        nonzero = shifts_df["x_shift_mm"].abs() > 1e-9
+        if nonzero.any():
+            px_per_mm = float((shifts_df.loc[nonzero, "x_shift"] / shifts_df.loc[nonzero, "x_shift_mm"]).median())
+    n_applied = 0
+    for idx in shifts_df.index:
+        key = (int(shifts_df.loc[idx, "fixed_id"]), int(shifts_df.loc[idx, "moving_id"]))
+        if key not in wanted:
+            continue
+        x_mm, y_mm = wanted[key]
+        shifts_df.loc[idx, "x_shift_mm"] = x_mm
+        shifts_df.loc[idx, "y_shift_mm"] = y_mm
+        if px_per_mm is not None:
+            shifts_df.loc[idx, "x_shift"] = x_mm * px_per_mm
+            shifts_df.loc[idx, "y_shift"] = y_mm * px_per_mm
+        if "reliable" in shifts_df.columns:
+            shifts_df.loc[idx, "reliable"] = 1
+        n_applied += 1
+    return n_applied
 
 
 def compute_common_shape(mosaic_files: Any, slice_ids: Any, cumsum_shifts: Any) -> tuple[int, int, float, float]:
@@ -374,6 +421,14 @@ def main() -> None:
         shifts_df = handle_excluded_slice_shifts(
             shifts_df, excluded_slice_ids=excluded, mode=args.excluded_slice_mode, window=args.excluded_slice_window
         )
+
+    # Shifts fixed by the caller come first: they are not estimated again.
+    if args.shift_overrides:
+        overrides_path = Path(args.shift_overrides)
+        if not overrides_path.exists():
+            parser.error(f"Shift overrides file not found: {overrides_path}")
+        n_overridden = apply_shift_overrides(shifts_df, pd.read_csv(overrides_path))
+        print(f"Using {n_overridden} shift overrides from {overrides_path}")
 
     # Refine unreliable transitions with image-based registration if requested
     n_unreliable_total = 0
