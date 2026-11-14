@@ -882,7 +882,8 @@ process compensate_attenuation {
     tuple val(slice_id), path("slice_z${slice_id}_attn_corr.ome.zarr"), emit: compensated
 
     script:
-    def lateral_flag = params.compensate_attenuation_lateral_sigma > 0 ? "--lateral_sigma ${params.compensate_attenuation_lateral_sigma} " : ""
+    def footprint_flag = params.compensate_attenuation_lateral_footprint ? "--lateral_footprint " : ""
+    def lateral_flag = params.compensate_attenuation_lateral_sigma > 0 ? "--lateral_sigma ${params.compensate_attenuation_lateral_sigma} ${footprint_flag}" : ""
     """
     linum-compensate-attenuation-inplace ${image} "slice_z${slice_id}_attn_corr.ome.zarr" \
         --method ${params.compensate_attenuation_method} \
@@ -1381,6 +1382,17 @@ process correct_bias_field {
     def zero_mask_dilate_flag = "--zero_mask_dilate_px ${params.bias_zero_mask_dilate_px}"
     def mask_scale_flag = params.bias_mask_threshold_scale != 1.0 ? "--mask_threshold_scale ${params.bias_mask_threshold_scale}" : ""
     def mask_component_flag = params.bias_mask_min_component_fraction > 0 ? "--mask_min_component_fraction ${params.bias_mask_min_component_fraction}" : ""
+    // Emitted only when set, so runs that do not use them keep their cache.
+    def mask_opening_flag = params.bias_mask_opening_px > 0 ? "--mask_opening_px ${params.bias_mask_opening_px}" : ""
+    def harmonize_on = params.bias_slab_gain || params.bias_band_sigma_px > 0 || params.bias_target_tissue_level > 0
+    def slab_gain_flag = params.bias_slab_gain ? "--slab_gain" : ""
+    def band_flag = params.bias_band_sigma_px > 0 ? "--band_sigma_px ${params.bias_band_sigma_px}" : ""
+    def target_level_flag = params.bias_target_tissue_level > 0 ? "--target_tissue_level ${params.bias_target_tissue_level}" : ""
+    def slab_blend_flag = harmonize_on && params.stack_blend_cut_face_planes > 0 ? "--slab_blend_planes ${params.stack_blend_cut_face_planes}" : ""
+    def harmonize_flags = [mask_opening_flag, slab_gain_flag, band_flag, target_level_flag, slab_blend_flag]
+        .findAll { flag -> flag }
+        .collect { flag -> " ${flag}" }
+        .join('')
     def gpu_pin_block = Helpers.gpuPinBlock(params, "correct_bias_field ${subject_name}")
     """
     ${gpu_pin_block}
@@ -1402,7 +1414,7 @@ process correct_bias_field {
         ${zero_mask_mode_flag} \
         ${zero_mask_dilate_flag} \
         ${mask_scale_flag} \
-        ${mask_component_flag} \
+        ${mask_component_flag}${harmonize_flags} \
         ${Helpers.pyramidArgs(params)}
 
     zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr

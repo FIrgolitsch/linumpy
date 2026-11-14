@@ -307,6 +307,10 @@ and slow inter-slice intensity drift.
 | `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on the silhouette after hole-fill. Ignored in `'section'` mode. |
 | `bias_mask_threshold_scale` | `1.0` | Factor on each section's Otsu threshold for the tissue mask. Lower it (`0.3`) when the masked volume has rectangular holes or blocks missing at the brain edge: the stack has already zeroed the agarose, so Otsu splits dim from bright tissue instead of tissue from background. |
 | `bias_mask_min_component_fraction` | `0` | Drop mask components smaller than this fraction of the largest (debris and bubbles in the agarose). |
+| `bias_mask_opening_px` | `0` | Cut mask parts attached by a bridge thinner than twice this many voxels. `10` removes loose tissue and single-slab rims and keeps stalks thicker than 200 µm. |
+| `bias_slab_gain` | `false` | Common gain for all slabs, from the tissue neighbouring slabs share. Use it instead of `bias_zprofile_equalize`, which forces every plane to the same mean and so darkens grey matter wherever a plane holds more white matter. |
+| `bias_band_sigma_px` | `0` | XY scale of the correction for the band at each slab joint. `240` (2.4 mm at 10 µm) works for a mouse brain. Tissue thinner than one slab and wider than this is spread over one slab in Z at that coarse scale only. |
+| `bias_target_tissue_level` | `0` | Brain-wide tissue level after the correction. The same value (for example `0.25`) for every brain makes intensities comparable between them. |
 
 **Recipe — visible intensity steps between slices:**
 

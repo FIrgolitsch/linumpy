@@ -32,13 +32,15 @@ from linumpy.cli.args import add_processes_arg, parse_processes_arg
 from linumpy.intensity.bias_field import (
     compute_tissue_mask,
     drop_small_mask_components,
+    drop_thin_mask_parts,
     n4_correct,
     n4_correct_per_section,
     tissue_mask_between_cut_faces,
     tissue_mask_section_silhouettes,
     tissue_mask_silhouette_xy,
 )
-from linumpy.intensity.normalization import apply_histogram_matching, apply_zprofile_smoothing
+from linumpy.intensity.normalization import _chunk_boundaries, apply_histogram_matching, apply_zprofile_smoothing
+from linumpy.intensity.slab_harmonize import harmonize_slab_intensity
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr_array
 from linumpy.mosaic.stacking import read_slab_bounds
 
@@ -120,6 +122,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Drop tissue-mask components smaller than this fraction of the largest\n"
         "one (debris and bubbles in the agarose). 0 = keep all. [%(default)s]",
     )
+    p.add_argument(
+        "--mask_opening_px",
+        type=float,
+        default=0.0,
+        help="Cut away mask parts that hang on the tissue by a bridge thinner than twice\n"
+        "this many voxels: loose tissue, membranes, the rim of a single slab. What is cut\n"
+        "off and smaller than --mask_min_component_fraction of the largest body is\n"
+        "dropped. 0 = off. [%(default)s]",
+    )
 
     # Histogram-matching pre-pass (corrects inter-section intensity drift)
     p.add_argument(
@@ -168,6 +179,39 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Map every Z-plane's tissue mean to the global median mean.\n"
         "Removes serial-section sawtooth without per-Z histogram matching.\n"
         "Overrides --zprofile_smooth_sigma. [%(default)s]",
+    )
+    p.add_argument(
+        "--slab_gain",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Bring every slab to a common gain. The gain step between two neighbouring\n"
+        "slabs is the median difference of their log intensity over the tissue they\n"
+        "share in XY, so a bright structure that enters the stack does not darken the\n"
+        "rest. A loose pull towards the brain-wide level stops the steps from drifting.\n"
+        "[%(default)s]",
+    )
+    p.add_argument(
+        "--band_sigma_px",
+        type=float,
+        default=0.0,
+        help="Remove the intensity that repeats with the slab period (the band at every\n"
+        "joint) with a gain that is smooth in XY over this many pixels. Detail inside a\n"
+        "plane is unchanged. 0 disables. [%(default)s]",
+    )
+    p.add_argument(
+        "--target_tissue_level",
+        type=float,
+        default=0.0,
+        help="Scale the volume so that its brain-wide tissue level (median of the coarse\n"
+        "log intensity) equals this value. Gives different brains one intensity scale.\n"
+        "0 disables. [%(default)s]",
+    )
+    p.add_argument(
+        "--slab_blend_planes",
+        type=int,
+        default=0,
+        help="Planes at the top of each slab that the stack cross-fades with the slab above.\n"
+        "Used by --slab_gain. [%(default)s]",
     )
     p.add_argument(
         "--z_smooth_sigma",
@@ -349,6 +393,10 @@ def main() -> None:
     )
     if args.mask_min_component_fraction > 0:
         mask = drop_small_mask_components(_to_host(mask), args.mask_min_component_fraction)
+    if args.mask_opening_px > 0:
+        n_before = int(mask.sum())
+        mask = drop_thin_mask_parts(_to_host(mask), args.mask_opening_px, args.mask_min_component_fraction)
+        logger.info("Cut %d mask voxels attached by less than %g px", n_before - int(mask.sum()), 2 * args.mask_opening_px)
     logger.info("Tissue mask: %d/%d voxels", int(mask.sum()), mask.size)
 
     run_n4 = args.mode != "mask_only"
@@ -385,6 +433,34 @@ def main() -> None:
             sigma=args.zprofile_smooth_sigma,
             equalize=args.zprofile_equalize,
         ).astype(np.float32)
+
+    # Slab gains, depth bands and the common intensity scale. All three are
+    # gains that are smooth in XY, so the image inside a plane keeps its detail.
+    if args.slab_gain or args.band_sigma_px > 0 or args.target_tissue_level > 0:
+        mask = _to_host(mask)
+        bounds = slab_bounds if slab_bounds is not None else _chunk_boundaries(vol.shape[0], args.n_serial_slices)
+        info = harmonize_slab_intensity(
+            vol,
+            mask,
+            [(int(a), int(b)) for a, b in bounds],
+            slab_gain=args.slab_gain,
+            band_sigma_px=args.band_sigma_px,
+            target_level=args.target_tissue_level,
+            blend_planes=args.slab_blend_planes,
+        )
+        if "slab_gains" in info:
+            factors = np.exp(info["slab_gains"])
+            steps = info["steps"][np.isfinite(info["steps"])]
+            logger.info(
+                "Slab gains: factor %.2f to %.2f over %d slabs, step sd %.3f (log)",
+                float(factors.min()),
+                float(factors.max()),
+                len(factors),
+                float(steps.std()) if steps.size else 0.0,
+            )
+        if "band_rms" in info:
+            logger.info("Depth bands: period %d planes, rms %.3f (log)", info["period"], info["band_rms"])
+        logger.info("Tissue level %.4f, scale applied %.3f", info["level"], info["scale"])
 
     # Depth-only blur. A scalar per plane cannot remove a sheet that is a
     # minority of the plane; this only mixes neighboring depths.

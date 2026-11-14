@@ -40,6 +40,11 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | N4 punching black stripes in overlap / orthogonal views | `bias_zero_mask_mode='silhouette'` (keep `bias_zero_outside_mask=true`) |
 | Rectangular holes or a stepped outline at the brain edge in orthogonal views | `bias_mask_threshold_scale=0.3`, `bias_zero_mask_mode='section_outline'` |
 | Specks or bubbles left around the brain | `bias_mask_min_component_fraction=0.001` |
+| Loose tissue or a slab rim attached to the brain | `bias_mask_opening_px=10` |
+| Bands at the slab joints in the side views | `bias_band_sigma_px=240` |
+| Some slabs brighter or darker than their neighbours | `bias_slab_gain=true`, `bias_zprofile_equalize=false` |
+| Brains on different intensity scales | the same `bias_target_tissue_level` for all |
+| Bright hard-edged patches in white matter deep in a slab | `compensate_attenuation_lateral_footprint=true` with `compensate_attenuation_lateral_sigma>0` |
 | Bias correction over-flattening tissue | Lower `bias_strength` (1.0 → 0.7) |
 | Atlas overlay rotated 90° / flipped | `ras_orientation_preview=true`, then tune `ras_input_orientation` and `ras_initial_rotation` |
 

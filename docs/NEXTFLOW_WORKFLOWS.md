@@ -405,6 +405,10 @@ Corrects slow intensity drift and bias field across serial sections after stacki
 | `bias_zero_mask_dilate_px` | `0` | Extra XY dilation (pixels) on silhouette modes, or margin outside the outline in `'section_outline'`. Ignored in `'section'` mode. |
 | `bias_mask_threshold_scale` | `1.0` | Factor on each section's Otsu threshold for the tissue mask. Once the stack has zeroed the agarose, Otsu falls between dim and bright tissue and the mask drops the dim rim in sections with bright white matter; `0.3` moves it into the gap between background and tissue. |
 | `bias_mask_min_component_fraction` | `0` | Drop tissue-mask components smaller than this fraction of the largest (debris, bubbles). `0.001` is safe for a whole brain. |
+| `bias_mask_opening_px` | `0` | Cut mask parts that hang on the tissue by a bridge thinner than twice this many voxels (loose tissue, membranes, the rim of one slab). Pieces cut off and smaller than `bias_mask_min_component_fraction` of the largest body are dropped |
+| `bias_slab_gain` | `false` | Bring every slab to a common gain. The step between neighbours is the median log-intensity difference over the tissue they share in XY, so a bright structure entering the stack does not darken the rest |
+| `bias_band_sigma_px` | `0` | Remove the intensity band at every slab joint with a gain that is smooth in XY over this many voxels. Detail inside a plane is unchanged |
+| `bias_target_tissue_level` | `0` | Scale the volume so its brain-wide tissue level equals this value. Use the same value for every brain to put them on one intensity scale |
 
 #### Atlas Registration (RAS Alignment)
 

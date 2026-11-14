@@ -531,6 +531,82 @@ def drop_small_mask_components(mask: np.ndarray, min_fraction: float, coarsen: i
     return mask
 
 
+def drop_thin_mask_parts(mask: np.ndarray, opening_px: float, min_fraction: float = 0.0, coarsen: int = 4) -> np.ndarray:
+    """Cut away what hangs on the tissue by a thin bridge, in place.
+
+    Loose tissue, membranes and the rim of a single slab pass the intensity
+    threshold and touch the brain, so a component filter keeps them. The mask
+    is eroded by *opening_px* on a grid reduced by *coarsen*; what survives is
+    the body. Bodies smaller than *min_fraction* of the largest are dropped.
+    The rest is grown back by the erosion distance plus one cell and limited
+    to the mask, so the surface of the body keeps its shape and anything
+    further out is cleared.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean mask ``(Z, Y, X)``; modified in place.
+    opening_px : float
+        Erosion distance in voxels. Parts thinner than twice this are cut.
+        ``0`` does nothing.
+    min_fraction : float
+        Bodies smaller than this fraction of the largest one are cleared.
+    coarsen : int
+        Reduction factor of the working grid.
+
+    Returns
+    -------
+    np.ndarray
+        *mask*, for chaining.
+    """
+    from scipy.ndimage import binary_dilation, binary_erosion, generate_binary_structure, label
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3-D mask (Z, Y, X); got shape {mask.shape}")
+    if opening_px < 0:
+        raise ValueError(f"opening_px must be >= 0; got {opening_px}")
+    if not 0 <= min_fraction < 1:
+        raise ValueError(f"min_fraction must be in [0, 1); got {min_fraction}")
+    if coarsen < 1:
+        raise ValueError(f"coarsen must be >= 1; got {coarsen}")
+    radius = round(opening_px / coarsen)
+    if radius < 1:
+        return mask
+
+    nz, ny, nx = mask.shape
+    z_starts = np.arange(0, nz, coarsen)
+    y_starts = np.arange(0, ny, coarsen)
+    x_starts = np.arange(0, nx, coarsen)
+    counts = np.zeros((len(z_starts), len(y_starts), len(x_starts)), dtype=np.int32)
+    for i, z in enumerate(z_starts):
+        plane = mask[z : z + coarsen].sum(axis=0, dtype=np.int32)
+        counts[i] = np.add.reduceat(np.add.reduceat(plane, y_starts, axis=0), x_starts, axis=1)
+    cell_voxels = (
+        np.minimum(coarsen, nz - z_starts)[:, None, None]
+        * np.minimum(coarsen, ny - y_starts)[None, :, None]
+        * np.minimum(coarsen, nx - x_starts)[None, None, :]
+    )
+    touched = counts > 0
+    solid = counts * 2 >= cell_voxels
+
+    faces = generate_binary_structure(3, 1)
+    core = binary_erosion(solid, structure=faces, iterations=radius)
+    labels, n_labels = label(core, structure=np.ones((3, 3, 3), dtype=bool))
+    if n_labels == 0:
+        return mask
+    sizes = np.bincount(labels.ravel(), minlength=n_labels + 1)
+    sizes[0] = 0
+    keep = sizes >= min_fraction * sizes.max()
+    keep[0] = False
+    # Grow back with the full neighbourhood: a face-connected ball would shave
+    # the convex edges the erosion left intact.
+    body = binary_dilation(keep[labels], structure=np.ones((3, 3, 3), dtype=bool), iterations=radius + 1) & touched
+    for i, z in enumerate(z_starts):
+        fine = np.repeat(np.repeat(body[i], coarsen, axis=0), coarsen, axis=1)[:ny, :nx]
+        mask[z : z + coarsen] &= fine
+    return mask
+
+
 # ---------------------------------------------------------------------------
 # N4 core
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from linumpy.intensity.bias_field import (
     apply_bias_field,
     compute_tissue_mask,
     drop_small_mask_components,
+    drop_thin_mask_parts,
     n4_correct,
     n4_correct_per_section,
     tissue_mask_between_cut_faces,
@@ -441,3 +442,45 @@ def test_drop_small_mask_components_removes_debris_only():
     assert not out[4:6, 36:38, 36:38].any()
     assert out[8, 31, 20]
     assert np.array_equal(drop_small_mask_components(mask.copy(), 0.0), mask)
+
+
+def _body_with_attachments():
+    mask = np.zeros((48, 96, 96), dtype=bool)
+    mask[8:40, 16:64, 16:64] = True  # the brain
+    mask[20:24, 64:84, 36:40] = True  # thin strand hanging on its side
+    mask[18:30, 84:94, 30:44] = True  # blob at the end of the strand
+    mask[22:26, 4:8, 4:8] = True  # loose speck
+    return mask
+
+
+def test_drop_thin_mask_parts_cuts_a_strand_and_what_hangs_on_it():
+    mask = _body_with_attachments()
+    out = drop_thin_mask_parts(mask.copy(), opening_px=8, min_fraction=0.05)
+    assert out[24, 40, 40]
+    # A stub of a few cells stays at the foot of the strand.
+    assert not out[22, 78:84, 37].any()
+    assert not out[18:30, 86:94, 30:44].any()
+    assert not out[22:26, 4:8, 4:8].any()
+    # The body keeps its surface: nothing is shaved off its faces.
+    assert out[8:40, 16:64, 16:64].all()
+
+
+def test_drop_thin_mask_parts_keeps_a_second_large_body():
+    mask = _body_with_attachments()
+    mask[8:40, 70:94, 60:92] = True  # second solid piece, joined by nothing
+    out = drop_thin_mask_parts(mask.copy(), opening_px=8, min_fraction=0.05)
+    assert out[24, 80, 76]
+    assert not drop_thin_mask_parts(mask.copy(), opening_px=8, min_fraction=0.9)[24, 80, 76]
+
+
+def test_drop_thin_mask_parts_zero_distance_is_a_no_op():
+    mask = _body_with_attachments()
+    assert np.array_equal(drop_thin_mask_parts(mask.copy(), opening_px=0), mask)
+
+
+def test_drop_thin_mask_parts_rejects_bad_arguments():
+    mask = np.zeros((4, 8, 8), dtype=bool)
+    with pytest.raises(ValueError, match="opening_px"):
+        drop_thin_mask_parts(mask, opening_px=-1)
+    with pytest.raises(ValueError, match="min_fraction"):
+        drop_thin_mask_parts(mask, opening_px=4, min_fraction=1.0)
