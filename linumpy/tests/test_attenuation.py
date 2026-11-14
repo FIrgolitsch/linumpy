@@ -209,3 +209,19 @@ def test_smooth_optical_depth_xy_softens_walls_inside_mask():
     # far from the wall the depth profile is unchanged
     np.testing.assert_allclose(out[35, 20, :], np.arange(5), atol=1e-4)
     assert smooth_optical_depth_xy(od, mask, sigma=0) is od
+
+
+def test_footprint_mask_smooths_the_dim_deep_voxels_too():
+    from linumpy.intensity.attenuation import smooth_optical_depth_xy, tissue_footprint_mask
+
+    od = np.zeros((40, 40, 6), dtype=np.float32)
+    od[18:22, 18:22, 3:] = 4.0  # A-lines whose deep voxels fell below the tissue threshold
+    mask = np.ones((40, 40, 6), dtype=bool)
+    mask[18:22, 18:22, 3:] = False
+    kept = smooth_optical_depth_xy(od, mask, sigma=3.0)
+    assert kept[20, 20, 4] == 4.0  # outside the 3D mask: left as an island
+    footprint = tissue_footprint_mask(mask)
+    assert footprint.all()
+    smoothed = smooth_optical_depth_xy(od, footprint, sigma=3.0)
+    assert smoothed[20, 20, 4] < 2.0
+    assert smoothed[20, 26, 4] > 0.0

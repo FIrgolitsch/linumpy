@@ -404,6 +404,19 @@ def get_attenuation_li2020(
     )
 
 
+def tissue_footprint_mask(mask: np.ndarray) -> np.ndarray:
+    """Extend a tissue mask ``(X, Y, Z)`` down every A-line that holds tissue.
+
+    A 3D tissue mask drops the deep, dim voxels of strongly attenuating
+    tissue. :func:`smooth_optical_depth_xy` leaves voxels outside its mask
+    untouched, so with the 3D mask those voxels keep an unsmoothed optical
+    depth next to smoothed neighbours: gain patches with hard edges. The
+    footprint covers them.
+    """
+    mask = mask.astype(bool)
+    return np.broadcast_to(mask.any(axis=2, keepdims=True), mask.shape)
+
+
 def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
     """Smooth a cumulative optical depth across A-lines, inside the tissue mask.
 

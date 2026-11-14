@@ -48,6 +48,7 @@ from linumpy.intensity.attenuation import (
     get_attenuation_smith2015,
     get_attenuation_vermeer2013,
     smooth_optical_depth_xy,
+    tissue_footprint_mask,
 )
 from linumpy.intensity.bias_field import compute_tissue_mask
 from linumpy.io.zarr import read_omezarr, save_omezarr
@@ -129,6 +130,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "Softens the hard-walled gain patches that per-A-line truncation leaves,\n"
         "which stack into slab-tall blocks. 0 disables. [%(default)s]",
     )
+    p.add_argument(
+        "--lateral_footprint",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Smooth the optical depth over the whole XY footprint of the tissue instead of\n"
+        "the 3D tissue mask. Deep voxels of strongly attenuating tissue are dim and fall\n"
+        "outside the 3D mask; they then keep their unsmoothed value and show up as bright\n"
+        "patches with hard edges. Only used with --lateral_sigma. [%(default)s]",
+    )
     p.add_argument("--n_levels", type=int, default=0, help="Pyramid levels in the output. [%(default)s]")
     return p
 
@@ -198,7 +208,10 @@ def main() -> None:
 
     # Cumulative round-trip optical depth along the Aline (axis=2 in XYZ).
     optical_depth = cumulative_trapezoid(attn_per_voxel, axis=2, initial=0)
-    optical_depth = smooth_optical_depth_xy(optical_depth, mask_xyz, args.lateral_sigma)
+    smooth_mask = mask_xyz
+    if args.lateral_footprint:
+        smooth_mask = tissue_footprint_mask(mask_xyz)
+    optical_depth = smooth_optical_depth_xy(optical_depth, smooth_mask, args.lateral_sigma)
     bias_xyz = np.exp(-2.0 * args.strength * optical_depth).astype(np.float32)
     np.maximum(bias_xyz, args.min_bias, out=bias_xyz)
 
