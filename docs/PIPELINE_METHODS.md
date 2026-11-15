@@ -176,6 +176,12 @@ plane; otherwise one global field is applied to all planes. The dark-field is
 optionally estimated externally as a per-pixel low percentile of the pooled
 tile stack (default `darkfield_percentile=10`).
 
+A per-plane flat-field already makes every plane uniform as acquired. Rolling
+the A-lines afterwards (1b) moves each one to a plane with a different mean
+level and leaves a ramp across every tile. With `fix_illum_per_z_fit=true`, set
+`fix_curvature_before_illum=true` so the roll runs first and each plane is
+fitted in the flattened geometry.
+
 ### Stage 2 — XY tile stitching
 
 #### 2a. Global transform estimation (optional, `stitch_global_transform`)

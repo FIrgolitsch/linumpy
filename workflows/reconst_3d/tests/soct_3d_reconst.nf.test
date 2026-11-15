@@ -93,6 +93,112 @@ nextflow_pipeline {
         }
     }
 
+    test("Should roll the focal curvature after the illumination fit by default in stub mode") {
+        options "-stub"
+
+        when {
+            params {
+                input = "${projectDir}/workflows/reconst_3d/tests/data"
+                output = "${outputDir}"
+                use_gpu = false
+                resolution = -1
+                fix_curvature_enabled = true
+                fix_curvature_before_illum = false
+                fix_illum_enabled = true
+                fix_illum_backend = 'linum-basic'
+                stitch_global_transform = false
+                detect_rehoming = false
+                auto_assess_quality = false
+                analyze_shifts = false
+                stitch_preview = false
+                common_space_preview = false
+                interpolate_missing_slices = false
+                export_manual_align = false
+                refine_manual_transforms = false
+                auto_exclude_enabled = false
+                correct_bias_field = false
+                align_to_ras_enabled = false
+                apply_pairwise_transforms = true
+                processes = 2
+            }
+        }
+
+        then {
+            assert workflow.success
+            def tasks = workflow.trace.tasks()
+            // Names of the inputs linked into the task that made an output matching the pattern.
+            def staged = { pattern ->
+                def names = []
+                new File("${workDir}").eachFileRecurse(groovy.io.FileType.DIRECTORIES) { d ->
+                    def run = new File(d, '.command.run')
+                    if (run.exists() && d.list().any { it ==~ pattern }) {
+                        run.readLines().findAll { it.trim().startsWith('ln -s') }.each { names << it.trim().split(' ')[-1] }
+                    }
+                }
+                names
+            }
+            assert tasks.count { it.name =~ /fix_focal_curvature/ } == 2
+            assert tasks.count { it.name =~ /fix_illumination_basic/ } == 2
+            // The staged input of each step shows which one ran first.
+            assert staged(/mosaic_grid_z\d+_focal_fix\.ome\.zarr/).any { it ==~ /mosaic_grid_z\d+_illum_fix\.ome\.zarr/ }
+            assert staged(/mosaic_grid_z\d+_illum_fix\.ome\.zarr/).any { it ==~ /mosaic_grid_z\d+\.ome\.zarr/ }
+            assert tasks.any { it.name =~ /stitch_3d_with_refinement/ }
+        }
+    }
+
+    test("Should roll the focal curvature before the illumination fit when asked in stub mode") {
+        options "-stub"
+
+        when {
+            params {
+                input = "${projectDir}/workflows/reconst_3d/tests/data"
+                output = "${outputDir}"
+                use_gpu = false
+                resolution = -1
+                fix_curvature_enabled = true
+                fix_curvature_before_illum = true
+                fix_illum_enabled = true
+                fix_illum_backend = 'linum-basic'
+                stitch_global_transform = false
+                detect_rehoming = false
+                auto_assess_quality = false
+                analyze_shifts = false
+                stitch_preview = false
+                common_space_preview = false
+                interpolate_missing_slices = false
+                export_manual_align = false
+                refine_manual_transforms = false
+                auto_exclude_enabled = false
+                correct_bias_field = false
+                align_to_ras_enabled = false
+                apply_pairwise_transforms = true
+                processes = 2
+            }
+        }
+
+        then {
+            assert workflow.success
+            def tasks = workflow.trace.tasks()
+            // Names of the inputs linked into the task that made an output matching the pattern.
+            def staged = { pattern ->
+                def names = []
+                new File("${workDir}").eachFileRecurse(groovy.io.FileType.DIRECTORIES) { d ->
+                    def run = new File(d, '.command.run')
+                    if (run.exists() && d.list().any { it ==~ pattern }) {
+                        run.readLines().findAll { it.trim().startsWith('ln -s') }.each { names << it.trim().split(' ')[-1] }
+                    }
+                }
+                names
+            }
+            assert tasks.count { it.name =~ /fix_focal_curvature/ } == 2
+            assert tasks.count { it.name =~ /fix_illumination_basic/ } == 2
+            // The staged input of each step shows which one ran first.
+            assert staged(/mosaic_grid_z\d+_focal_fix\.ome\.zarr/).any { it ==~ /mosaic_grid_z\d+\.ome\.zarr/ }
+            assert staged(/mosaic_grid_z\d+_illum_fix\.ome\.zarr/).any { it ==~ /mosaic_grid_z\d+_focal_fix\.ome\.zarr/ }
+            assert tasks.any { it.name =~ /stitch_3d_with_refinement/ }
+        }
+    }
+
     test("Should run illumination correction with basicpy backend in stub mode") {
         options "-stub"
 

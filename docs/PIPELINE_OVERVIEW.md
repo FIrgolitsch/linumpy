@@ -182,6 +182,7 @@ fix_focal_curvature
 ```
 - Detects and compensates for focal plane curvature
 - Runs after illumination correction so BaSiC still sees the tile vignette
+- With `fix_curvature_before_illum = true` it runs before illumination correction (use with a per-plane flat-field, `fix_illum_per_z_fit`)
 - Enabled by `fix_curvature_enabled = true`
 
 #### 4. 3D Stitching
@@ -361,6 +362,7 @@ The final 3D volume is stored as an OME-Zarr with multiple resolution levels opt
 | `resolution` | `10` | Target resolution (µm/pixel) |
 | `clip_percentile_upper` | `99.9` | Upper percentile for clipping |
 | `fix_curvature_enabled` | `false` | Enable focal curvature fix |
+| `fix_curvature_before_illum` | `false` | Run the focal curvature fix before the illumination fix |
 | `fix_illum_enabled` | `true` | Enable illumination fix |
 | `crop_interface_out_depth` | `600` | Crop depth in microns |
 | `use_motor_positions_for_stitching` | `true` | Use motor encoder positions for tile layout |

@@ -111,7 +111,7 @@ workflow {
     ------------------------------------------------------------
      Resolution        : ${resLabel}
      Illumination      : ${illumLabel}
-     Focal curvature   : ${params.fix_curvature_enabled ? 'enabled' : 'disabled'}
+     Focal curvature   : ${params.fix_curvature_enabled ? (params.fix_curvature_before_illum ? 'enabled, before illumination' : 'enabled') : 'disabled'}
      Global transform  : ${params.stitch_global_transform ? 'enabled' : 'disabled'}
      Rehoming detect   : ${rehomLabel}
      Attenuation comp. : ${params.compensate_attenuation_enabled ? 'enabled' : 'disabled'}
@@ -173,26 +173,35 @@ workflow {
     // Stage 1: Preprocessing
     resampled = params.resolution > 0 ? resample_mosaic_grid(inputSlices) : inputSlices
 
-    // BaSiC illumination correction runs on the resample_mosaic_grid output
-    // (BEFORE fix_focal_curvature) so it sees the real per-camera-tile vignette.
-    // Running it post-focal-curvature collapses the flat-field to near-identity
-    // because focal-curvature correction removes the depth-dependent illumination
-    // component BaSiC is meant to model (validated sub-22/18/21, 2026-07-20).
+    // Order of the focal-curvature roll and the BaSiC illumination correction.
+    //
+    // Default (fix_curvature_before_illum = false): BaSiC first, on the
+    // resample_mosaic_grid output, then the Z-roll. With one flat-field for all
+    // depths this is the right order: the roll removes the depth-dependent
+    // component the flat-field models, so a fit after the roll collapses to
+    // near-identity.
+    //
+    // With a flat-field per depth plane (fix_illum_per_z_fit) the default order
+    // corrects the curvature twice. Each plane is flattened as acquired, so the
+    // planes already have a uniform level; the roll then moves every A-line to a
+    // plane with a different level and leaves a ramp across each tile. Set
+    // fix_curvature_before_illum = true to roll first and fit each plane after.
+    //
     // Tile geometry is the zarr chunk size (native camera tile downsampled);
     // tile_fov_mm is intentionally NOT passed here (it misaligns BaSiC tiles).
-    illum_corrected = resampled
+    roll_first = params.fix_curvature_enabled && params.fix_curvature_before_illum
+    illum_input = roll_first ? fix_focal_curvature(resampled) : resampled
+    illum_corrected = illum_input
     if (params.fix_illum_enabled) {
         if (params.fix_illum_backend == 'linum-basic') {
-            fix_illumination_basic(resampled)
+            fix_illumination_basic(illum_input)
             illum_corrected = fix_illumination_basic.out.corrected
         } else {
-            illum_corrected = fix_illumination(resampled)
+            illum_corrected = fix_illumination(illum_input)
         }
     }
 
-    // Focal-curvature correction (Z-roll + internal BaSiC focal-plane fit) runs
-    // AFTER illumination correction, on the illumination-corrected grid.
-    illum_fixed = params.fix_curvature_enabled ? fix_focal_curvature(illum_corrected) : illum_corrected
+    illum_fixed = (params.fix_curvature_enabled && !roll_first) ? fix_focal_curvature(illum_corrected) : illum_corrected
 
     // Stage 2: XY Stitching (image-registration-based blend refinement)
     if (params.stitch_global_transform) {
