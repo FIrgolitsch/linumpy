@@ -240,6 +240,15 @@ def test_rigid_yaw_exceeds_detects_plane_swap():
     assert not allen._rigid_yaw_exceeds([0, 0, 0, 0, 0, 0], [0, 0, np.deg2rad(12), 1, 0, 0])
 
 
+def test_rigid_yaw_exceeds_takes_the_limit_as_a_parameter():
+    start = [0, 0, np.deg2rad(45), 0, 0, 0]
+    compound = [np.deg2rad(41.5), np.deg2rad(56.2), np.deg2rad(15.4), 0, 0, 0]
+    assert allen._rigid_yaw_exceeds(start, compound)
+    assert allen._rigid_yaw_exceeds(start, compound, 50.0)
+    assert not allen._rigid_yaw_exceeds(start, compound, 90.0)
+    assert not allen._rigid_yaw_exceeds(start, compound, float("inf"))
+
+
 def _make_synthetic_brain(shape=(24, 24, 24), spacing=(0.2, 0.2, 0.2)):
     """Small asymmetric synthetic brain with a unique intensity pattern per axis."""
     z, y, x = np.indices(shape, dtype=np.float32)
@@ -286,6 +295,45 @@ class TestRegisterRigidToAllen:
         assert np.max(np.abs(rotation)) < 0.1, f"Rotation too large: {rotation}"
         assert np.max(np.abs(translation)) < 1.0, f"Translation too large: {translation}"
         assert stop  # non-empty stop-condition string
+
+    def test_rotation_limit_defaults_to_40_and_follows_the_argument(self, monkeypatch):
+        """The guard receives the limit the caller gave, and 40 when none is given."""
+        seen = []
+
+        def record(initial, final, max_delta_deg=allen.DEFAULT_MAX_RIGID_ROTATION_DEG):
+            seen.append(max_delta_deg)
+            return False
+
+        monkeypatch.setattr(allen, "_rigid_yaw_exceeds", record)
+        moving = _make_synthetic_brain((10, 10, 10), spacing=(0.2, 0.2, 0.2))
+        spacing = (0.2, 0.2, 0.2)
+        allen.register_3d_rigid_to_allen(moving, spacing, allen_resolution=100, metric="MSE", max_iterations=1)
+        allen.register_3d_rigid_to_allen(
+            moving, spacing, allen_resolution=100, metric="MSE", max_iterations=1, max_rotation_deg=90.0
+        )
+
+        assert seen == [40.0, 90.0]
+
+    def test_a_rejected_result_keeps_the_initial_pose_and_says_so(self, monkeypatch, capsys):
+        """A result past the limit is replaced by the starting pose, even without ``verbose``."""
+        monkeypatch.setattr(allen, "_rigid_yaw_exceeds", lambda *_args, **_kwargs: True)
+        moving = _make_synthetic_brain((10, 10, 10), spacing=(0.2, 0.2, 0.2))
+
+        transform, _stop, _err = allen.register_3d_rigid_to_allen(
+            moving_image=moving,
+            moving_spacing=(0.2, 0.2, 0.2),
+            allen_resolution=100,
+            metric="MSE",
+            max_iterations=2,
+            initial_rotation_deg=(0.0, 0.0, 45.0),
+            max_rotation_deg=25.0,
+        )
+
+        np.testing.assert_allclose(transform.GetParameters()[:3], [0.0, 0.0, np.deg2rad(45.0)], atol=1e-12)
+        output = capsys.readouterr().out
+        assert "Rejecting registration" in output
+        assert "more than 25°" in output
+        assert "--max-rotation-deg" in output
 
     def test_downsamples_allen_when_moving_is_coarser(self, capsys):
         """If moving resolution > allen resolution, allen must be downsampled."""

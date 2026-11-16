@@ -87,4 +87,5 @@ params {
     allen_resolution = 25
     ras_input_orientation = ''
     ras_initial_rotation = ''
+    ras_max_rotation_deg = ''
 }

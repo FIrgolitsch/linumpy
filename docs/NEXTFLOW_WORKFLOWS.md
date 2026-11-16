@@ -424,6 +424,7 @@ Register the final reconstructed volume to the Allen Mouse Brain Atlas (CCF) to 
 | `allen_registration_level` | `2` | Pyramid level of input zarr for registration (0 = full; level 2 ≈ 50 µm, fast) |
 | `ras_input_orientation` | `''` | 3-letter orientation code of the INPUT brain volume (see table below) |
 | `ras_initial_rotation` | `''` | Initial rotation hint `'Rx Ry Rz'` in degrees (leave empty for automatic MOMENTS initialization) |
+| `ras_max_rotation_deg` | `''` | Largest rotation (degrees) the registration may add to the initial pose; a larger result is rejected and the pose is kept. Empty keeps the default of 40. Raise it (e.g. `90`) for compound-angle cuts |
 | `allen_preview` | `true` | Generate a 3-panel alignment comparison image |
 
 **Output:** `align_to_ras/{subject}_ras.ome.zarr` with all pyramid resolutions.
@@ -478,6 +479,8 @@ For cuts between two cardinal planes, use the closest cardinal code plus `ras_in
 | Sagitto-axial 45° | Sagittal ↔ Axial | `RIA` | `'0 ±45 0'` | Around RAS Anterior-Posterior (Ry) |
 
 ¹ Sign (+ or −) depends on the specific oblique direction. Start with +45 and inspect the preview; negate if the alignment is worse.
+
+> **Compound cuts and the rotation limit.** The registration discards a result in which any Euler angle moved more than 40° from the initial pose (`ras_max_rotation_deg`) and keeps the initial pose, which guards against a runaway turn that swaps coronal and sagittal planes. A brain cut at a compound angle can legitimately need more, for example 41°, 56° and 15° about the three axes. The pipeline then writes the initial pose as the result, the volume stays tilted, and `.command.out` shows "Rejecting registration". Set `ras_max_rotation_deg = 90` for that subject and rerun `align_to_ras`.
 
 **Rotation axis guide** (applied in the approximately-RAS frame after orientation correction):
 - `Rx` — tilts the A-P axis toward/away from S-I (e.g., pitch)

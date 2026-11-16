@@ -1468,7 +1468,12 @@ process align_to_ras {
 
     script:
     def orientation_arg = params.ras_input_orientation ? "--input-orientation ${params.ras_input_orientation}" : ""
+    // The rotation limit is appended to this argument so the script of a subject that does not set
+    // it stays unchanged, and `-resume` keeps its cached alignment.
     def rotation_arg = params.ras_initial_rotation ? "--initial-rotation ${params.ras_initial_rotation}" : ""
+    if (params.ras_max_rotation_deg) {
+        rotation_arg += " --max-rotation-deg ${params.ras_max_rotation_deg}"
+    }
     def preview_arg = params.allen_preview ? "--preview ${subject_name}_ras_preview.png" : ""
     def orientation_preview_arg = params.ras_orientation_preview ? "--orientation-preview ${subject_name}_ras_orientation_preview.png" : ""
     def ras_pyramid_opts = Helpers.pyramidArgs(params, '--n-levels')

@@ -116,6 +116,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | `allen_registration_level` | `2` | Higher = faster, coarser. |
 | `ras_input_orientation` | `''` | 3-letter code (e.g. `'PIR'`). |
 | `ras_initial_rotation` | `''` | `"Rx Ry Rz"` deg hint. |
+| `ras_max_rotation_deg` | `''` | Rotation limit (deg) before a result is rejected; default 40, raise for compound cuts. |
 | `ras_orientation_preview` | `false` | Turn on while tuning orientation. |
 
 ---

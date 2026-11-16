@@ -174,6 +174,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar=("RX", "RY", "RZ"),
         help="Initial rotation angles in degrees (Rx, Ry, Rz).\nUse to provide initial orientation hint for registration.",
     )
+    p.add_argument(
+        "--max-rotation-deg",
+        type=float,
+        default=40.0,
+        metavar="DEG",
+        help="Largest change of any rotation angle the registration may make from the initial pose, in degrees.\n"
+        "A larger result is rejected and the initial pose is kept. Raise it for brains cut at a compound\n"
+        "angle, which need large rotations about more than one axis; 'inf' turns the guard off. Default: 40.",
+    )
     p.add_argument("--preview-only", action="store_true", help="Only generate preview of input volume (no registration)")
     p.add_argument(
         "--orientation-preview",
@@ -918,6 +927,7 @@ def main() -> None:
         verbose=args.verbose,
         progress_callback=progress_callback,
         initial_rotation_deg=tuple(args.initial_rotation),
+        max_rotation_deg=args.max_rotation_deg,
     )
     # Ensure progress bar reaches end of registration steps
     pbar.n = registration_start_step + registration_steps

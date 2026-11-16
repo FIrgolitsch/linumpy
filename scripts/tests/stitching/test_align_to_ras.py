@@ -36,6 +36,22 @@ def test_help(script_runner):
 
 
 # ---------------------------------------------------------------------------
+# --max-rotation-deg
+# ---------------------------------------------------------------------------
+
+
+class TestMaxRotationOption:
+    def test_default_is_40_degrees(self, align_module):
+        args = align_module._build_arg_parser().parse_args(["in.ome.zarr", "out.ome.zarr"])
+        assert args.max_rotation_deg == 40.0
+
+    def test_a_larger_limit_and_inf_are_accepted(self, align_module):
+        parser = align_module._build_arg_parser()
+        assert parser.parse_args(["in.ome.zarr", "out.ome.zarr", "--max-rotation-deg", "90"]).max_rotation_deg == 90.0
+        assert parser.parse_args(["in.ome.zarr", "out.ome.zarr", "--max-rotation-deg", "inf"]).max_rotation_deg == float("inf")
+
+
+# ---------------------------------------------------------------------------
 # sitk_transform_to_affine_matrix
 # ---------------------------------------------------------------------------
 

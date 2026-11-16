@@ -145,10 +145,13 @@ def download_template_ras_aligned(resolution: int, cache: bool = True, cache_dir
     return vol
 
 
+DEFAULT_MAX_RIGID_ROTATION_DEG = 40.0
+
+
 def _rigid_yaw_exceeds(
     initial_parameters: Sequence,
     final_parameters: Sequence,
-    max_delta_deg: float = 40.0,
+    max_delta_deg: float = DEFAULT_MAX_RIGID_ROTATION_DEG,
 ) -> bool:
     """Return whether any Euler angle left the start by more than ``max_delta_deg``."""
     initial = np.degrees(np.array(initial_parameters[:3], dtype=float))
@@ -165,6 +168,7 @@ def register_3d_rigid_to_allen(
     verbose: bool = False,
     progress_callback: Callable[[Any], None] | None = None,
     initial_rotation_deg: tuple = (0.0, 0.0, 0.0),
+    max_rotation_deg: float = DEFAULT_MAX_RIGID_ROTATION_DEG,
 ) -> tuple:
     """Perform 3D rigid registration of a brain volume to the Allen atlas.
 
@@ -188,6 +192,12 @@ def register_3d_rigid_to_allen(
         Function signature: callback(registration_method)
     initial_rotation_deg : tuple, optional
         Initial rotation in degrees (rx, ry, rz) applied before optimization.
+    max_rotation_deg : float, optional
+        Largest change of any Euler angle, in degrees, that the optimiser may make from the
+        initial pose. A larger result is discarded and the initial pose is kept, which guards
+        against a runaway turn that swaps the coronal and sagittal planes. A brain cut at a
+        compound angle needs large rotations about more than one axis, so raise it for those
+        (``float("inf")`` turns the guard off). Default 40.
 
     Returns
     -------
@@ -477,12 +487,13 @@ def register_3d_rigid_to_allen(
     # Execute registration
     final_transform = registration_method.Execute(fixed_image, moving_image_sitk)
 
-    if _rigid_yaw_exceeds(initial_parameters, list(final_transform.GetParameters())):
-        if verbose:
-            print(
-                "Rejecting registration: rotation left the initial orientation "
-                "by more than 40°. Keeping the orientation-only pose."
-            )
+    if _rigid_yaw_exceeds(initial_parameters, list(final_transform.GetParameters()), max_rotation_deg):
+        # Always say so: the transform written next is the starting pose, not a result.
+        print(
+            "Rejecting registration: rotation left the initial orientation "
+            f"by more than {max_rotation_deg:g}°. Keeping the orientation-only pose. "
+            "Raise --max-rotation-deg if the brain was cut at a compound angle."
+        )
         final_transform = sitk.Euler3DTransform()
         final_transform.SetFixedParameters(initial_fixed_parameters)
         final_transform.SetParameters(initial_parameters)

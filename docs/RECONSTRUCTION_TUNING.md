@@ -336,6 +336,7 @@ Registers the stacked volume to the Allen Mouse Brain Atlas.
 | `allen_registration_level` | `2` | Pyramid level used for registration. Higher = faster but coarser. Output is always written at all pyramid resolutions. |
 | `ras_input_orientation` | `''` | 3-letter code (e.g. `'PIR'`) telling the registrar what orientation the input is in. Crucial for correct atlas alignment. |
 | `ras_initial_rotation` | `''` | `"Rx Ry Rz"` initial rotation hint in degrees. Use when MOMENTS-based init fails. |
+| `ras_max_rotation_deg` | `''` | Largest rotation (degrees) the registration may add to the initial pose before the result is rejected and the pose kept (default 40). Raise it (e.g. `90`) for compound-angle cuts whose registration prints "Rejecting registration". |
 | `allen_preview` | `true` | Save a 3×3 input/aligned/template comparison. Always check this. |
 | `ras_orientation_preview` | `false` | Save a preview after orientation/initial-rotation are applied but before registration. **Enable when tuning `ras_input_orientation` and `ras_initial_rotation`** — you can verify orientation parameters without running the full registration. |
 
