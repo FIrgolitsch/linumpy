@@ -22,7 +22,20 @@ computed and how the input is preconditioned.
 | Vermeer 2014 | $0$ | Raw input | Reference / lower-bound on $\mu$. Severely overestimates $\mu$ in the bottom 10–20 % of the volume. |
 | Smith 2015 | $C \approx I[i_{\max}] / (2\,\hat\mu_E\,\Delta)$ | XY median filter | Legacy linumpy default; $\hat\mu_E$ comes from a log-gradient mean. Kept for reproducing past results. |
 | Liu 2019 | $C = I[i_{\max}] / (\exp(2\,\hat\mu_E\,\Delta) - 1)$ | XY median filter, per-A-line LSQ tail fit for $\hat\mu_E$ | Drop-in replacement for Smith. The exact denominator avoids the linearization error and matches the geometric tail integral exactly. |
-| **Li 2020** *(current default)* | Same as Liu, but on the noise-subtracted, SNR-truncated A-line | Noise-floor subtraction + per-A-line truncation when SNR drops below `snr_threshold_db` (default 6 dB) | **Default.** Handles the non-negligible noise floor present in real OCT data. Truncates each A-line individually so the bottom voxels do not pollute the estimate. |
+| **`li`** *(current default)* | Same as Liu, but on the noise-subtracted, SNR-truncated A-line | Noise-floor subtraction + per-A-line truncation when SNR drops below `snr_threshold_db` (default 6 dB) | **Default.** Handles the non-negligible noise floor present in real OCT data. Truncates each A-line individually so the bottom voxels do not pollute the estimate; the tail constant is fitted at the cut. The noise floor is the median of the non-zero voxels outside the tissue mask (empty mosaic padding is left out). |
+
+How `li` differs from the paper it is named after (Li et al. 2020, checked
+against the article): the paper crops each A-line where the signal is 5 dB above
+a system noise floor measured with the sample arm blocked, does not subtract
+that floor from the signal, and solves $\mu[n]$ recursively from a boundary
+value fitted on the last 100–200 µm of the cropped A-line (its Eq. 10). `li`
+here crops the same way but against the level outside the tissue (agarose after
+the focus correction), subtracts that level, and uses Liu's closed form with the
+tail fitted on the last voxels of the cropped A-line, which is the same model
+written with an explicit tail term. Below the crop the estimate keeps the decay
+rate of that tail down to the end of the tissue mask. Both papers, and Vermeer
+2014, require the focus (confocal) response to be divided out first; Vermeer
+subtracts the noise before that division, the pipeline divides first.
 
 The two improvements over Smith are:
 
@@ -40,9 +53,10 @@ All four methods share a small set of helpers in
 
 - `_median_xy_filter(vol, k)` — pre-denoising
 - `_auto_tissue_mask(vol, zshift)` — water/tissue interface detection
-- `_lstsq_tail_slope(bot)` — vectorized per-A-line LSQ fit of $\ln I$
-  vs depth (replaces a Python loop)
-- `_exact_tail_C(i_max, mu_E, dz)` — Liu's $C$ via `np.expm1`
+- `_tail_at_aline_end(vol, mask, n_tail)` — per-A-line LSQ fit of $\ln I$
+  vs depth on the last voxels inside the mask, where the summed range ends
+- `_exact_tail_C(i_end, mu_E, dz, valid)` — Liu's $C$ via `np.expm1`; an
+  A-line whose fit shows no decay takes the median decay rate of the others
 - `_finalize_attenuation(attn, mask, fill_holes)` — NaN/mask cleanup
 
 The Vermeer core (cumsum + log over the full volume) optionally runs

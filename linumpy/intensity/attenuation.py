@@ -8,7 +8,6 @@ from typing import Any, Literal, overload
 
 import numpy as np
 import SimpleITK as sitk
-from dipy.segment.mask import median_otsu
 from numpy.ma import MaskedArray
 from scipy.interpolate import interp1d
 from scipy.ndimage import (
@@ -32,11 +31,28 @@ from linumpy.intensity.normalize import eqhist, normalize
 # ---------------------------------------------------------------------------
 
 
-def _median_xy_filter(vol: np.ndarray, k: int) -> np.ndarray:
-    """XY median filter (no axial smoothing). ``k <= 0`` is a no-op."""
+def _median_xy_filter(vol: np.ndarray, k: int, bin_xy: int = 1) -> np.ndarray:
+    """XY median filter (no axial smoothing). ``k <= 0`` is a no-op.
+
+    ``k`` is the radius of the window, which is ``2k + 1`` voxels wide.
+
+    With ``bin_xy > 1`` the volume is first averaged over ``bin_xy`` x ``bin_xy``
+    voxels in XY, filtered there with the radius scaled down to match, and put
+    back on the full grid. The window covers the same area; the cost falls with
+    about the fourth power of ``bin_xy``.
+    """
     if k <= 0:
         return vol
-    return sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(vol), (0, k, k)))
+    if bin_xy <= 1:
+        return sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(vol), (0, k, k)))
+    nx, ny, nz = vol.shape
+    padded = np.pad(vol, ((0, (-nx) % bin_xy), (0, (-ny) % bin_xy), (0, 0)), mode="edge")
+    small = padded.reshape(padded.shape[0] // bin_xy, bin_xy, padded.shape[1] // bin_xy, bin_xy, nz).mean(
+        axis=(1, 3), dtype=np.float32
+    )
+    radius = max(1, round(k / bin_xy))
+    small = sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(small), (0, radius, radius)))
+    return np.repeat(np.repeat(small, bin_xy, axis=0), bin_xy, axis=1)[:nx, :ny].astype(vol.dtype, copy=False)
 
 
 def _auto_tissue_mask(vol: np.ndarray, zshift: int) -> np.ndarray:
@@ -54,32 +70,63 @@ def _finalize_attenuation(attn: np.ndarray, mask: np.ndarray, fill_holes: bool) 
     return attn
 
 
-def _lstsq_tail_slope(bot: np.ndarray) -> np.ndarray:
-    """Per-A-line LSQ slope of ``ln I`` vs voxel index over the supplied tail.
+def _exact_tail_C(i_max: np.ndarray, mu_E_per_m: np.ndarray, dz_m: float, valid: np.ndarray | None = None) -> np.ndarray:
+    """Exact finite-range tail integral C = I[imax] / (exp(2 mu_E dz) - 1).
 
-    ``bot`` has shape ``(X, Y, n_tail)``. A per-A-line relative floor is used
-    so that A-lines decaying below float epsilon (clean exponentials with
-    ``mu*z >> 1``) still produce an unbiased slope.
+    An A-line whose fit shows no decay cannot give a tail of its own: the
+    formula has no finite value there, and C = 0 would be the bare estimator,
+    which diverges towards the end of the range. Such A-lines take the median
+    decay rate of the A-lines that have one. ``valid`` limits both the median
+    and the A-lines that receive it; C stays 0 elsewhere.
     """
-    n_tail = bot.shape[-1]
-    z_idx = np.arange(n_tail, dtype=float)
-    bot64 = bot.astype(np.float64)
-    floor = np.maximum(bot64.max(axis=-1, keepdims=True) * 1e-12, 1e-30)
-    log_bot = np.log(np.maximum(bot64, floor))
-    z_mean = z_idx.mean()
-    log_mean = log_bot.mean(axis=-1)
-    cov = ((z_idx - z_mean) * (log_bot - log_mean[..., None])).sum(axis=-1)
-    var = ((z_idx - z_mean) ** 2).sum()
-    return cov / var  # dimensionless ln(I) per voxel
-
-
-def _exact_tail_C(i_max: np.ndarray, mu_E_per_m: np.ndarray, dz_m: float) -> np.ndarray:
-    """Exact finite-range tail integral C = I[imax] / (exp(2 mu_E dz) - 1)."""
     denom = np.expm1(2.0 * mu_E_per_m * dz_m)
     C = np.zeros_like(i_max, dtype=np.float64)
-    valid = denom > 1e-12
-    C[valid] = i_max[valid] / denom[valid]
+    decays = denom > 1e-12
+    if valid is not None:
+        decays &= valid
+    C[decays] = i_max[decays] / denom[decays]
+    flat = ~decays if valid is None else (valid & ~decays)
+    if decays.any() and flat.any():
+        C[flat] = i_max[flat] / np.expm1(2.0 * float(np.median(mu_E_per_m[decays])) * dz_m)
     return C
+
+
+def _tail_at_aline_end(vol: np.ndarray, mask: np.ndarray, n_tail: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Fit the decay of each A-line on its last ``n_tail`` voxels inside ``mask``.
+
+    The tail constant stands for the signal below the last voxel that enters
+    the sum, so it has to be fitted there. A mask that ends above the bottom of
+    the volume (an A-line cut where its signal runs out) leaves voxels below
+    it that are not summed; a fit on the bottom of the volume would describe
+    those instead.
+
+    Returns the signal at the last in-mask voxel, the slope of ``ln I`` per
+    voxel there, and which A-lines had at least four voxels to fit. All
+    ``(X, Y)``.
+    """
+    nz = vol.shape[2]
+    z_idx = np.arange(nz)
+    mask = mask.astype(bool)
+    last = np.where(mask, z_idx[None, None, :], -1).max(axis=2)
+    first = np.where(mask, z_idx[None, None, :], nz).min(axis=2)
+    idx = last[..., None] - np.arange(n_tail)[::-1][None, None, :]
+    inside = (idx >= first[..., None]) & (last[..., None] >= 0)
+    vals = np.take_along_axis(vol, np.clip(idx, 0, nz - 1), axis=2).astype(np.float64)
+    peak = np.where(inside, vals, 0.0).max(axis=2, keepdims=True)
+    log_vals = np.log(np.maximum(vals, np.maximum(peak * 1e-12, 1e-30)))
+    w = inside.astype(np.float64)
+    n = w.sum(axis=2)
+    t = np.arange(n_tail, dtype=np.float64)[None, None, :]
+    safe_n = np.maximum(n, 1.0)
+    t_mean = (w * t).sum(axis=2) / safe_n
+    log_mean = (w * log_vals).sum(axis=2) / safe_n
+    cov = (w * (t - t_mean[..., None]) * (log_vals - log_mean[..., None])).sum(axis=2)
+    var = (w * (t - t_mean[..., None]) ** 2).sum(axis=2)
+    fitted = n >= 4
+    slope = np.where(fitted, cov / np.maximum(var, 1e-12), 0.0)
+    i_end = np.take_along_axis(vol, np.clip(last, 0, nz - 1)[..., None], axis=2)[..., 0].astype(np.float64)
+    i_end = np.where(last >= 0, i_end, 0.0)
+    return i_end, slope, fitted
 
 
 def _vermeer_core_gpu(vol: np.ndarray, dz: float, mask: np.ndarray, C: np.ndarray) -> np.ndarray:
@@ -135,46 +182,51 @@ def get_attenuation_vermeer2013(
     Vermeer et al., Biomed. Opt. Express 5, 322 (2014).
     Neubrand et al., J. Biomed. Opt. 28, 066001 (2023).
     """
-    # Prepare the bottom constant (to better consider the finite Bscan dimension)
+    # Tail constant for the signal below the summed range, one value per A-line.
     if C is None:
-        C = np.zeros(vol.shape)
-    elif isinstance(C, (int, float)):
-        C = np.ones(vol, dtype=float) * C
-    elif C.ndim == 2:
-        C = np.tile(np.reshape(C, (C.shape[0], C.shape[1], 1)), (1, 1, vol.shape[2]))
+        C = 0.0
+    elif not isinstance(C, (int, float)) and np.ndim(C) == 2:
+        C = np.asarray(C)[:, :, None]
 
     # Use mask to ignore tissue layers above / under the mask
     if mask is None:
         mask = np.ones_like(vol, dtype=bool)
+    mask = mask.astype(bool, copy=False)
 
     if use_gpu and GPU_AVAILABLE:
-        mu = _vermeer_core_gpu(vol, dz, mask, C)
+        mu = _vermeer_core_gpu(vol, dz, mask, np.broadcast_to(np.asarray(C, dtype=np.float32), vol.shape))
     else:
         # Compensation profile with depth for each A-line. See Vermeer 2014
-        # / Neubrand 2023 Appendix B for the derivation.
-        vol_p = MaskedArray(vol, mask=~mask)
-        cum_rev = np.cumsum(vol_p[:, :, ::-1], axis=-1)
-        tail = np.zeros_like(cum_rev)
-        tail[:, :, 1:] = cum_rev[:, :, :-1]  # exclude I[i]
-        profile = tail[:, :, ::-1] + C
+        # / Neubrand 2023 Appendix B for the derivation. Voxels outside the
+        # mask count as zero in the sum. (A masked array is not used here: its
+        # mask travels with the shifted sum and blanks the last in-mask voxel,
+        # which is the value carried down the A-line below.)
+        masked = np.where(mask, vol, 0).astype(np.float32, copy=False)
+        cum_rev = np.cumsum(masked[:, :, ::-1], axis=-1)
+        profile = np.empty_like(cum_rev)
+        profile[:, :, -1] = 0.0
+        profile[:, :, :-1] = cum_rev[:, :, -2::-1]  # sum over j > i
+        del cum_rev, masked
+        profile += C
 
-        mu = np.zeros_like(vol)
-        mu[profile > 0] = vol[profile > 0] / profile[profile > 0]
-        mu[profile > 0] = np.log(1 + mu[profile > 0]) / (2.0 * dz)
-        mu /= 100.0
+        mu = np.zeros(vol.shape, dtype=np.float32)
+        pos = profile > 0
+        np.divide(vol, profile, out=mu, where=pos)
+        np.log1p(mu, out=mu, where=pos)
+        mu /= 2.0 * dz * 100.0
 
     # Masking the result (interface propagation)
-    interface = get_interface_depth_from_mask(mask)
-    mask_above_interface = ~mask_under_interface(mask, interface, return_mask=True)
-    mu[mask_above_interface] = 0
+    nz = mask.shape[2]
+    z_idx = np.arange(nz)[None, None, :]
+    has_tissue = mask.any(axis=2)
+    interface = np.where(has_tissue, mask.argmax(axis=2), 0)
+    mu[z_idx < interface[:, :, None]] = 0
 
-    nx, ny, nz = mask.shape
-    bottom_interface = (nz - get_interface_depth_from_mask(mask[:, :, ::-1]) - 1).astype(int)
-    xx, yy = np.meshgrid(list(range(nx)), list(range(ny)), indexing="ij")
-    bottom_mu = mu[xx, yy, bottom_interface]
-    bottom_mu = np.tile(np.reshape(bottom_mu, (nx, ny, 1)), (1, 1, nz))
-    bottom_mask = mask_under_interface(mask, bottom_interface, return_mask=True)
-    mu[bottom_mask] = bottom_mu[bottom_mask]
+    # Below the last in-mask voxel the A-line keeps that voxel's value.
+    bottom_interface = np.where(has_tissue, nz - 1 - mask[:, :, ::-1].argmax(axis=2), nz - 1)
+    bottom_mu = np.take_along_axis(mu, bottom_interface[:, :, None], axis=2)
+    below = z_idx >= bottom_interface[:, :, None]
+    np.copyto(mu, np.broadcast_to(bottom_mu, mu.shape), where=below)
 
     return mu
 
@@ -317,9 +369,12 @@ def get_attenuation_liu2019(
     n_tail = int(np.clip(tail_fit_voxels, 2, nz))
     dz_m = res * 1e-6
 
-    slope = _lstsq_tail_slope(vol[:, :, -n_tail:])
+    # The tail is fitted where the summed range of each A-line ends: the last
+    # voxels inside the mask, which is the bottom of the volume only when the
+    # mask reaches it.
+    i_end, slope, fitted = _tail_at_aline_end(vol, mask, n_tail)
     mu_E_per_m = np.maximum(-slope / (2.0 * dz_m), 0.0)
-    C = _exact_tail_C(vol[:, :, -1].astype(np.float64), mu_E_per_m, dz_m)
+    C = _exact_tail_C(i_end, mu_E_per_m, dz_m, valid=fitted)
 
     attn = get_attenuation_vermeer2013(vol, dz=dz_m, mask=mask, C=C.astype(np.float32), use_gpu=use_gpu)
     return _finalize_attenuation(attn, mask, fill_holes)
@@ -336,12 +391,16 @@ def get_attenuation_li2020(
     tail_fit_voxels: int = 20,
     fill_holes: bool = False,
     use_gpu: bool = False,
+    median_bin: int = 1,
+    subtract_noise_floor: bool = True,
 ) -> np.ndarray:
     r"""Li 2020 robust depth-resolved attenuation: noise-floor + tail truncation.
 
     Subtracts a constant noise floor, truncates each A-line where SNR
-    falls below ``snr_threshold_db``, then runs Liu 2019. See
-    ``docs/ATTENUATION_METHODS.md`` for the math.
+    falls below ``snr_threshold_db``, then runs the Liu 2019 estimator on
+    the truncated A-line with its tail fitted at the cut. Below the cut the
+    estimate keeps the decay rate of that tail down to the end of the tissue
+    mask. See ``docs/ATTENUATION_METHODS.md`` for the math.
 
     Parameters
     ----------
@@ -357,7 +416,8 @@ def get_attenuation_li2020(
         Voxels to skip below the auto-detected interface.
     snr_threshold_db : float
         Per-voxel SNR (vs noise floor) below which the A-line is
-        truncated. ``6 dB`` is the Li 2020 value.
+        truncated. Li 2020 and Liu 2019 use 5 dB above a measured system
+        noise floor; the floor here is the level outside the tissue.
     noise_floor : float, optional
         Constant to subtract; estimated from out-of-mask voxels (or
         the deepest 5 voxels) when ``None``.
@@ -367,20 +427,40 @@ def get_attenuation_li2020(
         Apply morphological hole-filling.
     use_gpu : bool
         Forward to the Vermeer core (CuPy when available).
+    median_bin : int
+        Run the XY median on a grid binned by this factor (see
+        :func:`_median_xy_filter`). ``1`` filters the full grid.
+    subtract_noise_floor : bool
+        Subtract the noise floor from the signal before the estimate. Li 2020
+        and Liu 2019 only cut the A-line at the noise floor; Vermeer 2014
+        subtracts a measured noise profile. ``False`` cuts without subtracting.
 
     References
     ----------
     Li et al., Biomed. Opt. Express 11, 672 (2020).
     """
-    vol = _median_xy_filter(vol, k)
+    vol = _median_xy_filter(vol, k, median_bin)
     if mask is None:
         mask = _auto_tissue_mask(vol, zshift)
     mask = mask.astype(bool)
 
     if noise_floor is None:
+        # Empty mosaic padding is exactly zero and is not a measurement. Left
+        # in, it drags the median down, to zero once it is half of the voxels
+        # outside the tissue, and then nothing is subtracted or truncated.
         out_of_mask = vol[~mask]
-        noise_floor = float(np.median(out_of_mask)) if out_of_mask.size > 100 else float(np.median(vol[:, :, -5:]))
-    vol_clean = np.clip(vol.astype(np.float32) - noise_floor, 0.0, None)
+        out_of_mask = out_of_mask[out_of_mask > 0]
+        deepest = vol[:, :, -5:]
+        deepest = deepest[deepest > 0]
+        if out_of_mask.size > 100:
+            noise_floor = float(np.median(out_of_mask))
+        elif deepest.size:
+            noise_floor = float(np.median(deepest))
+        else:
+            noise_floor = 0.0
+    vol_clean = vol.astype(np.float32)
+    if subtract_noise_floor:
+        vol_clean = np.clip(vol_clean - noise_floor, 0.0, None)
 
     # Per-A-line truncation depth where SNR drops below threshold.
     snr_signal_threshold = max(noise_floor, 1e-6) * (10.0 ** (snr_threshold_db / 10.0))
@@ -393,16 +473,17 @@ def get_attenuation_li2020(
     z_grid = np.broadcast_to(z_idx[None, None, :], vol.shape)
     trunc_mask = (z_grid <= cutoff[..., None]) & mask
 
-    return get_attenuation_liu2019(
-        vol_clean,
-        mask=trunc_mask,
-        k=0,
-        res=res,
-        zshift=zshift,
-        tail_fit_voxels=tail_fit_voxels,
-        fill_holes=fill_holes,
-        use_gpu=use_gpu,
-    )
+    n_tail = int(np.clip(tail_fit_voxels, 2, nz))
+    dz_m = res * 1e-6
+    i_end, slope, fitted = _tail_at_aline_end(vol_clean, trunc_mask, n_tail)
+    mu_E_per_m = np.maximum(-slope / (2.0 * dz_m), 0.0)
+    C = _exact_tail_C(i_end, mu_E_per_m, dz_m, valid=fitted)
+    attn = get_attenuation_vermeer2013(vol_clean, dz=dz_m, mask=trunc_mask, C=C.astype(np.float32), use_gpu=use_gpu)
+    # Below the cut the Vermeer core carries the last estimate down the A-line,
+    # which is the decay rate the tail constant was built from. The tissue does
+    # not stop attenuating where its signal sinks into the noise, so that value
+    # is kept down to the end of the tissue mask, not zeroed at the cut.
+    return _finalize_attenuation(attn, mask, fill_holes)
 
 
 def tissue_footprint_mask(mask: np.ndarray) -> np.ndarray:
@@ -436,12 +517,21 @@ def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: 
     """
     if sigma <= 0:
         return optical_depth
-    mask = mask.astype(bool)
-    sig = (sigma, sigma, 0.0)
-    weight = gaussian_filter(mask.astype(np.float32), sig)
-    smoothed = gaussian_filter(np.where(mask, optical_depth, 0.0).astype(np.float32), sig)
-    smoothed /= np.maximum(weight, 1e-3)
-    return np.where(mask, smoothed, optical_depth).astype(optical_depth.dtype, copy=False)
+    mask = mask.astype(bool, copy=False)
+    # Plane by plane on contiguous 2-D arrays, which is the same filter as one
+    # 3-D call with no smoothing along depth and about twice as fast. A mask
+    # that does not change with depth (a footprint) needs its weight once.
+    same_mask = mask.strides[2] == 0 or bool((mask == mask[:, :, :1]).all())
+    weight = gaussian_filter(mask[:, :, 0].astype(np.float32), sigma) if same_mask else None
+    out = np.empty(optical_depth.shape, dtype=optical_depth.dtype)
+    for z in range(optical_depth.shape[2]):
+        plane_mask = mask[:, :, 0] if same_mask else np.ascontiguousarray(mask[:, :, z])
+        plane = np.ascontiguousarray(optical_depth[:, :, z])
+        w = weight if weight is not None else gaussian_filter(plane_mask.astype(np.float32), sigma)
+        smoothed = gaussian_filter(np.where(plane_mask, plane, 0.0).astype(np.float32), sigma)
+        smoothed /= np.maximum(w, 1e-3)
+        out[:, :, z] = np.where(plane_mask, smoothed, plane)
+    return out
 
 
 def calibrate_compensation_strength(
@@ -805,6 +895,8 @@ def get_interface_mask(
 
     # Get tissue mask
     if mask_tissue:
+        from dipy.segment.mask import median_otsu  # heavy import, only needed here
+
         tissue_mask = binary_fill_holes(median_otsu(eqhist(vol.mean(axis=2)), median_radius=5.0)[1])
         tissue_mask = np.tile(np.reshape(tissue_mask, (nx, ny, 1)), (1, 1, nz))
         mask *= tissue_mask
@@ -960,6 +1052,8 @@ def get_flat_agarose_profile(
     nx, ny, nz = vol.shape
 
     # Get agarose mask for this slice and its intensity profile
+    from dipy.segment.mask import median_otsu  # heavy import, only needed here
+
     tissue_mask = binary_fill_holes(median_otsu(eqhist(vol.mean(axis=2)), median_radius=5.0)[1])
     tissue_mask = np.tile(np.reshape(tissue_mask, (nx, ny, 1)), (1, 1, nz))
     mask = (~tissue_mask).astype(bool)

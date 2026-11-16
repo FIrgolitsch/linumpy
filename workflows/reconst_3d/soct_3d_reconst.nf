@@ -900,6 +900,7 @@ process compensate_attenuation {
         --min_bias ${params.compensate_attenuation_min_bias} \
         --mask_smoothing_sigma ${params.compensate_attenuation_mask_sigma} \
         --k ${params.compensate_attenuation_k} \
+        --median_bin ${params.compensate_attenuation_median_bin} \
         --zshift ${params.compensate_attenuation_zshift} \
         --strength ${params.compensate_attenuation_strength} \
         --snr_threshold_db ${params.compensate_attenuation_snr_threshold_db} \

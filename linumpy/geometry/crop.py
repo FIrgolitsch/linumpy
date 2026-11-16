@@ -132,9 +132,7 @@ def crop_z0_whole_slice(
 def mask_under_interface(vol: np.ndarray, interface: np.ndarray, return_mask: bool = False) -> np.ndarray:
     """Create a boolean mask for all voxels at or below the interface depth."""
     nx, ny, nz = vol.shape
-    _, _, zz = np.meshgrid(list(range(nx)), list(range(ny)), list(range(nz)), indexing="ij")
-    interface_3d = np.tile(np.reshape(interface, (nx, ny, 1)), (1, 1, nz))
-    mask = zz >= interface_3d
+    mask = np.arange(nz)[None, None, :] >= np.reshape(interface, (nx, ny, 1))
     if return_mask:
         return mask
     else:

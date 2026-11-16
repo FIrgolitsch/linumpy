@@ -286,3 +286,166 @@ def test_calibrated_strength_ignores_planes_below_the_stack_depth():
     a = calibrate_compensation_strength(vol, od, mask, n_planes=20, erosion_px=5, min_alines=100)
     b = calibrate_compensation_strength(cliff, od, mask, n_planes=20, erosion_px=5, min_alines=100)
     assert a == b
+
+
+def test_exact_tail_gives_alines_without_decay_the_median_rate():
+    from linumpy.intensity.attenuation import _exact_tail_C
+
+    i_end = np.array([[2.0, 2.0, 2.0, 2.0]])
+    mu = np.array([[1000.0, 3000.0, 0.0, 2000.0]])  # 1/m
+    c = _exact_tail_C(i_end, mu, 10e-6)
+    np.testing.assert_allclose(c[0, 0], 2.0 / np.expm1(2 * 1000.0 * 10e-6))
+    # The A-line with no decay does not fall back to the bare estimator (C = 0).
+    np.testing.assert_allclose(c[0, 2], 2.0 / np.expm1(2 * 2000.0 * 10e-6))
+    limited = _exact_tail_C(i_end, mu, 10e-6, valid=np.array([[True, True, True, False]]))
+    assert limited[0, 3] == 0.0
+    np.testing.assert_allclose(limited[0, 2], 2.0 / np.expm1(2 * 2000.0 * 10e-6))
+    assert np.all(_exact_tail_C(i_end, np.zeros_like(mu), 10e-6) == 0.0)
+
+
+def test_tail_is_fitted_where_the_mask_ends():
+    from linumpy.intensity.attenuation import _tail_at_aline_end
+
+    nz = 60
+    z = np.arange(nz)
+    aline = np.exp(-0.05 * z)
+    aline[30:] = 1e-6  # nothing left below the cut
+    vol = np.broadcast_to(aline, (3, 3, nz)).copy()
+    mask = np.zeros(vol.shape, dtype=bool)
+    mask[:, :, :30] = True
+    mask[0, 0, :] = False
+    mask[1, 1, 27:] = False
+    mask[1, 1, :25] = False  # two voxels: too few to fit
+    i_end, slope, fitted = _tail_at_aline_end(vol, mask, 20)
+    np.testing.assert_allclose(slope[2, 2], -0.05, atol=1e-9)
+    np.testing.assert_allclose(i_end[2, 2], aline[29])
+    assert not fitted[0, 0] and i_end[0, 0] == 0.0
+    assert not fitted[1, 1] and slope[1, 1] == 0.0
+
+
+def _cut_alines(mu_per_cm: float = 20.0, noise: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """Tissue that sinks into a noise floor half-way down, agarose, and empty padding."""
+    nz, dz_m = 200, 10e-6
+    z = np.arange(nz)
+    vol = np.zeros((24, 24, nz), dtype=np.float32)
+    mask = np.zeros(vol.shape, dtype=bool)
+    vol[:8] = 100.0 * np.exp(-2.0 * mu_per_cm * 100.0 * dz_m * z) + noise
+    mask[:8] = True
+    vol[8:12] = noise  # agarose: a quarter of what lies outside the tissue
+    return vol, mask
+
+
+def test_li2020_does_not_diverge_towards_the_cut():
+    """The estimate stays at the true rate up to where the A-line is cut."""
+    from linumpy.intensity.attenuation import get_attenuation_li2020
+
+    vol, mask = _cut_alines(mu_per_cm=20.0)
+    attn = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0, snr_threshold_db=6.0)
+    aline = attn[4, 4]
+    # The signal is under four times the floor from about plane 88 on. The
+    # estimate holds the true rate above the cut and keeps it below, down to
+    # the end of the tissue mask.
+    np.testing.assert_allclose(aline[5:86], 20.0, rtol=0.1)
+    np.testing.assert_allclose(aline[95:], aline[94], rtol=1e-6)
+    np.testing.assert_allclose(aline[150], 20.0, rtol=0.15)
+    assert np.all(attn[10, 10] == 0.0)  # agarose, outside the mask
+
+
+def test_li2020_noise_floor_leaves_out_empty_padding():
+    """Padding that outnumbers the agarose must not zero the noise floor."""
+    from linumpy.intensity.attenuation import get_attenuation_li2020
+
+    vol, mask = _cut_alines(mu_per_cm=20.0)
+    assert (vol[~mask] == 0).mean() > 0.5
+    with_floor = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0)
+    given = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0, noise_floor=1.0)
+    np.testing.assert_allclose(with_floor, given)
+    # With a floor of zero the A-line is not cut, and the flat floor at its
+    # end reads as almost no attenuation there.
+    zero_floor = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0, noise_floor=0.0)
+    assert zero_floor[4, 4, 150] < 0.5 * with_floor[4, 4, 150]
+
+
+def test_vermeer_core_estimates_the_last_in_mask_voxel_and_carries_it_down():
+    """The voxel where the summed range ends has an estimate, and deeper voxels keep it."""
+    nz, dz = 50, 10e-6
+    aline = np.exp(-2.0 * 2000.0 * dz * np.arange(nz)).astype(np.float32)
+    vol = np.broadcast_to(aline, (2, 2, nz)).copy()
+    mask = np.zeros(vol.shape, dtype=bool)
+    mask[:, :, 5:30] = True
+    tail = aline[29] / np.expm1(2.0 * 2000.0 * dz)
+    mu = get_attenuation_vermeer2013(vol, dz=dz, mask=mask, C=np.full((2, 2), tail, dtype=np.float32))
+    np.testing.assert_allclose(mu[0, 0, 5:30], 20.0, rtol=1e-3)
+    assert np.all(mu[0, 0, :5] == 0.0)
+    np.testing.assert_allclose(mu[0, 0, 30:], mu[0, 0, 29])
+    # A scalar tail constant is accepted too.
+    scalar = get_attenuation_vermeer2013(vol, dz=dz, mask=mask, C=float(tail))
+    np.testing.assert_allclose(scalar, mu)
+
+
+def test_interface_helpers_match_a_plain_loop():
+    from linumpy.geometry.crop import mask_under_interface
+    from linumpy.geometry.interface import get_interface_depth_from_mask
+
+    rng = np.random.default_rng(0)
+    mask = rng.random((9, 7, 12)) > 0.7
+    mask[0, 0] = False  # an A-line without tissue reports depth 0
+    expected = np.zeros((9, 7))
+    for x in range(9):
+        for y in range(7):
+            hits = np.flatnonzero(mask[x, y])
+            if hits.size:
+                expected[x, y] = hits[0]
+    depths = get_interface_depth_from_mask(mask)
+    np.testing.assert_array_equal(depths, expected)
+    under = mask_under_interface(mask, depths, return_mask=True)
+    for x in range(9):
+        for y in range(7):
+            np.testing.assert_array_equal(under[x, y], np.arange(12) >= expected[x, y])
+
+
+def test_binned_median_matches_the_full_one_on_smooth_data_and_keeps_the_shape():
+    from linumpy.intensity.attenuation import _median_xy_filter
+
+    rng = np.random.default_rng(1)
+    xx, yy = np.mgrid[:61, :47]
+    smooth = (10.0 + 3.0 * np.sin(xx / 30.0) * np.cos(yy / 25.0)).astype(np.float32)
+    vol = np.repeat(smooth[:, :, None], 3, axis=2) * np.array([1.0, 0.8, 0.6], dtype=np.float32)
+    noisy = vol + rng.normal(0, 0.3, vol.shape).astype(np.float32)
+    noisy[30, 20, 1] = 500.0  # a single outlier does not survive either filter
+    full = _median_xy_filter(noisy, 6)
+    binned = _median_xy_filter(noisy, 6, bin_xy=2)
+    assert binned.shape == noisy.shape and binned.dtype == noisy.dtype
+    assert binned[30, 20, 1] < 15.0
+    inner = (slice(8, -8), slice(8, -8))
+    np.testing.assert_allclose(binned[inner], full[inner], rtol=0.04)
+    # Depth is not mixed: each plane keeps its own level.
+    np.testing.assert_allclose(binned[inner][..., 2].mean() / binned[inner][..., 0].mean(), 0.6, rtol=0.01)
+    assert _median_xy_filter(noisy, 0, bin_xy=2) is noisy
+
+
+def test_smooth_optical_depth_xy_equals_one_filter_without_depth_smoothing():
+    from scipy.ndimage import gaussian_filter
+
+    from linumpy.intensity.attenuation import smooth_optical_depth_xy, tissue_footprint_mask
+
+    rng = np.random.default_rng(2)
+    od = rng.random((30, 26, 4)).astype(np.float32)
+    varying = rng.random(od.shape) > 0.3
+    for mask in (varying, tissue_footprint_mask(varying)):
+        sig = (3.0, 3.0, 0.0)
+        weight = gaussian_filter(mask.astype(np.float32), sig)
+        ref = gaussian_filter(np.where(mask, od, 0.0).astype(np.float32), sig) / np.maximum(weight, 1e-3)
+        ref = np.where(mask, ref, od)
+        np.testing.assert_allclose(smooth_optical_depth_xy(od, mask, 3.0), ref, rtol=1e-6, atol=1e-7)
+
+
+def test_li2020_can_cut_without_subtracting_the_floor():
+    from linumpy.intensity.attenuation import get_attenuation_li2020
+
+    vol, mask = _cut_alines(mu_per_cm=20.0)
+    cut_only = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0, subtract_noise_floor=False)
+    subtracted = get_attenuation_li2020(vol, mask=mask, k=0, res=10.0)
+    # The floor left in the signal flattens the decay towards the cut.
+    assert cut_only[4, 4, 80] < subtracted[4, 4, 80]
+    np.testing.assert_allclose(cut_only[4, 4, 5:20], 20.0, rtol=0.1)

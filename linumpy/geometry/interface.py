@@ -1,6 +1,5 @@
 """Tissue interface detection and fitting."""
 
-import itertools
 from typing import Literal, overload
 
 import numpy as np
@@ -98,14 +97,8 @@ def get_interface_depth_from_mask(vol: np.ndarray) -> np.ndarray:
         Interface depth (in pixel)
 
     """
-    nx, ny, _ = vol.shape
-    depths = np.zeros((nx, ny))
-    for x, y in itertools.product(list(range(nx)), list(range(ny))):
-        idx = np.where(vol[x, y, :])
-        if len(idx[0]) > 0:
-            depths[x, y] = idx[0][0]
-
-    return depths
+    tissue = np.asarray(vol) != 0
+    return np.where(tissue.any(axis=2), tissue.argmax(axis=2), 0).astype(np.float64)
 
 
 def find_tissue_interface(

@@ -82,9 +82,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--k",
         type=int,
         default=10,
-        help="XY median-filter kernel (voxels) applied before the Vermeer attenuation\n"
-        "estimation. 0 disables denoising. Larger values stabilise the per-Aline\n"
-        "fit at the cost of lateral resolution. [%(default)s]",
+        help="Radius (voxels) of the XY median filter applied before the attenuation\n"
+        "estimation; the window is 2k+1 voxels wide. 0 disables denoising. Larger\n"
+        "values stabilise the per-A-line fit at the cost of lateral resolution.\n"
+        "[%(default)s]",
+    )
+    p.add_argument(
+        "--median_bin",
+        type=int,
+        default=2,
+        help="Run the median of the ``li`` method on a grid binned by this factor in XY,\n"
+        "with the radius scaled to cover the same area. 2 is about ten times faster\n"
+        "than the full grid and changes the gain by under 1 %%. 1 filters the full\n"
+        "grid. [%(default)s]",
     )
     p.add_argument(
         "--zshift",
@@ -124,7 +134,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=6.0,
         help="Per-voxel SNR threshold (dB) for A-line truncation in the ``li`` method.\n"
         "Voxels where signal / noise_floor < 10^(snr_threshold_db/10) are excluded\n"
-        "from the attenuation fit. 6 dB is the Li 2020 paper value. [%(default)s]",
+        "from the attenuation fit. Li 2020 and Liu 2019 crop at 5 dB above a system noise\n"
+        "floor measured with the sample arm blocked; the floor here is the level outside\n"
+        "the tissue, so the value is a tuning choice. [%(default)s]",
     )
     p.add_argument(
         "--lateral_sigma",
@@ -211,14 +223,17 @@ def main() -> None:
             zshift=args.zshift,
         )
     elif args.method == "li":
+        # No hole filling here: the estimate has a value on every voxel of the
+        # tissue mask, and filling changed about 1 % of them by under 0.1 /cm.
         attn_cm = get_attenuation_li2020(
             vol_xyz,
             mask=mask_xyz,
             k=args.k,
             res=res_axial_microns,
-            fill_holes=True,
+            fill_holes=False,
             zshift=args.zshift,
             snr_threshold_db=args.snr_threshold_db,
+            median_bin=args.median_bin,
         )
     else:  # vermeer
         # The bare Vermeer estimator returns 1/cm directly; reuse smith's
