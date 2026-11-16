@@ -893,6 +893,7 @@ process compensate_attenuation {
     script:
     def footprint_flag = params.compensate_attenuation_lateral_footprint ? "--lateral_footprint " : ""
     def lateral_flag = params.compensate_attenuation_lateral_sigma > 0 ? "--lateral_sigma ${params.compensate_attenuation_lateral_sigma} ${footprint_flag}" : ""
+    def calibrate_flag = params.compensate_attenuation_calibrate_strength ? "--calibrate_strength --calibrate_planes ${params.compensate_attenuation_calibrate_planes} " : ""
     """
     linum-compensate-attenuation-inplace ${image} "slice_z${slice_id}_attn_corr.ome.zarr" \
         --method ${params.compensate_attenuation_method} \
@@ -902,7 +903,7 @@ process compensate_attenuation {
         --zshift ${params.compensate_attenuation_zshift} \
         --strength ${params.compensate_attenuation_strength} \
         --snr_threshold_db ${params.compensate_attenuation_snr_threshold_db} \
-        ${lateral_flag}--n_levels 0
+        ${lateral_flag}${calibrate_flag}--n_levels 0
     """
 
     stub:

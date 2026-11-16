@@ -225,3 +225,64 @@ def test_footprint_mask_smooths_the_dim_deep_voxels_too():
     smoothed = smooth_optical_depth_xy(od, footprint, sigma=3.0)
     assert smoothed[20, 20, 4] < 2.0
     assert smoothed[20, 26, 4] > 0.0
+
+
+def _slab_with_overestimated_depth(scale: float, shape: tuple = (80, 80, 30)) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Tissue whose true optical depth is ``scale`` times the estimated one.
+
+    Bright and dim A-lines decay at different rates, as white and grey matter do.
+    """
+    nx, ny, nz = shape
+    rate = np.where(np.arange(nx)[:, None] < nx // 4, 0.06, 0.03) * np.ones((1, ny))
+    od = rate[:, :, None] * np.arange(nz)[None, None, :]
+    base = np.where(np.arange(nx)[:, None] < nx // 4, 2.0, 1.0) * np.ones((1, ny))
+    vol = base[:, :, None] * np.exp(-2.0 * scale * od)
+    return vol.astype(np.float32), od.astype(np.float32), np.ones(shape, dtype=bool)
+
+
+def test_calibrated_strength_recovers_the_scale_of_the_optical_depth():
+    from linumpy.intensity.attenuation import calibrate_compensation_strength
+
+    for scale in (0.1, 0.45, 0.8):
+        vol, od, mask = _slab_with_overestimated_depth(scale)
+        strength = calibrate_compensation_strength(vol, od, mask, erosion_px=5, min_alines=100)
+        assert strength is not None
+        assert abs(strength - scale) < 0.01
+        flat = vol / np.exp(-2.0 * strength * od)
+        level = np.median(flat[10:-10, 10:-10, 2:21], axis=(0, 1))
+        assert level.max() / level.min() < 1.02
+
+
+def test_calibrated_strength_stays_inside_its_bounds():
+    from linumpy.intensity.attenuation import calibrate_compensation_strength
+
+    vol, od, mask = _slab_with_overestimated_depth(0.0)
+    assert calibrate_compensation_strength(vol, od, mask, erosion_px=5, min_alines=100) == 0.0
+    # A level that rises with depth needs no compensation either.
+    rising = vol * np.linspace(1.0, 1.5, vol.shape[2], dtype=np.float32)
+    assert calibrate_compensation_strength(rising, od, mask, erosion_px=5, min_alines=100) == 0.0
+    vol, od, mask = _slab_with_overestimated_depth(3.0)
+    assert calibrate_compensation_strength(vol, od, mask, max_strength=1.0, erosion_px=5, min_alines=100) == 1.0
+
+
+def test_calibrated_strength_needs_tissue_and_depth():
+    from linumpy.intensity.attenuation import calibrate_compensation_strength
+
+    vol, od, mask = _slab_with_overestimated_depth(0.45)
+    assert calibrate_compensation_strength(vol, od, mask, erosion_px=5, min_alines=10**6) is None
+    assert calibrate_compensation_strength(vol[:, :, :4], od[:, :, :4], mask[:, :, :4], erosion_px=5) is None
+    sparse = np.zeros_like(mask)
+    sparse[:3, :3] = True
+    assert calibrate_compensation_strength(vol, od, sparse, erosion_px=0, min_alines=100) is None
+
+
+def test_calibrated_strength_ignores_planes_below_the_stack_depth():
+    """Signal that collapses below the planes that go into the stack does not change the fit."""
+    from linumpy.intensity.attenuation import calibrate_compensation_strength
+
+    vol, od, mask = _slab_with_overestimated_depth(0.3)
+    cliff = vol.copy()
+    cliff[:, :, 22:] *= 0.05
+    a = calibrate_compensation_strength(vol, od, mask, n_planes=20, erosion_px=5, min_alines=100)
+    b = calibrate_compensation_strength(cliff, od, mask, n_planes=20, erosion_px=5, min_alines=100)
+    assert a == b

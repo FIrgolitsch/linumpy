@@ -112,6 +112,28 @@ violates the geometric-tail assumption. Empirical sweep on cropped
 The default of 0.30 yields an essentially flat depth profile on
 sub-22 brain data. Other tissue types may need re-tuning.
 
+### Fitting the strength on each slab (`--calibrate_strength`)
+
+One strength fits one acquisition geometry. The depth-resolved estimate
+takes the place where an A-line runs out of signal as the end of the
+tissue. In a slab imaged with the focus deep below the surface the signal
+falls off earlier than in one imaged with the focus near the surface, the
+optical depth comes out several times larger, and the same strength
+over-corrects it. White matter is over-corrected most, so the stack shows
+a contrast step where the sample height was changed between two slabs.
+
+With `--calibrate_strength` the optical depth keeps its lateral pattern
+and only its scale is fitted: the strength is the value at which the
+median tissue level has no trend over planes 2 to `--calibrate_planes`
+below the surface (the planes that go into the stack). The fit is a
+bisection between 0 and `--calibrate_max_strength`; `--strength` is used
+for a slab with too little tissue. On one brain whose sample height
+changed mid-acquisition the fitted values were 0.03–0.18 for the slabs
+with the surface at the top of the scan window and 0.56–0.86 for the
+slabs with the surface 200 µm lower; the bright-to-grey ratio differed by
+21 % across that joint with a fixed strength of 0.45 and by 4 % with the
+fitted one, and the plane-to-plane banding of grey tissue halved.
+
 ## References
 
 * Vermeer K. A. *et al.* "Depth-resolved model-based reconstruction of

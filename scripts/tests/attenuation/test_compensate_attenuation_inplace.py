@@ -226,3 +226,40 @@ def test_method_dispatch(script_runner, tmp_path, method):
     # above).
     if method != "li":
         assert abs(post_drop) < abs(pre_drop), f"{method}: |post|={abs(post_drop):.3f} not < |pre|={abs(pre_drop):.3f}"
+
+
+def test_calibrated_strength_flattens_the_stack_planes(script_runner, tmp_path):
+    """--calibrate_strength picks a strength on the slab and reports it."""
+    # Cropped at the surface, as the pipeline's input is.
+    input_path, _ = _make_synthetic_decay_volume(tmp_path, mu_per_cm=10.0, nz=60, ny=96, nx=96, noise_std=0.5, air_voxels=0)
+    fixed_path = tmp_path / "fixed.ome.zarr"
+    calibrated_path = tmp_path / "calibrated.ome.zarr"
+    common = ["--method", "li", "--min_bias", "0.25", "--n_levels", "0"]
+
+    ret = script_runner.run(
+        ["linum-compensate-attenuation-inplace", str(input_path), str(fixed_path), "--strength", "0.05", *common]
+    )
+    assert ret.success, ret.stderr
+    ret = script_runner.run(
+        [
+            "linum-compensate-attenuation-inplace",
+            str(input_path),
+            str(calibrated_path),
+            "--strength",
+            "0.05",
+            "--calibrate_strength",
+            "--calibrate_planes",
+            "20",
+            *common,
+        ]
+    )
+    assert ret.success, ret.stderr
+    assert "Calibrated strength" in ret.stdout
+
+    def ramp(path):
+        vol = np.asarray(read_omezarr(path, level=0)[0])
+        level = np.array([np.median(vol[z, 30:-30, 30:-30]) for z in range(vol.shape[0])])
+        return level[18] / level[3]
+
+    assert ramp(fixed_path) < 0.85
+    assert abs(ramp(calibrated_path) - 1.0) < 0.08

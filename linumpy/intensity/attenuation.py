@@ -12,6 +12,7 @@ from dipy.segment.mask import median_otsu
 from numpy.ma import MaskedArray
 from scipy.interpolate import interp1d
 from scipy.ndimage import (
+    binary_erosion,
     binary_fill_holes,
     gaussian_filter,
     median_filter,
@@ -441,6 +442,99 @@ def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: 
     smoothed = gaussian_filter(np.where(mask, optical_depth, 0.0).astype(np.float32), sig)
     smoothed /= np.maximum(weight, 1e-3)
     return np.where(mask, smoothed, optical_depth).astype(optical_depth.dtype, copy=False)
+
+
+def calibrate_compensation_strength(
+    vol: np.ndarray,
+    optical_depth: np.ndarray,
+    mask: np.ndarray,
+    n_planes: int = 20,
+    skip_planes: int = 2,
+    max_strength: float = 1.0,
+    min_bias: float = 0.0,
+    erosion_px: int = 15,
+    min_alines: int = 2000,
+    max_alines: int = 200_000,
+) -> float | None:
+    """Return the strength at which the tissue level of a slab is flat over depth.
+
+    The compensation divides the signal by ``exp(-2 * strength * OD)``. A fixed
+    strength fits one acquisition geometry only. The depth-resolved estimate
+    reads the place where an A-line runs out of signal as the end of the
+    tissue, so a slab imaged with the focus deep below the surface gets a much
+    larger optical depth than one imaged with the focus near the surface, and
+    the same strength over-corrects the first and under-corrects the second.
+    White matter is over-corrected more than grey matter, which shows as a
+    contrast step between slabs in the stack.
+
+    The optical depth keeps its lateral pattern here and only its scale is
+    fitted: the strength is the one at which the median tissue level has no
+    trend over the planes that go into the stack. The slope of the log median
+    rises with the strength, so the root is found by bisection.
+
+    Parameters
+    ----------
+    vol : ndarray
+        Volume in ``(X, Y, Z)`` order, before compensation.
+    optical_depth : ndarray
+        Cumulative optical depth, same shape.
+    mask : ndarray
+        Tissue mask, same shape.
+    n_planes : int
+        Last plane below the surface that counts. Set it to the number of
+        planes a slab contributes to the stack.
+    skip_planes : int
+        First plane that counts; the planes above it hold the surface.
+    max_strength : float
+        Upper bound of the search.
+    min_bias : float
+        Floor on the bias, as applied by the compensation.
+    erosion_px : int
+        The level is taken this far inside the tissue footprint.
+    min_alines : int
+        Fewer tissue A-lines than this and no strength is returned.
+    max_alines : int
+        The level is taken on at most this many A-lines, evenly spread.
+
+    Returns
+    -------
+    float or None
+        The strength in ``[0, max_strength]``, or ``None`` when the slab holds
+        too little tissue to tell.
+    """
+    planes = np.arange(skip_planes, min(n_planes + 1, vol.shape[2]))
+    if planes.size < 4:
+        return None
+    mask = mask.astype(bool)
+    footprint = mask[:, :, planes].mean(axis=2) > 0.9
+    if erosion_px > 0:
+        footprint = binary_erosion(footprint, iterations=erosion_px)
+    idx = np.flatnonzero(footprint)
+    if idx.size < min_alines:
+        return None
+    if idx.size > max_alines:
+        idx = idx[:: int(np.ceil(idx.size / max_alines))]
+    rows, cols = np.unravel_index(idx, footprint.shape)
+    signal = np.asarray(vol[rows, cols][:, planes], dtype=np.float64)
+    depth = np.asarray(optical_depth[rows, cols][:, planes], dtype=np.float64)
+
+    def slope(strength: float) -> float:
+        bias = np.maximum(np.exp(-2.0 * strength * depth), max(min_bias, 1e-6))
+        level = np.maximum(np.median(signal / bias, axis=0), 1e-12)
+        return float(np.polyfit(planes, np.log(level), 1)[0])
+
+    if slope(0.0) >= 0.0:
+        return 0.0
+    if slope(max_strength) < 0.0:
+        return float(max_strength)
+    lo, hi = 0.0, float(max_strength)
+    for _ in range(12):
+        mid = 0.5 * (lo + hi)
+        if slope(mid) < 0.0:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 
 def get_attenuation_faber2004(

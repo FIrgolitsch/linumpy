@@ -207,6 +207,7 @@ Per-slice depth-attenuation compensation from a single OME-Zarr volume. Computes
 linum-compensate-attenuation-inplace <input.ome.zarr> <output.ome.zarr> \
     [--method {li,liu,smith,vermeer}] \
     [--strength <0.0-1.0>] \
+    [--calibrate_strength] [--calibrate_planes <n>] [--calibrate_max_strength <float>] \
     [--k <voxels>] \
     [--zshift <voxels>] \
     [--snr_threshold_db <dB>] \
@@ -219,6 +220,9 @@ linum-compensate-attenuation-inplace <input.ome.zarr> <output.ome.zarr> \
 |--------|---------|-------------|
 | `--method` | `li` | Depth-resolved estimator: `li` (Li 2020, default — noise-floor subtraction + SNR-based A-line truncation on top of Liu 2019), `liu` (Liu 2019 exact form), `smith` (legacy linumpy default), `vermeer` (bare estimator, no regularization). See `docs/ATTENUATION_METHODS.md`. |
 | `--strength` | `0.3` | Multiplicative scale on the optical-depth correction (0..1). 1.0 = textbook Vermeer formula; <1 attenuates the correction. ~0.30 yields a near-flat depth profile on cropped 600 µm brain slices. |
+| `--calibrate_strength` | off | Fit the strength on the slab: the value at which the median tissue level is flat over the planes below the surface that go into the stack. `--strength` is used for a slab with too little tissue. |
+| `--calibrate_planes` | `20` | Last plane below the surface the tissue level is flattened over (the slicing interval in voxels). |
+| `--calibrate_max_strength` | `1.0` | Upper bound of the fitted strength. |
 | `--k` | `10` | XY median-filter kernel (voxels) applied before the Vermeer fit. `0` disables denoising. |
 | `--zshift` | `3` | Voxels under the water/tissue interface to ignore when fitting the exponential tail. Smaller values keep more of the shallow tissue. |
 | `--snr_threshold_db` | `6.0` | Per-voxel SNR threshold (dB) for A-line truncation in `li`. Voxels with SNR below this are excluded from the fit. |

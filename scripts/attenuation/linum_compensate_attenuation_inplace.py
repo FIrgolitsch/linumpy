@@ -22,7 +22,10 @@ Pipeline
 
    See :mod:`linumpy.intensity.attenuation` for full references.
 3. Integrate cumulatively along Z to obtain the round-trip optical depth,
-   convert to a multiplicative bias field ``bias = exp(-2 * OD)``.
+   convert to a multiplicative bias field ``bias = exp(-2 * strength * OD)``.
+   With ``--calibrate_strength`` the strength is fitted on the slab itself:
+   the value at which the tissue level is flat over the planes that go into
+   the stack.
 4. Clamp the bias from below by ``--min_bias`` to prevent runaway gain in
    deep, low-signal voxels and divide the input volume by the clamped
    bias.
@@ -43,6 +46,7 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
 from linumpy.intensity.attenuation import (
+    calibrate_compensation_strength,
     get_attenuation_li2020,
     get_attenuation_liu2019,
     get_attenuation_smith2015,
@@ -139,6 +143,32 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "outside the 3D mask; they then keep their unsmoothed value and show up as bright\n"
         "patches with hard edges. Only used with --lateral_sigma. [%(default)s]",
     )
+    p.add_argument(
+        "--calibrate_strength",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fit the strength on each slab instead of using --strength: the value at\n"
+        "which the median tissue level is flat over the planes below the surface that\n"
+        "go into the stack. A fixed strength fits one acquisition geometry. A slab\n"
+        "imaged with the focus deep below the surface gets a larger optical depth\n"
+        "than one imaged with the focus near the surface, and the same strength then\n"
+        "over-corrects it, white matter most, which leaves a contrast step between\n"
+        "slabs. --strength is used for a slab with too little tissue. [%(default)s]",
+    )
+    p.add_argument(
+        "--calibrate_planes",
+        type=int,
+        default=20,
+        help="Last plane below the surface that --calibrate_strength flattens the tissue\n"
+        "level over. Set it to the number of planes a slab contributes to the stack\n"
+        "(the slicing interval in voxels). [%(default)s]",
+    )
+    p.add_argument(
+        "--calibrate_max_strength",
+        type=float,
+        default=1.0,
+        help="Upper bound of the strength --calibrate_strength may pick. [%(default)s]",
+    )
     p.add_argument("--n_levels", type=int, default=0, help="Pyramid levels in the output. [%(default)s]")
     return p
 
@@ -212,7 +242,22 @@ def main() -> None:
     if args.lateral_footprint:
         smooth_mask = tissue_footprint_mask(mask_xyz)
     optical_depth = smooth_optical_depth_xy(optical_depth, smooth_mask, args.lateral_sigma)
-    bias_xyz = np.exp(-2.0 * args.strength * optical_depth).astype(np.float32)
+    strength = args.strength
+    if args.calibrate_strength:
+        fitted = calibrate_compensation_strength(
+            vol_xyz,
+            optical_depth,
+            mask_xyz,
+            n_planes=args.calibrate_planes,
+            max_strength=args.calibrate_max_strength,
+            min_bias=args.min_bias,
+        )
+        if fitted is None:
+            print(f"Too little tissue to calibrate the strength, using --strength {args.strength}")
+        else:
+            strength = fitted
+            print(f"Calibrated strength {strength:.3f} (tissue level flat over planes 2-{args.calibrate_planes})")
+    bias_xyz = np.exp(-2.0 * strength * optical_depth).astype(np.float32)
     np.maximum(bias_xyz, args.min_bias, out=bias_xyz)
 
     # Back to (Z, Y, X) and apply.

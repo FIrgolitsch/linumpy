@@ -299,6 +299,11 @@ $$
 
 with strength $s = $ `compensate_attenuation_strength` (default 0.3) and
 $\mathrm{bias}$ clamped to $\ge$ `min_bias` (default 0.05) to limit noise gain.
+With `compensate_attenuation_calibrate_strength` the strength is fitted on each
+slab instead: the value at which the median tissue level has no trend over the
+planes below the surface that go into the stack
+(`compensate_attenuation_calibrate_planes`). A fixed strength over-corrects the
+slabs imaged with the focus deep below the surface.
 
 #### 3d. Per-slice intensity normalization — `normalize`
 
@@ -604,6 +609,7 @@ Key defaults from `workflows/reconst_3d/nextflow.config`:
 | `crop_interface_out_depth` | 600 µm | 3b |
 | `compensate_attenuation_method` | li | 3c |
 | `compensate_attenuation_strength` | 0.3 | 3c |
+| `compensate_attenuation_calibrate_strength` | false | 3c |
 | `clip_percentile_upper` | 99.9 | 3d |
 | `detect_rehoming` | true | 4a |
 | `rehoming_return_fraction` | 0.4 | 4a |

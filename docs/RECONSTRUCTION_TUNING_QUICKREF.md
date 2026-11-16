@@ -44,6 +44,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Bands at the slab joints in the side views | `bias_band_sigma_px=240` |
 | Some slabs brighter or darker than their neighbours | `bias_slab_gain=true`, `bias_zprofile_equalize=false` |
 | Brains on different intensity scales | the same `bias_target_tissue_level` for all |
+| White matter brighter on one side of a joint, grey level the same (sample height changed between slabs) | `compensate_attenuation_calibrate_strength=true` |
 | Bright hard-edged patches in white matter deep in a slab | `compensate_attenuation_lateral_footprint=true` with `compensate_attenuation_lateral_sigma>0` |
 | Bias correction over-flattening tissue | Lower `bias_strength` (1.0 → 0.7) |
 | Atlas overlay rotated 90° / flipped | `ras_orientation_preview=true`, then tune `ras_input_orientation` and `ras_initial_rotation` |
