@@ -521,6 +521,8 @@ tight image-based registration.
 | `refine_max_rotation_deg` | `2.0` | Max residual rotation searched during refinement (degrees) |
 | `refine_overlap_px` | `20` | Planes averaged for the refinement images. With `use_expected_z_overlap = true` and `use_manual_z_overlap = false` they are the planes the stack joins |
 | `refine_coarse_max_translation_px` | `0` | Coarse translation search before the residual (pixels); kept only on a clear NCC gain. `0` disables it |
+| `refine_coarse_min_ncc` | `0` | Lowest score at which a coarse translation is kept. A gain between two noise-level scores is not evidence; `0` disables the test |
+| `refine_similarity` | `'intensity'` | Score used to accept a coarse translation or a residual. `'structure'` divides each image by its own smooth trend first, so the broad brightness pattern, which differs between the deep end of one slab and the top of the next, does not decide the alignment |
 
 #### Previews & Reports
 

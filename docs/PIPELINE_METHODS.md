@@ -424,6 +424,21 @@ translation, and it is kept only when tissue NCC rises by at least 0.05. Use it
 when manual transforms no longer fit because the slab placement under them
 changed.
 
+`refine_similarity` chooses the score behind both decisions. With `'intensity'`
+it is the NCC of the two projections inside the tissue. That score also
+correlates the broad brightness pattern, which is not the same on both sides
+of a joint: one projection is the deep end of a slab, the other the top of the
+next, and brightness falls with depth at a rate that varies across the section.
+Without agarose signal around the tissue to anchor it, the score can sit near
+zero at the correct alignment and rise for a shift of a hundred pixels that
+overlays the bright halves. With `'structure'` each projection is first divided
+by its own smooth trend (Gaussian, 20 px, inside the common tissue mask), so
+only finer structure is compared.
+
+`refine_coarse_min_ncc > 0` also asks for that score at the new position. The
+gain test alone accepts a move from -0.04 to 0.03, two positions at which the
+projections do not match.
+
 ### Stage 6.75 — Auto-exclude clusters (optional, `auto_exclude_enabled`)
 
 Consecutive pairs with $z_\text{correlation} < $ `auto_exclude_z_corr` (0.6)

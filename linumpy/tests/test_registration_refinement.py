@@ -100,3 +100,56 @@ def test_coarse_translation_ignores_shifts_past_the_limit():
     tx, ty, ncc = coarse_translation(fixed, moving, max_translation_px=10)
     assert (tx, ty) == (0.0, 0.0)
     assert ncc == pytest.approx(tissue_ncc(fixed, moving))
+
+
+def _two_sided_brightness(seed: int = 3, size: int = 240):
+    """Same anatomy seen with opposite brightness ramps, as at a slab joint."""
+    rng = np.random.default_rng(seed)
+    from scipy.ndimage import gaussian_filter
+
+    yy, xx = np.mgrid[:size, :size]
+    tissue = ((yy - size / 2) ** 2 + (xx - size / 2) ** 2) < (0.42 * size) ** 2
+    detail = gaussian_filter(rng.normal(size=(size, size)), 4.0)
+    anatomy = 1.0 + 0.5 * detail / detail.std()
+    ramp = (xx / (size - 1)).astype(np.float32)
+    fixed = np.where(tissue, anatomy * (0.3 + 1.4 * ramp), 0.0).astype(np.float32)
+    moving = np.where(tissue, anatomy * (1.7 - 1.4 * ramp), 0.0).astype(np.float32)
+    return np.clip(fixed, 0, None), np.clip(moving, 0, None)
+
+
+def test_structure_ncc_ignores_opposite_brightness_ramps():
+    from linumpy.registration.refinement import structure_ncc
+
+    fixed, moving = _two_sided_brightness()
+    # The plain score is dragged down by the ramps although the anatomy matches.
+    assert tissue_ncc(fixed, moving) < 0.4
+    assert structure_ncc(fixed, moving) > 0.8
+
+
+def test_structure_ncc_drops_when_the_anatomy_is_shifted():
+    from scipy.ndimage import shift as nd_shift
+
+    from linumpy.registration.refinement import structure_ncc
+
+    fixed, moving = _two_sided_brightness()
+    shifted = nd_shift(moving, (0, 25), order=1, cval=0.0)
+    assert structure_ncc(fixed, shifted) < 0.3
+
+
+def test_structure_ncc_needs_common_tissue():
+    from linumpy.registration.refinement import structure_ncc
+
+    assert np.isnan(structure_ncc(np.zeros((64, 64), np.float32), np.ones((64, 64), np.float32)))
+
+
+def test_coarse_translation_with_structure_score_recovers_the_shift_under_opposite_ramps():
+    from scipy.ndimage import shift as nd_shift
+
+    from linumpy.registration.refinement import coarse_translation, structure_ncc
+
+    fixed, moving = _two_sided_brightness()
+    moved = nd_shift(moving, (18, -30), order=1, cval=0.0)
+    tx, ty, score = coarse_translation(fixed, moved, max_translation_px=80, metric=structure_ncc)
+    # SimpleITK convention: positive tx moves content left.
+    assert (tx, ty) == pytest.approx((-30.0, 18.0), abs=1.5)
+    assert score > 0.7

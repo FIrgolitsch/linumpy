@@ -41,7 +41,7 @@ import SimpleITK as sitk
 
 from linumpy.cli.args import add_overwrite_arg
 from linumpy.io.zarr import read_omezarr
-from linumpy.registration.refinement import coarse_translation, register_refinement, tissue_ncc
+from linumpy.registration.refinement import coarse_translation, register_refinement, structure_ncc, tissue_ncc
 from linumpy.registration.transforms import create_transform
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -110,6 +110,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Search up to this far for a translation before the bounded residual.\n"
             "Recovers a manual that no longer fits the slab placement. 0 disables it. [%(default)s px]"
         ),
+    )
+    p.add_argument(
+        "--coarse_min_ncc",
+        type=float,
+        default=0.0,
+        help="Keep the coarse translation only if the score there reaches this value.\n"
+        "A gain alone is not enough when both scores are noise: -0.04 -> 0.03 is a\n"
+        "gain of 0.07 between two images that do not match at either position. [%(default)s]",
+    )
+    p.add_argument(
+        "--similarity",
+        choices=["intensity", "structure"],
+        default="intensity",
+        help="How the joint is scored when a coarse translation or a residual is accepted.\n"
+        "intensity: NCC of the two images inside the tissue.\n"
+        "structure: NCC after dividing each image by its own smooth trend, so the\n"
+        "broad brightness pattern, which differs between the deep end of one slab\n"
+        "and the top of the next, does not count. [%(default)s]",
     )
     p.add_argument(
         "--coarse_min_ncc_gain",
@@ -510,7 +528,8 @@ def main() -> None:
     warped_moving = _warp_moving(moving_aip, man_tx, man_ty, man_rot, man_cx, man_cy)
     fixed_target = _warp_moving(fixed_aip, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
     moving_on_fixed = _warp_moving(warped_moving, fixed_tx, fixed_ty, fixed_rot, fixed_cx, fixed_cy)
-    ncc_before = tissue_ncc(fixed_target, moving_on_fixed)
+    score = structure_ncc if args.similarity == "structure" else tissue_ncc
+    ncc_before = score(fixed_target, moving_on_fixed)
 
     # A manual can be tens of pixels off when the slab placement under it
     # changed. The bounded residual cannot reach that, so look for a large
@@ -519,8 +538,20 @@ def main() -> None:
     ncc_start = ncc_before
     start_moving = moving_on_fixed
     if args.coarse_max_translation_px > 0:
-        cand_tx, cand_ty, cand_ncc = coarse_translation(fixed_target, moving_on_fixed, args.coarse_max_translation_px)
+        cand_tx, cand_ty, cand_ncc = coarse_translation(
+            fixed_target, moving_on_fixed, args.coarse_max_translation_px, metric=score
+        )
         gained = np.isfinite(cand_ncc) and (not np.isfinite(ncc_before) or cand_ncc >= ncc_before + args.coarse_min_ncc_gain)
+        if gained and cand_ncc < args.coarse_min_ncc and (cand_tx != 0.0 or cand_ty != 0.0):
+            logger.info(
+                "z%d: coarse translation tx=%.1f ty=%.1f not used, score %.4f is below %.2f",
+                slice_id,
+                cand_tx,
+                cand_ty,
+                cand_ncc,
+                args.coarse_min_ncc,
+            )
+            gained = False
         if gained and (cand_tx != 0.0 or cand_ty != 0.0):
             coarse_tx, coarse_ty, ncc_start = cand_tx, cand_ty, cand_ncc
             start_moving = _warp_moving(moving_on_fixed, coarse_tx, coarse_ty, 0.0, final_center[0], final_center[1])
@@ -569,7 +600,7 @@ def main() -> None:
         cx = fixed_aip.shape[1] / 2.0
         cy = fixed_aip.shape[0] / 2.0
         refined_moving = _warp_moving(start_moving, delta_tx, delta_ty, delta_rot, cx, cy)
-        ncc_after = tissue_ncc(fixed_target, refined_moving)
+        ncc_after = score(fixed_target, refined_moving)
         if not _accept_residual(ncc_start, ncc_after, args.ncc_min_improve):
             reject_reason = "ncc"
             delta_tx, delta_ty, delta_rot = 0.0, 0.0, 0.0

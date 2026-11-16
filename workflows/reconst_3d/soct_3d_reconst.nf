@@ -1194,6 +1194,8 @@ process refine_manual_transforms {
         ? " --slicing_interval_mm ${params.registration_slicing_interval_mm}" : ""
     def coarse_flag = params.refine_coarse_max_translation_px > 0
         ? " --coarse_max_translation_px ${params.refine_coarse_max_translation_px}" : ""
+    def similarity_flag = params.refine_similarity != 'intensity' ? " --similarity ${params.refine_similarity}" : ""
+    def coarse_min_flag = params.refine_coarse_min_ncc > 0 ? " --coarse_min_ncc ${params.refine_coarse_min_ncc}" : ""
     """
     # manual_transforms_fingerprint ${manual_fp}
     # refine_against_corrected_fixed 1
@@ -1203,7 +1205,7 @@ process refine_manual_transforms {
         --max_translation_px ${params.refine_max_translation_px} \
         --max_rotation_deg ${params.refine_max_rotation_deg} \
         --manual_transforms_dir ${manual_transforms} \
-        --overlap_px ${params.refine_overlap_px}${manual_z_flag}${joined_flag}${coarse_flag} \
+        --overlap_px ${params.refine_overlap_px}${manual_z_flag}${joined_flag}${coarse_flag}${similarity_flag}${coarse_min_flag} \
         -f
     """
 

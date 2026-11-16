@@ -1,5 +1,7 @@
 """Refinement registration: best-Z search and small rotation/translation correction."""
 
+from collections.abc import Callable
+
 import numpy as np
 import SimpleITK as sitk
 from scipy.ndimage import binary_erosion, center_of_mass, gaussian_filter, sobel
@@ -88,19 +90,65 @@ def tissue_ncc(fixed: np.ndarray, moving: np.ndarray, threshold: float = 0.01) -
     return float((av * bv).sum() / den)
 
 
+def structure_ncc(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    threshold: float = 0.01,
+    sigma: float = 20.0,
+) -> float:
+    """Return NCC of the local structure of two images on voxels that are tissue in both.
+
+    Each image is divided by its own smooth trend (a Gaussian of width *sigma*
+    taken inside the common tissue mask) before the correlation, so only
+    structure finer than about *sigma* counts.
+
+    Plain :func:`tissue_ncc` also correlates the broad brightness pattern of
+    the tissue. At a slab joint that pattern is not the same on both sides:
+    one image is the deep end of a slab and the other the top of the next, and
+    brightness falls off with depth at a rate that varies across the section.
+    Where one side is brighter on the left and the other on the right the
+    plain NCC can sit near zero at the correct alignment and rise for a shift
+    of a hundred pixels that merely overlays the two bright halves.
+    """
+    mask = (fixed > threshold) & (moving > threshold)
+    if int(mask.sum()) < 100:
+        return float("nan")
+    weight = gaussian_filter(mask.astype(np.float32), sigma)
+    ok = mask & (weight > 0.25)
+    if int(ok.sum()) < 100:
+        return float("nan")
+    safe = np.maximum(weight, 1e-6)
+
+    def _local_contrast(image: np.ndarray) -> np.ndarray:
+        trend = gaussian_filter(np.where(mask, image, 0.0).astype(np.float32), sigma) / safe
+        return (image[ok] / np.maximum(trend[ok], 1e-6) - 1.0).astype(np.float64)
+
+    av = _local_contrast(fixed)
+    bv = _local_contrast(moving)
+    av = av - av.mean()
+    bv = bv - bv.mean()
+    den = float(np.sqrt((av * av).sum() * (bv * bv).sum()))
+    if den == 0.0:
+        return float("nan")
+    return float((av * bv).sum() / den)
+
+
 def coarse_translation(
     fixed: np.ndarray,
     moving: np.ndarray,
     max_translation_px: float,
     threshold: float = 0.01,
     min_overlap: float = 0.5,
+    metric: Callable[[np.ndarray, np.ndarray, float], float] = tissue_ncc,
 ) -> tuple[float, float, float]:
     """Find a translation of *moving* onto *fixed* that is too large for the bounded optimizer.
 
     Phase correlation proposes candidates from the tissue outlines and from the
     band-passed texture inside the tissue. The candidate with the highest
-    tissue NCC wins; identity is always a candidate, so the result is never
-    worse than doing nothing.
+    *metric* wins; identity is always a candidate, so the result is never
+    worse than doing nothing. *metric* is ``metric(fixed, moving, threshold)``,
+    :func:`tissue_ncc` by default; pass :func:`structure_ncc` when the two
+    images differ in their broad brightness pattern.
 
     Returns
     -------
@@ -108,13 +156,13 @@ def coarse_translation(
         Translation in the SimpleITK output->input convention used by the
         pairwise transforms (positive ``tx`` moves content left).
     ncc : float
-        Tissue NCC at that translation.
+        Value of *metric* at that translation.
     """
     fixed = fixed.astype(np.float32)
     moving = moving.astype(np.float32)
     mask_f = fixed > threshold
     mask_m = moving > threshold
-    best_ncc = tissue_ncc(fixed, moving, threshold)
+    best_ncc = metric(fixed, moving, threshold)
     best = (0.0, 0.0)
     if max_translation_px <= 0 or not mask_f.any() or not mask_m.any():
         return 0.0, 0.0, best_ncc
@@ -139,7 +187,7 @@ def coarse_translation(
         shifted = nd_shift(moving, (dy, dx), order=1, mode="constant", cval=0.0)
         if float((mask_f & (shifted > threshold)).sum()) < min_overlap * smaller:
             continue
-        ncc = tissue_ncc(fixed, shifted, threshold)
+        ncc = metric(fixed, shifted, threshold)
         if np.isfinite(ncc) and (not np.isfinite(best_ncc) or ncc > best_ncc):
             best_ncc = ncc
             best = (-dx, -dy)
