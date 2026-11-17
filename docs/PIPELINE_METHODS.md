@@ -269,6 +269,23 @@ Gaussian, restricted to the top half of Z) and the volume is cropped to
 $I[z_0 : z_0 + D]$ with $D = $ `crop_interface_out_depth` (default 600 µm)
 (<ref_file file="/Users/frans/code/linumpy/scripts/mosaic/linum_crop_3d_mosaic_below_interface.py" />).
 
+The crop is one depth for the whole slab, so it assumes a cut face parallel to
+the scan plane. When the blade and the scan plane are at an angle the cut face
+is a tilted plane in the volume: the crop then starts above the tissue on one
+side of the slab and inside it on the other, and the first slab cut after the
+sample is re-levelled is a wedge. With `crop_interface_flatten_tilt` the
+surface depth of every tissue A-line (the steepest rise of the smoothed
+signal) is fitted with a plane $z = a + b\,y + c\,x$, leaving out A-lines more
+than three planes from it. When at least 75 % of the tissue A-lines lie within
+three planes of the plane and it spans four planes or more over the tissue,
+every A-line is slid along Z, with linear interpolation, so that
+the plane is level at its median depth. The crop follows as before. A slab
+whose surface fits a plane less well is left as scanned; that includes the
+wedge itself, whose lower face is level. This is
+the axial counterpart of the angle between the motor axes in the tile
+position model of §4b (Lefebvre et al. 2017): one more angle between two
+frames that are nominally aligned.
+
 #### 3c. Depth attenuation compensation (`compensate_attenuation_enabled`)
 
 All four estimators share the Vermeer (2014) depth-resolved attenuation
@@ -476,6 +493,33 @@ Three modes (<ref_file file="/Users/frans/code/linumpy/scripts/stacking/linum_st
 
 Outlier overlaps are corrected by local median interpolation.
 
+With `stack_z_step_from_structure` the expected overlap is replaced, joint by
+joint, by a measured one. The cut is not always at the slicing interval: tissue
+can stand above the block face after a cut, a cut can be thicker or thinner,
+and after the sample is re-levelled one slab is a wedge. The next slab then
+matches several planes away from the nominal depth. Plain intensity cannot
+find that depth, because the top planes of every slab are the least attenuated
+and look alike (Lefebvre et al. 2017, who correlate the image gradient for this
+reason). Each plane is divided by its own smooth trend, which leaves the
+outlines of structures, and planes 2, 5 and 8 of the moving slab are matched
+against the fixed slab within $\pm$`stack_z_step_search_vox` planes of the
+interval. Only a joint that is clearly off is moved: the measured step has to
+differ from the interval by three planes or more, the three planes have to
+agree within one plane, the correlation has to be at least 0.15 and beat the
+one at the interval by 0.05, and the best depth must not sit at the edge of the
+search. Otherwise the interval is kept. Differences of a plane or two are
+within what the match can tell on slabs imaged far from focus or with a tilted
+cut face; moving those joints did not improve the stack.
+
+`stack_mask_above_surface_planes` handles a cut face that is tilted or uneven.
+A slab is cropped at one depth, the average surface, so on part of it the first
+planes are water. Those voxels are dim but above the background threshold, and
+pasted into the stack they would replace the tissue of the slab above. A voxel
+within the first N planes is zeroed when it, and every voxel above it on the
+same A-line, is below half of that A-line's brightest smoothed value in the top
+of the slab; the stack then keeps the slab above there. This is the per-A-line
+water/tissue mask of Lefebvre et al. 2017.
+
 #### 7c. Pairwise transform application
 
 Each slice's 2-D Euler transform is applied per Z-plane via SimpleITK
@@ -607,6 +651,7 @@ Key defaults from `workflows/reconst_3d/nextflow.config`:
 | `max_blend_refinement_px` | 10 | 2b |
 | `compensate_psf_method` | model_free | 3a |
 | `crop_interface_out_depth` | 600 µm | 3b |
+| `crop_interface_flatten_tilt` | false | 3b |
 | `compensate_attenuation_method` | li | 3c |
 | `compensate_attenuation_strength` | 0.3 | 3c |
 | `compensate_attenuation_calibrate_strength` | false | 3c |

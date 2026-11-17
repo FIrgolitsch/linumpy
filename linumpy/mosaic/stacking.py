@@ -296,6 +296,215 @@ def find_z_overlap(
     return best_overlap, best_corr
 
 
+def _structure_image(plane: np.ndarray, threshold: float, sigma: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return a plane with its smooth brightness trend divided out, and its tissue mask."""
+    from scipy.ndimage import gaussian_filter
+
+    mask = plane > threshold
+    weight = gaussian_filter(mask.astype(np.float32), sigma)
+    trend = gaussian_filter(np.where(mask, plane, 0.0).astype(np.float32), sigma) / np.maximum(weight, 1e-3)
+    return np.where(mask, plane / np.maximum(trend, 1e-6) - 1.0, 0.0).astype(np.float32), mask
+
+
+def _masked_ncc(a: np.ndarray, b: np.ndarray, mask: np.ndarray, min_pixels: int) -> float:
+    if int(mask.sum()) < min_pixels:
+        return float("nan")
+    x = a[mask] - a[mask].mean()
+    y = b[mask] - b[mask].mean()
+    return float((x * y).sum() / np.sqrt((x * x).sum() * (y * y).sum() + 1e-12))
+
+
+def find_z_step_structure(
+    fixed_vol: np.ndarray,
+    moving_vol: np.ndarray,
+    expected_step: int,
+    search_vox: int = 10,
+    moving_planes: Sequence[int] = (2, 5, 8),
+    tissue_threshold: float = 0.01,
+    downsample: int = 2,
+    min_score: float = 0.15,
+    max_spread: int = 1,
+    min_gain: float = 0.05,
+    min_deviation: int = 3,
+    min_pixels: int = 5000,
+) -> tuple[int | None, dict[str, Any]]:
+    """Measure how many planes below the fixed slab's top the moving slab starts.
+
+    The cut is not always where the slicing interval says. Tissue can stand
+    above the block face after a cut, a cut can be thicker or thinner, and a
+    slab can be a wedge; the next slab then matches several planes away from
+    the nominal depth and the stack shows a break at that joint.
+
+    Plain intensity cannot find the depth: the top planes of every slab look
+    alike because they are the least attenuated, so intensity aligns top with
+    top (Lefebvre et al. 2017, Neurophotonics 4, 041501, who correlate the
+    image gradient for that reason). Here each plane is divided by its own
+    smooth trend, which leaves the outlines of structures, and a few shallow
+    planes of the moving slab are each matched against the fixed slab over
+    ``expected_step +/- search_vox``.
+
+    Only a joint that is clearly off is reported: the step has to differ from
+    the expected one by ``min_deviation`` planes or more, the planes have to
+    agree with each other (within ``max_spread``), the match has to be real
+    (``min_score``) and clearly better than at the expected depth
+    (``min_gain``), and the best depth must not sit at the edge of the search.
+    Smaller differences are within what the match can tell on slabs imaged far
+    from focus or with a tilted cut face, where moving a joint by a plane or
+    two did not improve the stack; the caller keeps the expected step there.
+
+    Parameters
+    ----------
+    fixed_vol, moving_vol : np.ndarray
+        Slabs ``(Z, Y, X)`` on the same XY grid, plane 0 at the cut face.
+    expected_step : int
+        Planes between the two cut faces according to the slicing interval.
+    search_vox : int
+        Half-width of the search around ``expected_step``.
+    moving_planes : sequence of int
+        Planes of the moving slab that are matched.
+    tissue_threshold : float
+        Intensity at or below this is background.
+    downsample : int
+        XY step the match runs on.
+    min_score : float
+        Lowest median correlation at the best depth that counts as a match.
+    max_spread : int
+        Largest difference between the steps found for the moving planes.
+    min_gain : float
+        How much better than the expected depth the measured one has to score.
+    min_deviation : int
+        Smallest difference from the expected step that is reported.
+    min_pixels : int
+        Fewest common tissue pixels, at full resolution, for a correlation.
+
+    Returns
+    -------
+    int or None
+        The measured step, or ``None`` when it cannot be told.
+    dict
+        ``steps``, ``scores``, ``expected_scores`` per moving plane, the XY
+        ``shift`` used, and ``reason`` when the measurement was rejected.
+    """
+    from scipy.ndimage import shift as nd_shift
+    from skimage.registration import phase_cross_correlation
+
+    d = max(1, int(downsample))
+    fixed = np.asarray(fixed_vol[:, ::d, ::d], dtype=np.float32)
+    moving = np.asarray(moving_vol[:, ::d, ::d], dtype=np.float32)
+    sigma = 16.0 / d
+    info: dict[str, Any] = {"steps": [], "scores": [], "expected_scores": [], "shift": (0.0, 0.0), "reason": ""}
+    lo = max(0, expected_step - 2)
+    hi = min(fixed.shape[0], expected_step + 10)
+    if hi - lo < 2 or moving.shape[0] < 3:
+        info["reason"] = "too few planes"
+        return None, info
+
+    # The two slabs are only roughly aligned in XY at this point.
+    fixed_aip = fixed[lo:hi].mean(axis=0)
+    moving_aip = moving[: min(10, moving.shape[0])].mean(axis=0)
+    fixed_s, _ = _structure_image(fixed_aip, tissue_threshold, sigma)
+    moving_s, _ = _structure_image(moving_aip, tissue_threshold, sigma)
+    xy_shift, _, _ = phase_cross_correlation(fixed_s, moving_s, upsample_factor=4)
+    info["shift"] = (float(xy_shift[0]) * d, float(xy_shift[1]) * d)
+
+    at_edge = False
+    for plane in moving_planes:
+        if plane >= moving.shape[0]:
+            continue
+        moved = nd_shift(moving[plane], xy_shift, order=1)
+        moved_s, moved_mask = _structure_image(moved, tissue_threshold, sigma)
+        first = plane + expected_step - search_vox
+        candidates = [f for f in range(first, plane + expected_step + search_vox + 1) if 0 <= f < fixed.shape[0]]
+        scores = []
+        for f in candidates:
+            fixed_plane_s, fixed_mask = _structure_image(fixed[f], tissue_threshold, sigma)
+            scores.append(_masked_ncc(fixed_plane_s, moved_s, fixed_mask & moved_mask, min_pixels // (d * d)))
+        if not candidates or not np.isfinite(scores).any():
+            continue
+        best = int(np.nanargmax(scores))
+        last = plane + expected_step + search_vox
+        # A best match at the end of a range that the slab's depth cut short says
+        # nothing: the true depth may lie beyond the data.
+        if (best == len(candidates) - 1 and candidates[-1] < last) or (best == 0 and candidates[0] > first):
+            continue
+        nominal = plane + expected_step
+        info["steps"].append(candidates[best] - plane)
+        info["scores"].append(float(scores[best]))
+        info["expected_scores"].append(float(scores[candidates.index(nominal)]) if nominal in candidates else float("nan"))
+        at_edge = at_edge or candidates[best] in (first, last)
+
+    steps = info["steps"]
+    if len(steps) < 2:
+        info["reason"] = "too few planes"
+        return None, info
+    if max(steps) - min(steps) > max_spread:
+        info["reason"] = "planes disagree"
+        return None, info
+    if float(np.median(info["scores"])) < min_score:
+        info["reason"] = "weak match"
+        return None, info
+    if at_edge:
+        info["reason"] = "edge of search"
+        return None, info
+    step = round(float(np.median(steps)))
+    if abs(step - expected_step) < min_deviation:
+        info["reason"] = "within the expected step"
+        return None, info
+    gain = float(np.nanmean(np.array(info["scores"]) - np.array(info["expected_scores"])))
+    if not gain >= min_gain:
+        info["reason"] = "no better than expected"
+        return None, info
+    return step, info
+
+
+def zero_above_surface(
+    vol: np.ndarray,
+    max_planes: int = 12,
+    relative_level: float = 0.4,
+    tissue_threshold: float = 0.01,
+    sigma_xy: float = 3.0,
+) -> tuple[np.ndarray, int]:
+    """Zero the voxels of a slab that lie above its tissue surface.
+
+    A slab is cropped at one depth, the average surface. The cut does not
+    leave a flat surface, so on part of the slab the first planes are water
+    above the tissue. They are dim but not zero, and pasted into the stack
+    they replace the tissue of the slab above with a dark line. Lefebvre et
+    al. 2017 handle this with a water/tissue mask per A-line; this is that
+    mask, applied to the top ``max_planes``.
+
+    A voxel is above the surface when it, and every voxel above it on the
+    same A-line, is below ``relative_level`` of the slab's median tissue
+    level, and the A-line reaches that level further down. The level is one
+    number for the slab on purpose: measured against the A-line's own
+    brightest value, grey matter lying over white matter would count as
+    water.
+
+    Returns the slab with those voxels zeroed, and their count.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    n = min(int(max_planes), vol.shape[0])
+    if n < 1:
+        return vol, 0
+    top = np.asarray(vol[: min(vol.shape[0], n + 8)], dtype=np.float32)
+    tissue = top[top > tissue_threshold]
+    if tissue.size < 1000:
+        return vol, 0
+    level = relative_level * float(np.median(tissue))
+    smooth = gaussian_filter(top, (0.0, sigma_xy, sigma_xy))
+    dim = smooth[:n] < level
+    water = np.logical_and.accumulate(dim, axis=0)
+    water &= (smooth.max(axis=0) >= level)[None]
+    water &= top[:n] > 0
+    count = int(water.sum())
+    if count == 0:
+        return vol, 0
+    out = np.array(vol, dtype=np.float32, copy=True)
+    out[:n][water] = 0.0
+    return out, count
+
+
 def apply_2d_transform(
     image_2d: np.ndarray,
     transform: Any,

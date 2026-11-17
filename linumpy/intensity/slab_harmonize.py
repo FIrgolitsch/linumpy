@@ -129,8 +129,10 @@ def slab_log_gains(
 
     steps = np.full(max(0, n_slabs - 1), np.nan)
     for s in range(n_slabs - 1):
-        # Slabs on either side of a missing slice are not the same tissue.
-        if bounds[s + 1][0] - bounds[s][0] > period + max(2, period // 4):
+        # Slabs on either side of a missing slice are not the same tissue. A
+        # joint placed at its measured depth can be a few planes off the period;
+        # a missing slice is a whole period more.
+        if bounds[s + 1][0] - bounds[s][0] > period + period // 2:
             continue
         ok = (cover[s] > min_weight) & (cover[s + 1] > min_weight)
         if int(ok.sum()) >= min_cells:

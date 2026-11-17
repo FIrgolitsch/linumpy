@@ -222,9 +222,11 @@ linum-compensate-attenuation-inplace <input.ome.zarr> <output.ome.zarr> \
 | `--strength` | `0.3` | Multiplicative scale on the optical-depth correction (0..1). 1.0 = textbook Vermeer formula; <1 attenuates the correction. ~0.30 yields a near-flat depth profile on cropped 600 µm brain slices. |
 | `--calibrate_strength` | off | Fit the strength on the slab: the value at which the median tissue level is flat over the planes below the surface that go into the stack. `--strength` is used for a slab with too little tissue. |
 | `--calibrate_planes` | `20` | Last plane below the surface the tissue level is flattened over (the slicing interval in voxels). |
-| `--calibrate_max_strength` | `1.0` | Upper bound of the fitted strength. |
-| `--k` | `10` | XY median-filter kernel (voxels) applied before the Vermeer fit. `0` disables denoising. |
-| `--zshift` | `3` | Voxels under the water/tissue interface to ignore when fitting the exponential tail. Smaller values keep more of the shallow tissue. |
+| `--calibrate_max_strength` | `2.0` | Upper bound of the fitted strength (1.0 is the published formula). |
+| `--median_bin` | `2` | Run the XY median of `li` on a grid binned by this factor, with the radius scaled to match. 2 is about ten times faster and changes the gain by under 1 %; 1 filters the full grid. |
+| `--use_gpu` | off | Tissue mask, estimator core and lateral smoothing on the GPU. The median stays on the CPU. |
+| `--k` | `10` | Radius (voxels) of the XY median filter applied before the estimate; the window is `2k+1` voxels wide. `0` disables denoising. |
+| `--zshift` | `3` | No effect in this script: only read when the estimator has to find the tissue itself, and the script always passes its own tissue mask. Kept so existing commands keep working. |
 | `--snr_threshold_db` | `6.0` | Per-voxel SNR threshold (dB) for A-line truncation in `li`. Voxels with SNR below this are excluded from the fit. |
 | `--min_bias` | `0.05` | Floor applied to the bias field before division. Caps the maximum gain at `1/min_bias` and prevents noise amplification in deep voxels. |
 | `--mask_smoothing_sigma` | `2.0` | Gaussian sigma (XY voxels) for the Otsu tissue mask. |
@@ -293,8 +295,15 @@ Crop 3D mosaic below sample interface.
 linum-crop-3d-mosaic-below-interface <input.ome.zarr> <output.ome.zarr> \
     --depth <depth_um> \
     --crop_before_interface \
+    [--flatten_tilt] [--flatten_tilt_min_span <planes>] \
     --percentile_max <pmax>
 ```
+
+`--flatten_tilt` fits a plane to the tissue surface and slides every A-line
+along Z so the plane is level before the crop, when it spans at least
+`--flatten_tilt_min_span` planes (4) over the tissue and at least 75 % of the
+tissue A-lines lie within three planes of it. Use it when the cut face
+is tilted against the scan plane.
 
 ### linum-normalize-intensities-per-slice
 

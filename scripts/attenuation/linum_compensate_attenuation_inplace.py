@@ -45,6 +45,7 @@ import dask.array as da
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
+from linumpy.gpu import GPU_AVAILABLE, to_cpu
 from linumpy.intensity.attenuation import (
     calibrate_compensation_strength,
     get_attenuation_li2020,
@@ -100,9 +101,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--zshift",
         type=int,
         default=3,
-        help="Number of voxels under the water/tissue interface to ignore when fitting\n"
-        "the exponential signal extension. Smaller values use more of the shallow\n"
-        "tissue (often improves correction at the surface). [%(default)s]",
+        help="Voxels under the water/tissue interface to skip when the estimator has to find\n"
+        "the tissue itself. This script always passes its own tissue mask, so the value\n"
+        "has no effect here; it is kept so existing commands keep working. [%(default)s]",
     )
     p.add_argument(
         "--strength",
@@ -178,8 +179,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--calibrate_max_strength",
         type=float,
-        default=1.0,
-        help="Upper bound of the strength --calibrate_strength may pick. [%(default)s]",
+        default=2.0,
+        help="Upper bound of the strength --calibrate_strength may pick. 1.0 is the published\n"
+        "formula; slabs whose optical depth is underestimated need a little more (up\n"
+        "to about 1.5 on the brains this was tuned on). The gain stays capped by\n"
+        "--min_bias. [%(default)s]",
+    )
+    p.add_argument(
+        "--use_gpu",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run the tissue mask, the estimator core and the lateral smoothing on the GPU\n"
+        "when one is available. The XY median stays on the CPU. [%(default)s]",
     )
     p.add_argument("--n_levels", type=int, default=0, help="Pyramid levels in the output. [%(default)s]")
     return p
@@ -195,7 +206,8 @@ def main() -> None:
     vol = np.asarray(vol_zarr).astype(np.float32)  # (Z, Y, X)
 
     # Tissue mask (Z, Y, X)
-    mask_zyx = compute_tissue_mask(vol, smoothing_sigma=args.mask_smoothing_sigma)
+    use_gpu = args.use_gpu and GPU_AVAILABLE
+    mask_zyx = np.asarray(to_cpu(compute_tissue_mask(vol, smoothing_sigma=args.mask_smoothing_sigma, use_gpu=use_gpu)))
 
     # Vermeer expects (X, Y, Z) ordering.
     vol_xyz = np.moveaxis(vol, (0, 1, 2), (2, 1, 0))
@@ -234,6 +246,7 @@ def main() -> None:
             zshift=args.zshift,
             snr_threshold_db=args.snr_threshold_db,
             median_bin=args.median_bin,
+            use_gpu=use_gpu,
         )
     else:  # vermeer
         # The bare Vermeer estimator returns 1/cm directly; reuse smith's
@@ -256,7 +269,7 @@ def main() -> None:
     smooth_mask = mask_xyz
     if args.lateral_footprint:
         smooth_mask = tissue_footprint_mask(mask_xyz)
-    optical_depth = smooth_optical_depth_xy(optical_depth, smooth_mask, args.lateral_sigma)
+    optical_depth = smooth_optical_depth_xy(optical_depth, smooth_mask, args.lateral_sigma, use_gpu=use_gpu)
     strength = args.strength
     if args.calibrate_strength:
         fitted = calibrate_compensation_strength(

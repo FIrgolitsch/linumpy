@@ -499,7 +499,7 @@ def tissue_footprint_mask(mask: np.ndarray) -> np.ndarray:
     return np.broadcast_to(mask.any(axis=2, keepdims=True), mask.shape)
 
 
-def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
+def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: float, use_gpu: bool = False) -> np.ndarray:
     """Smooth a cumulative optical depth across A-lines, inside the tissue mask.
 
     Per-A-line truncation and hole filling leave flat attenuation patches with
@@ -514,9 +514,23 @@ def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: 
         Tissue mask, same shape. Voxels outside keep their value.
     sigma : float
         Lateral Gaussian sigma in voxels. ``<= 0`` is a no-op.
+    use_gpu : bool
+        Filter on the GPU when CuPy is available (same result to float
+        precision).
     """
     if sigma <= 0:
         return optical_depth
+    if use_gpu and GPU_AVAILABLE:
+        import cupy as cp
+        from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
+
+        mask_g = cp.asarray(mask.astype(bool, copy=False))
+        od_g = cp.asarray(optical_depth, dtype=cp.float32)
+        sig = (sigma, sigma, 0.0)
+        weight_g = gpu_gaussian_filter(mask_g.astype(cp.float32), sig)
+        smoothed_g = gpu_gaussian_filter(cp.where(mask_g, od_g, 0.0), sig)
+        smoothed_g /= cp.maximum(weight_g, 1e-3)
+        return cp.asnumpy(cp.where(mask_g, smoothed_g, od_g)).astype(optical_depth.dtype, copy=False)
     mask = mask.astype(bool, copy=False)
     # Plane by plane on contiguous 2-D arrays, which is the same filter as one
     # 3-D call with no smoothing along depth and about twice as fast. A mask

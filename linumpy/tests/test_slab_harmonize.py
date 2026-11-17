@@ -158,3 +158,13 @@ def test_harmonize_target_level_alone_is_one_scale_factor():
     ratio = vol[mask] / original[mask]
     assert ratio.std() < 1e-5
     assert ratio.mean() == pytest.approx(info["scale"], rel=1e-4)
+
+
+def test_slab_gains_keep_a_joint_a_few_planes_off_the_period():
+    vol, mask = _tissue()
+    bounds = [(0, 10), (10, 23), (23, 33), (33, 43), (43, 53), (53, 63), (63, 80)]
+    level, weight = coarse_log_tissue(vol, mask, block=8)
+    _gains, info = slab_log_gains(level, weight, bounds)
+    # Slab 1 is 13 planes tall: a measured joint, not a missing slice.
+    assert np.isfinite(info["steps"][1])
+    assert np.isfinite(info["steps"][0])

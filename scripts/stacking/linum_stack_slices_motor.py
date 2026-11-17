@@ -44,6 +44,7 @@ from linumpy.mosaic.stacking import (
     estimate_z_blend_xy_shift,
     expected_z_overlap,
     find_z_overlap,
+    find_z_step_structure,
     flatten_slice_z_profile,
     inplane_output_point,
     overlap_z_gain_curve,
@@ -54,6 +55,7 @@ from linumpy.mosaic.stacking import (
     scale_slice_to_median,
     slice_tissue_median,
     write_slab_z_starts,
+    zero_above_surface,
 )
 from linumpy.stack_alignment.io import load_shifts_csv
 from linumpy.stack_alignment.motor_stack import (
@@ -208,6 +210,29 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Do not use the Z saved in the manual alignments. Manual XY and\n"
         "rotation still apply; Z comes from --use_expected_overlap or the\n"
         "pairwise registration.",
+    )
+    p.add_argument(
+        "--z_step_from_structure",
+        action="store_true",
+        help="With --use_expected_overlap, measure the depth of each joint by matching the\n"
+        "outlines of structures between the two slabs and use it when the match is\n"
+        "clear; keep the slicing interval otherwise. Corrects joints where the cut\n"
+        "was not at the nominal depth (tissue standing above the block face, a\n"
+        "thicker cut, a wedge).",
+    )
+    p.add_argument(
+        "--z_step_search_vox",
+        type=int,
+        default=10,
+        help="Half-width of the search of --z_step_from_structure around the slicing\ninterval, in planes. [%(default)s]",
+    )
+    p.add_argument(
+        "--mask_above_surface_planes",
+        type=int,
+        default=0,
+        help="Zero the voxels above each A-line's tissue surface within this many planes\n"
+        "of the top of every incoming slab, so water above an uneven cut is not pasted\n"
+        "over the slab above. 0 disables. [%(default)s]",
     )
     p.add_argument(
         "--z_overlap_min_corr",
@@ -777,6 +802,7 @@ def main() -> None:
     prev_id = first_id
     z_match_calls = 0
 
+    measured_z_steps: dict = {}
     for _i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         with span("stack_reads", device="cpu"):
@@ -843,6 +869,32 @@ def main() -> None:
             id_step = max(1, int(slice_id) - int(prev_id))
             overlap = expected_z_overlap(prev_vol.shape[0], moving_z or 0, interval_voxels, id_step)
             corr = 0.0
+            if args.z_step_from_structure and id_step == 1:
+                step, step_info = find_z_step_structure(
+                    prev_vol,
+                    vol,
+                    interval_voxels,
+                    search_vox=args.z_step_search_vox,
+                    tissue_threshold=args.blend_tissue_threshold,
+                )
+                if step is not None:
+                    measured_overlap = prev_vol.shape[0] - step
+                    if measured_overlap != overlap:
+                        logger.info(
+                            "Slice %s: measured Z step %s planes (interval %s), steps %s, scores %s",
+                            slice_id,
+                            step,
+                            interval_voxels,
+                            step_info["steps"],
+                            [round(x, 2) for x in step_info["scores"]],
+                        )
+                    overlap = measured_overlap
+                    corr = float(np.median(step_info["scores"]))
+                    measured_z_steps[slice_id] = step
+                else:
+                    logger.debug(
+                        "Slice %s: Z step not measured (%s), steps %s", slice_id, step_info["reason"], step_info["steps"]
+                    )
             if id_step > 1:
                 logger.info(
                     "Slice %s→%s: missing-slice gap (id_step=%s), expected overlap=%s vx (negative = empty Z, not glued)",
@@ -1233,6 +1285,13 @@ def main() -> None:
             vol = crop_moving_volume(vol, moving_z_start)
             logger.debug("Slice %s: skipped first %s z-slices", slice_id, moving_z_start)
 
+        if args.mask_above_surface_planes > 0:
+            vol, n_water = zero_above_surface(
+                vol, max_planes=args.mask_above_surface_planes, tissue_threshold=args.blend_tissue_threshold
+            )
+            if n_water:
+                logger.debug("Slice %s: zeroed %s voxels above the tissue surface", slice_id, n_water)
+
         # After crop, z=0 is the interface with the previous slab — keep gain=1
         # there and boost toward the next slice's top in the Z-end overlap.
         vol = _apply_overlap_z_gain_to_slice(vol, slice_id)
@@ -1416,7 +1475,7 @@ def main() -> None:
         # estimate -- so the CSV preserves the measured `correlation` value
         # while still flagging which pairs were not trusted.
         if args.use_expected_overlap:
-            overlap_src = "expected"
+            overlap_src = "structure" if sid in measured_z_steps else "expected"
         elif has_tfm:
             overlap_src = "registration"
         elif match.get("correlation_fallback_used"):

@@ -870,11 +870,12 @@ process crop_interface {
     path ("*_metrics.json"), optional: true, emit: metrics
 
     script:
+    def tilt_flag = params.crop_interface_flatten_tilt ? "--flatten_tilt " : ""
     """
     linum-crop-3d-mosaic-below-interface ${image} "slice_z${slice_id}_crop_interface.ome.zarr" \
         --depth ${params.crop_interface_out_depth} \
         --crop_before_interface \
-        --percentile_max ${params.clip_percentile_upper} --n_levels 0
+        ${tilt_flag}--percentile_max ${params.clip_percentile_upper} --n_levels 0
     """
 
     stub:
@@ -894,6 +895,7 @@ process compensate_attenuation {
     def footprint_flag = params.compensate_attenuation_lateral_footprint ? "--lateral_footprint " : ""
     def lateral_flag = params.compensate_attenuation_lateral_sigma > 0 ? "--lateral_sigma ${params.compensate_attenuation_lateral_sigma} ${footprint_flag}" : ""
     def calibrate_flag = params.compensate_attenuation_calibrate_strength ? "--calibrate_strength --calibrate_planes ${params.compensate_attenuation_calibrate_planes} " : ""
+    def attn_gpu_flag = (params.use_gpu && params.compensate_attenuation_use_gpu) ? "--use_gpu " : ""
     """
     linum-compensate-attenuation-inplace ${image} "slice_z${slice_id}_attn_corr.ome.zarr" \
         --method ${params.compensate_attenuation_method} \
@@ -904,7 +906,7 @@ process compensate_attenuation {
         --zshift ${params.compensate_attenuation_zshift} \
         --strength ${params.compensate_attenuation_strength} \
         --snr_threshold_db ${params.compensate_attenuation_snr_threshold_db} \
-        ${lateral_flag}${calibrate_flag}--n_levels 0
+        ${lateral_flag}${calibrate_flag}${attn_gpu_flag}--n_levels 0
     """
 
     stub:
@@ -1314,12 +1316,15 @@ process stack {
     // Emitted only when set, so subjects that leave it at 0 keep their cached stack.
     def cut_face_flag = params.stack_blend_cut_face_planes > 0 ? " --blend_cut_face_planes ${params.stack_blend_cut_face_planes}" : ""
     def zreg_flag = params.z_overlap_from_registration ? " --z_from_registration" : ""
+    // Emitted only when set, so subjects that leave them off keep their cached stack.
+    def zstep_flag = params.stack_z_step_from_structure ? " --z_step_from_structure --z_step_search_vox ${params.stack_z_step_search_vox}" : ""
+    def surface_flag = params.stack_mask_above_surface_planes > 0 ? " --mask_above_surface_planes ${params.stack_mask_above_surface_planes}" : ""
     def ignore_manual_z_flag = params.use_manual_z_overlap ? "" : " --ignore_manual_z"
     // In the hashed script block so a default-only Python change cannot cache-hit.
     def blend_tissue_flag = " --blend_tissue_threshold ${params.stack_overlap_z_gain_threshold}"
     def blend_refine_flag = " --blend_refinement_px ${params.blend_refinement_px} --blend_refinement_ncc_min_improve ${params.blend_refinement_ncc_min_improve} --blend_refinement_ncc_min_absolute ${params.blend_refinement_ncc_min_absolute ?: 0.2}"
     def slice_step_flag = " --max_slice_step_px ${params.stack_max_slice_step_px}"
-    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag + flatten_flag + outline_flag + notch_flag + cut_face_flag + zreg_flag + ignore_manual_z_flag
+    def options = Helpers.stackBlendingArgs(params) + Helpers.stackZMatchingArgs(params) + Helpers.stackPairwiseTransformArgs(params) + Helpers.stackSliceConfigArg(slice_config) + Helpers.stackManualOverrideArg(params) + Helpers.stackCumulativeArgs(params) + Helpers.stackSmoothingArgs(params) + " --no_xy_shift" + gpu_flag + Helpers.pyramidArgs(params) + overlap_z_gain_flag + blend_flag + blend_tissue_flag + blend_refine_flag + slice_step_flag + flatten_flag + outline_flag + notch_flag + cut_face_flag + zreg_flag + ignore_manual_z_flag + zstep_flag + surface_flag
 
     def annotated_args = Helpers.annotatedScreenshotArgs(params, slice_ids_str)
     def manual_fp = Helpers.manualTransformsFingerprint(params)

@@ -18,7 +18,7 @@ import dask.array as da
 import numpy as np
 import zarr
 
-from linumpy.geometry.crop import crop_below_interface
+from linumpy.geometry.crop import crop_below_interface, fit_surface_tilt, flatten_surface_tilt
 from linumpy.geometry.resampling import resolution_is_mm
 from linumpy.io.zarr import create_tempstore, read_omezarr, save_omezarr
 from linumpy.metrics import collect_interface_crop_metrics
@@ -57,6 +57,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--n_levels", type=int, default=5, help="Number of levels in pyramid representation. [%(default)s]")
     p.add_argument(
+        "--flatten_tilt",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fit a plane to the tissue surface and slide every A-line along Z so that the\n"
+        "plane is level before the crop. For slabs whose cut face is tilted against the\n"
+        "scan plane: a crop at one depth otherwise starts above the tissue on one side\n"
+        "and inside it on the other. [%(default)s]",
+    )
+    p.add_argument(
+        "--flatten_tilt_min_span",
+        type=float,
+        default=4.0,
+        help="Level the surface only when the fitted plane spans at least this many planes\nover the tissue. [%(default)s]",
+    )
+    p.add_argument(
         "--max_interface_depth_fraction",
         type=float,
         default=0.5,
@@ -81,6 +96,20 @@ def main() -> None:
     vol_data = np.nan_to_num(vol[:], nan=0.0, posinf=0.0, neginf=0.0)
     # res may be stored in mm (NGFF convention) or µm (legacy). Convert to µm.
     resolution_um = res[0] * 1000 if resolution_is_mm(res) else float(res[0])
+
+    if args.flatten_tilt:
+        plane, tilt = fit_surface_tilt(vol_data, max_depth_fraction=max(args.max_interface_depth_fraction, 0.75))
+        summary = (
+            f"tilt {tilt['tilt_y']:+.1f} / {tilt['tilt_x']:+.1f} planes per 1000 voxels (Y / X), "
+            f"span {tilt['span']:.1f} planes, {100 * tilt['inliers']:.0f} % of tissue A-lines within 3 planes"
+        )
+        if plane is None:
+            print(f"Surface tilt not fitted: {summary}")
+        elif tilt["span"] < args.flatten_tilt_min_span:
+            print(f"Surface left as it is: {summary}")
+        else:
+            print(f"Surface levelled: {summary}")
+            vol_data = flatten_surface_tilt(vol_data, plane, tilt["reference"])
 
     vol_crop, avg_iface = crop_below_interface(
         vol_data,

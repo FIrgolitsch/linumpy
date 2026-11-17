@@ -140,7 +140,8 @@ With `--calibrate_strength` the optical depth keeps its lateral pattern
 and only its scale is fitted: the strength is the value at which the
 median tissue level has no trend over planes 2 to `--calibrate_planes`
 below the surface (the planes that go into the stack). The fit is a
-bisection between 0 and `--calibrate_max_strength`; `--strength` is used
+bisection between 0 and `--calibrate_max_strength` (2.0; 1.0 is the published
+formula, and with the tail fitted at the crop most slabs land between 0.5 and 1.5); `--strength` is used
 for a slab with too little tissue. On one brain whose sample height
 changed mid-acquisition the fitted values were 0.03–0.18 for the slabs
 with the surface at the top of the scan window and 0.56–0.86 for the

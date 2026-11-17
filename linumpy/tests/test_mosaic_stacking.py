@@ -652,3 +652,124 @@ def test_refine_z_blend_overlap_shifts_slab_when_accepted(monkeypatch):
     ncc_before = tissue_ncc(blob, moving[0])
     ncc_after = tissue_ncc(blob, refined[0])
     assert ncc_after > ncc_before
+
+
+def _textured_block(nz: int = 80, shape: tuple = (160, 160), seed: int = 0) -> np.ndarray:
+    """Tissue whose fine structure changes smoothly with depth, in a round footprint."""
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(seed)
+    noise = gaussian_filter(rng.normal(size=(nz, *shape)).astype(np.float32), (4.0, 3.0, 3.0))
+    noise /= noise.std()
+    yy, xx = np.mgrid[: shape[0], : shape[1]]
+    inside = ((yy - shape[0] / 2) ** 2 + (xx - shape[1] / 2) ** 2) < (0.45 * shape[0]) ** 2
+    return np.where(inside[None], 0.3 * (1.0 + 0.4 * noise), 0.0).astype(np.float32)
+
+
+def _slab(block: np.ndarray, top: int, depth: int = 44) -> np.ndarray:
+    """A slab cut from the block: brightest at its own top, as OCT is."""
+    decay = np.exp(-0.03 * np.arange(depth, dtype=np.float32))[:, None, None]
+    return block[top : top + depth] * decay
+
+
+@pytest.mark.parametrize("true_step", [26, 16, 23])
+def test_find_z_step_structure_recovers_a_step_that_is_clearly_off(true_step):
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block()
+    fixed, moving = _slab(block, 0), _slab(block, true_step)
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert step == true_step, info
+    assert max(info["steps"]) - min(info["steps"]) <= 1
+
+
+@pytest.mark.parametrize("true_step", [20, 21, 18])
+def test_find_z_step_structure_leaves_a_joint_near_the_interval_alone(true_step):
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block()
+    fixed, moving = _slab(block, 0), _slab(block, true_step)
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert step is None
+    assert info["reason"] == "within the expected step"
+    assert round(float(np.median(info["steps"]))) == true_step
+
+
+def test_find_z_step_structure_follows_a_lateral_shift():
+    from scipy.ndimage import shift as nd_shift
+
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block(seed=3)
+    fixed = _slab(block, 0)
+    moving = nd_shift(_slab(block, 23), (0, 6, -4), order=1)
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert step == 23, info
+    assert abs(info["shift"][0] + 6) < 2 and abs(info["shift"][1] - 4) < 2
+
+
+def test_find_z_step_structure_declines_when_it_cannot_tell():
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    fixed = _slab(_textured_block(seed=1), 0)
+    unrelated = _slab(_textured_block(seed=2), 20)
+    step, info = find_z_step_structure(fixed, unrelated, expected_step=20, search_vox=8, min_pixels=500)
+    assert step is None
+    assert info["reason"]
+    # Too little depth to search in.
+    assert find_z_step_structure(fixed[:5], unrelated, expected_step=20)[0] is None
+
+
+def test_find_z_step_structure_does_not_trust_a_match_at_the_end_of_a_short_slab():
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block(seed=4)
+    fixed, moving = _slab(block, 0, depth=30), _slab(block, 26)
+    # Planes 5 and 8 of the moving slab match fixed planes 31 and 34, which a
+    # 30-plane slab does not have; only plane 2 can be placed, and one plane is
+    # not enough.
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert step is None
+    assert info["steps"] == [26]
+
+
+def test_zero_above_surface_follows_a_tilted_cut():
+    from linumpy.mosaic.stacking import zero_above_surface
+
+    nz, ny, nx = 30, 40, 60
+    surface = np.round(np.linspace(0, 8, nx)).astype(int)  # the cut dips to the right
+    vol = np.full((nz, ny, nx), 0.3, dtype=np.float32)
+    z = np.arange(nz)[:, None, None]
+    water = np.broadcast_to(z < surface[None, None, :], vol.shape)
+    vol[water] = 0.03  # dim, but above the stacker's background threshold
+    out, count = zero_above_surface(vol, max_planes=12, tissue_threshold=0.01, sigma_xy=1.0)
+    assert count > 0
+    inner = (slice(None), slice(5, -5), slice(6, -6))
+    # Away from the smoothing at the step edges the water is gone and the tissue is untouched.
+    assert (out[inner][water[inner]] == 0).mean() > 0.9
+    np.testing.assert_array_equal(out[inner][~water[inner]], vol[inner][~water[inner]])
+    # A slab with a flat cut is returned as it is.
+    flat = np.full((nz, ny, nx), 0.3, dtype=np.float32)
+    same, none = zero_above_surface(flat, max_planes=12)
+    assert none == 0 and same is flat
+
+
+def test_zero_above_surface_leaves_agarose_and_dim_tissue_tops_alone():
+    from linumpy.mosaic.stacking import zero_above_surface
+
+    vol = np.full((30, 20, 20), 0.3, dtype=np.float32)
+    vol[:3] *= 0.74  # the first planes of a slab are a little dim in all tissue
+    vol[:, :, :5] = 0.004  # nothing here: below the tissue threshold
+    out, count = zero_above_surface(vol, max_planes=12, tissue_threshold=0.01, sigma_xy=0.5)
+    assert count == 0
+    assert out is vol
+
+
+def test_zero_above_surface_keeps_grey_matter_that_lies_over_white_matter():
+    from linumpy.mosaic.stacking import zero_above_surface
+
+    vol = np.full((30, 20, 20), 0.2, dtype=np.float32)
+    vol[6:, :, 10:] = 0.8  # bright white matter under 6 planes of grey
+    out, count = zero_above_surface(vol, max_planes=12, tissue_threshold=0.01, sigma_xy=0.5)
+    assert count == 0
+    assert out is vol
