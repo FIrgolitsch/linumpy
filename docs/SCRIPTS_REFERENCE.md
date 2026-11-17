@@ -224,7 +224,7 @@ linum-compensate-attenuation-inplace <input.ome.zarr> <output.ome.zarr> \
 | `--calibrate_planes` | `20` | Last plane below the surface the tissue level is flattened over (the slicing interval in voxels). |
 | `--calibrate_max_strength` | `2.0` | Upper bound of the fitted strength (1.0 is the published formula). |
 | `--median_bin` | `2` | Run the XY median of `li` on a grid binned by this factor, with the radius scaled to match. 2 is about ten times faster and changes the gain by under 1 %; 1 filters the full grid. |
-| `--use_gpu` | off | Tissue mask, estimator core and lateral smoothing on the GPU. The median stays on the CPU. |
+| `--use_gpu` | off | Tissue mask, the XY median of `li`, estimator core and lateral smoothing on the GPU. |
 | `--k` | `10` | Radius (voxels) of the XY median filter applied before the estimate; the window is `2k+1` voxels wide. `0` disables denoising. |
 | `--zshift` | `3` | No effect in this script: only read when the estimator has to find the tissue itself, and the script always passes its own tissue mask. Kept so existing commands keep working. |
 | `--snr_threshold_db` | `6.0` | Per-voxel SNR threshold (dB) for A-line truncation in `li`. Voxels with SNR below this are excluded from the fit. |

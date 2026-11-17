@@ -189,8 +189,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--use_gpu",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Run the tissue mask, the estimator core and the lateral smoothing on the GPU\n"
-        "when one is available. The XY median stays on the CPU. [%(default)s]",
+        help="Run the tissue mask, the XY median of the ``li`` method, the estimator core\n"
+        "and the lateral smoothing on the GPU when one is available. [%(default)s]",
     )
     p.add_argument("--n_levels", type=int, default=0, help="Pyramid levels in the output. [%(default)s]")
     return p
@@ -208,6 +208,11 @@ def main() -> None:
     # Tissue mask (Z, Y, X)
     use_gpu = args.use_gpu and GPU_AVAILABLE
     mask_zyx = np.asarray(to_cpu(compute_tissue_mask(vol, smoothing_sigma=args.mask_smoothing_sigma, use_gpu=use_gpu)))
+    if use_gpu:
+        # The mask leaves several copies of the slab in CuPy's pool.
+        import cupy as cp
+
+        cp.get_default_memory_pool().free_all_blocks()
 
     # Vermeer expects (X, Y, Z) ordering.
     vol_xyz = np.moveaxis(vol, (0, 1, 2), (2, 1, 0))

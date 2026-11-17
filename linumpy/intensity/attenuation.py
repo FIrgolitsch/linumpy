@@ -31,7 +31,32 @@ from linumpy.intensity.normalize import eqhist, normalize
 # ---------------------------------------------------------------------------
 
 
-def _median_xy_filter(vol: np.ndarray, k: int, bin_xy: int = 1) -> np.ndarray:
+def _release_gpu_memory() -> None:
+    """Hand the blocks CuPy keeps for reuse back to the device.
+
+    Each stage here needs a few copies of the slab for a moment. Left in the
+    pool they add up to several GB per process, which is what limits how many
+    slabs can share a GPU.
+    """
+    import cupy as cp
+
+    cp.get_default_memory_pool().free_all_blocks()
+
+
+def _median_xy(vol: np.ndarray, radius: int, use_gpu: bool) -> np.ndarray:
+    """Median over a ``(2 * radius + 1)`` square in XY of an ``(X, Y, Z)`` volume, edges repeated."""
+    if use_gpu and GPU_AVAILABLE:
+        import cupy as cp
+        from cupyx.scipy.ndimage import median_filter as gpu_median_filter
+
+        size = 2 * radius + 1
+        out = cp.asnumpy(gpu_median_filter(cp.asarray(vol), size=(size, size, 1), mode="nearest"))
+        _release_gpu_memory()
+        return out
+    return sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(vol), (0, radius, radius)))
+
+
+def _median_xy_filter(vol: np.ndarray, k: int, bin_xy: int = 1, use_gpu: bool = False) -> np.ndarray:
     """XY median filter (no axial smoothing). ``k <= 0`` is a no-op.
 
     ``k`` is the radius of the window, which is ``2k + 1`` voxels wide.
@@ -40,18 +65,20 @@ def _median_xy_filter(vol: np.ndarray, k: int, bin_xy: int = 1) -> np.ndarray:
     voxels in XY, filtered there with the radius scaled down to match, and put
     back on the full grid. The window covers the same area; the cost falls with
     about the fourth power of ``bin_xy``.
+
+    With ``use_gpu`` the median runs on the GPU when one is available, which
+    gives the same values.
     """
     if k <= 0:
         return vol
     if bin_xy <= 1:
-        return sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(vol), (0, k, k)))
+        return _median_xy(vol, k, use_gpu)
     nx, ny, nz = vol.shape
     padded = np.pad(vol, ((0, (-nx) % bin_xy), (0, (-ny) % bin_xy), (0, 0)), mode="edge")
     small = padded.reshape(padded.shape[0] // bin_xy, bin_xy, padded.shape[1] // bin_xy, bin_xy, nz).mean(
         axis=(1, 3), dtype=np.float32
     )
-    radius = max(1, round(k / bin_xy))
-    small = sitk.GetArrayFromImage(sitk.Median(sitk.GetImageFromArray(small), (0, radius, radius)))
+    small = _median_xy(small, max(1, round(k / bin_xy)), use_gpu)
     return np.repeat(np.repeat(small, bin_xy, axis=0), bin_xy, axis=1)[:nx, :ny].astype(vol.dtype, copy=False)
 
 
@@ -141,11 +168,12 @@ def _vermeer_core_gpu(vol: np.ndarray, dz: float, mask: np.ndarray, C: np.ndarra
     tail = cp.zeros_like(cum_rev)
     tail[:, :, 1:] = cum_rev[:, :, :-1]
     profile = tail[:, :, ::-1] + C_g
-    mu = cp.zeros_like(vol_g)
     pos = profile > 0
     ratio = cp.where(pos, vol_g / cp.where(pos, profile, 1), 0)
-    mu = cp.where(pos, cp.log1p(ratio) / (2.0 * dz * 100.0), 0)
-    return cp.asnumpy(mu)
+    mu = cp.asnumpy(cp.where(pos, cp.log1p(ratio) / (2.0 * dz * 100.0), 0))
+    del vol_g, mask_g, C_g, masked, cum_rev, tail, profile, pos, ratio
+    _release_gpu_memory()
+    return mu
 
 
 def get_attenuation_vermeer2013(
@@ -439,7 +467,7 @@ def get_attenuation_li2020(
     ----------
     Li et al., Biomed. Opt. Express 11, 672 (2020).
     """
-    vol = _median_xy_filter(vol, k, median_bin)
+    vol = _median_xy_filter(vol, k, median_bin, use_gpu=use_gpu)
     if mask is None:
         mask = _auto_tissue_mask(vol, zshift)
     mask = mask.astype(bool)
@@ -530,7 +558,10 @@ def smooth_optical_depth_xy(optical_depth: np.ndarray, mask: np.ndarray, sigma: 
         weight_g = gpu_gaussian_filter(mask_g.astype(cp.float32), sig)
         smoothed_g = gpu_gaussian_filter(cp.where(mask_g, od_g, 0.0), sig)
         smoothed_g /= cp.maximum(weight_g, 1e-3)
-        return cp.asnumpy(cp.where(mask_g, smoothed_g, od_g)).astype(optical_depth.dtype, copy=False)
+        out = cp.asnumpy(cp.where(mask_g, smoothed_g, od_g)).astype(optical_depth.dtype, copy=False)
+        del mask_g, od_g, weight_g, smoothed_g
+        _release_gpu_memory()
+        return out
     mask = mask.astype(bool, copy=False)
     # Plane by plane on contiguous 2-D arrays, which is the same filter as one
     # 3-D call with no smoothing along depth and about twice as fast. A mask
