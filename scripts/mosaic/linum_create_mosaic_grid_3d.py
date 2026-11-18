@@ -184,7 +184,11 @@ def _resize_and_write_shard(proc_params: dict, loaded_tiles: list) -> None:
         tile_size = params["tile_size"]
 
         tile_size_tuple = tuple(tile_size)
-        if np.iscomplexobj(vol):
+        if tuple(vol.shape) == tile_size_tuple:
+            # Native resolution (--resolution -1): the resize is the identity,
+            # so the tile is not sent to the GPU and back.
+            pass
+        elif np.iscomplexobj(vol):
             real_resized = resize(vol.real, tile_size_tuple, order=1, anti_aliasing=True, use_gpu=use_gpu)
             imag_resized = resize(vol.imag, tile_size_tuple, order=1, anti_aliasing=True, use_gpu=use_gpu)
             vol = real_resized + 1j * imag_resized

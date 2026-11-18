@@ -76,3 +76,31 @@ def test_execution_from_list(script_runner, tmp_path):
     )
     assert ret.success
     _assert_omezarr_zyx_contract(output, input_path / "tile_x00_y00_z01")
+
+
+def test_native_resolution_keeps_the_voxels(script_runner, tmp_path):
+    """At --resolution -1 the tiles are stored as loaded, with no resampling."""
+    import numpy as np
+
+    input_path = Path(get_data("raw_tiles"))
+    output = tmp_path / "output.ome.zarr"
+    tiles = ["tile_x00_y00_z01", "tile_x01_y00_z01", "tile_x00_y01_z01", "tile_x01_y01_z01"]
+    ret = script_runner.run(
+        [
+            "linum-create-mosaic-grid-3d",
+            output,
+            "--from_tiles_list",
+            *[str(input_path / t) for t in tiles],
+            "-r",
+            -1,
+            "--no-preprocess",
+            "--no-fix_galvo_shift",
+        ]
+    )
+    assert ret.success
+    mosaic = cast(zarr.Array, zarr.open_group(output, mode="r")["0"])
+    for name, (ix, iy) in zip(tiles, [(0, 0), (1, 0), (0, 1), (1, 1)], strict=True):
+        vol = OCT(input_path / name).load_image(crop=True, fix_galvo_shift=False, fix_camera_shift=False)
+        _, ny, nx = vol.shape
+        stored = np.asarray(mosaic[:, ix * ny : (ix + 1) * ny, iy * nx : (iy + 1) * nx])
+        np.testing.assert_array_equal(stored, vol)
