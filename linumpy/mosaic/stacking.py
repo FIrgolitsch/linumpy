@@ -5,7 +5,9 @@ Consolidated from linum_stack_slices_motor.py and linum_stack_motor_only.py.
 """
 
 import logging
+import os
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from itertools import pairwise
 from typing import Any
 
@@ -1119,27 +1121,64 @@ def notch_slice_seams(
     return out
 
 
-def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05) -> float:
-    """Notch the slice-period seam on a ZYX array. Returns the period in voxels."""
+def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05, workers: int | None = None) -> float:
+    """Notch the slice-period seam on a ZYX array. Returns the period in voxels.
+
+    The array is usually the stacked volume on disk, in compressed chunks.
+    Both passes follow its chunk grid, so each chunk is decoded once for the
+    plane medians and read and written once for the filter. Read plane by
+    plane and in tiles that straddle the chunks, a chunk 100 planes deep was
+    decoded 100 times for the medians, and every tile wrote parts of four
+    chunk columns. The filter works on each voxel column on its own, so the
+    size of the tiles does not change the result.
+
+    Parameters
+    ----------
+    array
+        ZYX array, changed in place (a zarr array or a NumPy array).
+    tile
+        Tile edge in Y and X for an array without chunks.
+    threshold
+        Voxels above it count as tissue for the plane medians.
+    workers
+        Tiles filtered at the same time. ``None`` takes the thread budget of
+        the task (``OMP_NUM_THREADS``), at most 8.
+    """
     step = 8
-    medians = np.empty(array.shape[0], dtype=np.float64)
-    for z in range(array.shape[0]):
-        plane = np.asarray(array[z, ::step, ::step])
-        tissue = plane > threshold
-        medians[z] = float(np.median(plane[tissue])) if int(np.sum(tissue)) > 40 else np.nan
+    nz, ny, nx = array.shape
+    chunks = getattr(array, "chunks", None)
+    z_block, tile_y, tile_x = (int(chunks[0]), int(chunks[1]), int(chunks[2])) if chunks else (64, tile, tile)
+
+    medians = np.empty(nz, dtype=np.float64)
+    for z0 in range(0, nz, z_block):
+        planes = np.asarray(array[z0 : z0 + z_block, ::step, ::step])
+        for k, plane in enumerate(planes):
+            tissue = plane > threshold
+            medians[z0 + k] = float(np.median(plane[tissue])) if int(np.sum(tissue)) > 40 else np.nan
     good = np.isfinite(medians)
     if int(np.sum(good)) < 8:
         return 0.0
     index = np.arange(len(medians))
     filled = np.interp(index, index[good], medians[good])
     period = estimate_slice_period(filled, period_min=12, period_max=40)
-    _, ny, nx = array.shape
-    for y0 in range(0, ny, tile):
-        y1 = min(ny, y0 + tile)
-        for x0 in range(0, nx, tile):
-            x1 = min(nx, x0 + tile)
-            block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
-            array[:, y0:y1, x0:x1] = notch_slice_seams(block, period)
+
+    def _notch_tile(bounds: tuple[int, int, int, int]) -> None:
+        y0, y1, x0, x1 = bounds
+        block = np.asarray(array[:, y0:y1, x0:x1], dtype=np.float32)
+        array[:, y0:y1, x0:x1] = notch_slice_seams(block, period)
+
+    tiles = [
+        (y0, min(ny, y0 + tile_y), x0, min(nx, x0 + tile_x)) for y0 in range(0, ny, tile_y) for x0 in range(0, nx, tile_x)
+    ]
+    if workers is None:
+        workers = min(8, max(1, int(os.environ.get("OMP_NUM_THREADS", "1") or 1)))
+    if workers > 1 and len(tiles) > 1:
+        # Tiles cover whole chunks, so no two of them write the same chunk.
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(_notch_tile, tiles))
+    else:
+        for bounds in tiles:
+            _notch_tile(bounds)
     return period
 
 

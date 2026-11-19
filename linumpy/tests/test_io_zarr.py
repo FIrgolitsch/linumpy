@@ -94,3 +94,57 @@ def test_writer_refuses_to_mix_added_levels_with_the_factor_2_pyramid(tmp_path: 
         writer.finalize([0.002, 0.001, 0.001], 0)
     with pytest.raises(ValueError, match="voxel sizes"):
         writer.finalize_levels([[0.002, 0.001, 0.001]])
+
+
+def test_analysis_pyramid_keeps_level_0_when_it_is_the_first_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 10 um volume finalised with a 10 um first level is not resampled onto itself.
+
+    The resize to the same shape gave back the same voxels, after reading and
+    writing the whole volume once more. Level 0 has to hold what was written,
+    and only the coarser levels are computed.
+    """
+    from linumpy.io.zarr import AnalysisOmeZarrWriter
+
+    rng = np.random.default_rng(0)
+    vol = rng.gamma(2.0, 1.0, size=(60, 150, 170)).astype(np.float32)
+    path = tmp_path / "vol.ome.zarr"
+    writer = AnalysisOmeZarrWriter(path, vol.shape, chunk_shape=(32, 64, 64), dtype=np.float32)
+    writer[:] = vol
+
+    resampled_to: list[str] = []
+    original = AnalysisOmeZarrWriter._downsample_to_resolution
+
+    def spy(self: AnalysisOmeZarrWriter, parent: object, source_path: str, target_path: str, target_shape: object) -> None:
+        resampled_to.append(target_path)
+        original(self, parent, source_path, target_path, target_shape)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(AnalysisOmeZarrWriter, "_downsample_to_resolution", spy)
+    writer.finalize([0.01, 0.01, 0.01], target_resolutions_um=[10, 25, 50, 100], make_isotropic=True)
+
+    assert resampled_to == ["1", "2", "3"]
+    level0, res0 = read_omezarr(path, level=0)
+    np.testing.assert_array_equal(level0[:], vol)
+    assert level0.chunks == (32, 64, 64)
+    assert list(res0) == [0.01, 0.01, 0.01]
+    assert [read_omezarr(path, level=k)[0].shape for k in range(4)] == [
+        (60, 150, 170),
+        (24, 60, 68),
+        (12, 30, 34),
+        (6, 15, 17),
+    ]
+
+
+def test_analysis_pyramid_still_resamples_an_anisotropic_base(tmp_path: Path) -> None:
+    """When the base is not at the first target resolution, level 0 is replaced as before."""
+    from linumpy.io.zarr import AnalysisOmeZarrWriter
+
+    rng = np.random.default_rng(1)
+    vol = rng.random((40, 60, 60), dtype=np.float32)
+    path = tmp_path / "aniso.ome.zarr"
+    writer = AnalysisOmeZarrWriter(path, vol.shape, chunk_shape=(20, 30, 30), dtype=np.float32)
+    writer[:] = vol
+    writer.finalize([0.005, 0.01, 0.01], target_resolutions_um=[10, 25], make_isotropic=True)
+
+    level0, res0 = read_omezarr(path, level=0)
+    assert level0.shape == (20, 60, 60)
+    assert list(res0) == pytest.approx([0.01, 0.01, 0.01])

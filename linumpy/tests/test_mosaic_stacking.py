@@ -773,3 +773,81 @@ def test_zero_above_surface_keeps_grey_matter_that_lies_over_white_matter():
     out, count = zero_above_surface(vol, max_planes=12, tissue_threshold=0.01, sigma_xy=0.5)
     assert count == 0
     assert out is vol
+
+
+def _seamed_volume(shape: tuple[int, int, int]) -> np.ndarray:
+    """Tissue with a slow depth trend, a step that repeats every 20 planes, and an empty margin."""
+    rng = np.random.default_rng(0)
+    depth = np.arange(shape[0], dtype=np.float32)
+    profile = 0.30 + 0.05 * np.sin(2 * np.pi * depth / 80) + 0.04 * np.sign(np.sin(2 * np.pi * depth / 20))
+    volume = (profile[:, None, None] * (1.0 + 0.2 * rng.random(shape, dtype=np.float32))).astype(np.float32)
+    volume[:, :3, :] = 0
+    return volume
+
+
+def _apply_seam_notch_plane_by_plane(array: np.ndarray, tile: int = 128, threshold: float = 0.05) -> float:
+    """The notch as it was applied before it followed the chunk grid: plane medians one plane at a time, 128 px tiles."""
+    from linumpy.mosaic.stacking import estimate_slice_period
+
+    medians = np.empty(array.shape[0], dtype=np.float64)
+    for z in range(array.shape[0]):
+        plane = np.asarray(array[z, ::8, ::8])
+        tissue = plane > threshold
+        medians[z] = float(np.median(plane[tissue])) if int(np.sum(tissue)) > 40 else np.nan
+    good = np.isfinite(medians)
+    index = np.arange(len(medians))
+    period = estimate_slice_period(np.interp(index, index[good], medians[good]), period_min=12, period_max=40)
+    _, ny, nx = array.shape
+    for y0 in range(0, ny, tile):
+        for x0 in range(0, nx, tile):
+            block = np.asarray(array[:, y0 : y0 + tile, x0 : x0 + tile], dtype=np.float32)
+            array[:, y0 : y0 + tile, x0 : x0 + tile] = notch_slice_seams(block, period)
+    return period
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_apply_seam_notch_on_chunks_gives_the_same_volume(tmp_path, workers):
+    """Following the chunk grid, and filtering tiles side by side, changes no voxel."""
+    import zarr
+
+    from linumpy.mosaic.stacking import apply_seam_notch
+
+    volume = _seamed_volume((200, 150, 170))
+    expected = volume.copy()
+    expected_period = _apply_seam_notch_plane_by_plane(expected)
+
+    # Chunks that do not divide the shape, and are not the old 128 px tiles.
+    stored = zarr.open_array(tmp_path / "stack.zarr", mode="w", shape=volume.shape, chunks=(64, 40, 48), dtype=np.float32)
+    stored[:] = volume
+    period = apply_seam_notch(stored, workers=workers)
+
+    assert period == expected_period
+    assert 18 < period < 22
+    np.testing.assert_array_equal(np.asarray(stored[:]), expected)
+    assert not np.array_equal(expected, volume)
+
+
+def test_apply_seam_notch_reads_each_chunk_once_for_the_medians():
+    """The plane medians are read in slabs of whole chunks, not one plane at a time."""
+    from linumpy.mosaic.stacking import apply_seam_notch
+
+    class Counting:
+        """A chunked array that counts its reads."""
+
+        def __init__(self, data: np.ndarray, chunks: tuple[int, int, int]) -> None:
+            self.data = data
+            self.chunks = chunks
+            self.shape = data.shape
+            self.reads = 0
+
+        def __getitem__(self, key: Any) -> np.ndarray:
+            self.reads += 1
+            return self.data[key]
+
+        def __setitem__(self, key: Any, value: np.ndarray) -> None:
+            self.data[key] = value
+
+    array = Counting(_seamed_volume((200, 80, 96)), chunks=(50, 40, 48))
+    apply_seam_notch(array, workers=1)
+    # 4 slabs of 50 planes for the medians, then one read per chunk column (2 x 2).
+    assert array.reads == 4 + 4

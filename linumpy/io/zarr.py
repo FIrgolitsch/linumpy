@@ -791,7 +791,13 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
             else:
                 print(f"  Level {i}: {target_res_um} µm -> shape {target_shape}")
 
-            if i == 0:
+            if i == 0 and tuple(target_shape) == tuple(int(v) for v in self.shape):
+                # The base already is the first target (a 10 um volume with a
+                # 10 um first level): resizing it to its own shape returns the
+                # same voxels, at the cost of reading and writing the whole
+                # volume once more. Level 0 stays as it was written.
+                pass
+            elif i == 0:
                 # For level 0, we need to replace the base resolution data
                 # First downsample to a temp location, then replace
                 temp_path = f"_temp_{i}"
