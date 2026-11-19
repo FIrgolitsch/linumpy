@@ -1312,7 +1312,9 @@ process stack {
     def blend_flag = params.stack_blend_enabled ? " --blend" : " --no-blend"
     def flatten_flag = " --no-flatten_z_profile"
     def outline_flag = " --max_outline_step_px 0"
-    def notch_flag = params.stack_notch_seams ? " --notch_slice_seams" : ""
+    // Both values are passed. The script notches by default, so an empty flag
+    // for false left the notch on and the switch had no effect.
+    def notch_flag = params.stack_notch_seams ? " --notch_slice_seams" : " --no-notch_slice_seams"
     // Emitted only when set, so subjects that leave it at 0 keep their cached stack.
     def cut_face_flag = params.stack_blend_cut_face_planes > 0 ? " --blend_cut_face_planes ${params.stack_blend_cut_face_planes}" : ""
     def zreg_flag = params.z_overlap_from_registration ? " --z_from_registration" : ""
