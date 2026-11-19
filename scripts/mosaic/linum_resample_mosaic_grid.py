@@ -12,6 +12,7 @@ import linumpy.config.threads  # noqa: F401
 import argparse
 import itertools
 import time
+from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -120,10 +121,13 @@ def _run_pipelined(
 
     workers = max(1, min(prefetch, len(tile_iter)))
     with ThreadPoolExecutor(max_workers=workers) as prefetch_executor:
-        in_flight = [prefetch_executor.submit(_read_tile, vol, i, j, tile_shape) for i, j in tile_iter[:workers]]
+        # A finished future keeps its tile, so each one is dropped from the
+        # queue when it is taken. Kept in a list they held every tile read so
+        # far, and the process grew to the size of the whole uncompressed grid.
+        in_flight = deque(prefetch_executor.submit(_read_tile, vol, i, j, tile_shape) for i, j in tile_iter[:workers])
 
         for k, (i, j) in enumerate(tqdm(tile_iter, desc="Resampling tiles", unit="tile")):
-            tile = in_flight[k].result()
+            tile = in_flight.popleft().result()
 
             nxt = k + workers
             if nxt < len(tile_iter):

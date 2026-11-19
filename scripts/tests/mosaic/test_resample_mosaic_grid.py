@@ -39,3 +39,44 @@ def test_resample_scaling_factor_matches_units(source_res, target_res_um, expect
     assert target_res == pytest.approx(expected_target)
     scaling = np.asarray(source_res) / target_res
     np.testing.assert_allclose(scaling, [expected_scale] * 3)
+
+
+def test_pipelined_resample_releases_the_tiles_it_has_read(monkeypatch):
+    """The read-ahead queue must not keep the tiles that are already resampled.
+
+    Each tile of a real grid is about 0.25 GB; holding them all made one
+    process as large as the whole uncompressed grid.
+    """
+    import gc
+    import weakref
+
+    import scripts.mosaic.linum_resample_mosaic_grid as script
+
+    class Tile(np.ndarray):
+        """An ndarray that can be weakly referenced."""
+
+    refs: list[weakref.ref] = []
+    most_alive = 0
+
+    def read_tile(_vol, _i, _j, tile_shape):
+        tile = np.zeros(tile_shape, dtype=np.float32).view(Tile)
+        refs.append(weakref.ref(tile))
+        return tile
+
+    def rescale(tile, _scale, order=1, use_gpu=True):
+        nonlocal most_alive
+        gc.collect()
+        most_alive = max(most_alive, sum(ref() is not None for ref in refs))
+        return np.zeros((1, 1, 1), dtype=np.float32)
+
+    monkeypatch.setattr(script, "_read_tile", read_tile)
+    monkeypatch.setattr(script, "rescale", rescale)
+
+    prefetch = 2
+    n_tiles = 40
+    tile_iter = [(0, j) for j in range(n_tiles)]
+    out = np.zeros((1, 1, n_tiles), dtype=np.float32)
+    script._run_pipelined(None, out, tile_iter, (2, 2, 2), (1, 1, 1), 0.5, use_gpu=False, prefetch=prefetch)
+
+    # The tile in hand, the previous one still bound to the loop variable, and the read-ahead.
+    assert most_alive <= prefetch + 2
