@@ -115,6 +115,7 @@ linum-create-mosaic-grid-3d <output.ome.zarr> \
 - `--n_processes`: Number of parallel processes
 - `--axial_resolution`: Axial resolution in µm
 - `--sharding_factor`: Zarr sharding factor
+- `--pyramid_resolutions`: Extra isotropic resolutions in µm/pixel (for example `10`), saved as further levels of the output. Each tile is resampled while it is in memory, exactly as `linum-resample-mosaic-grid` would do it afterwards
 - `--fix_galvo_shift`: Correct galvo shifts
 - `--fix_camera_shift`: Correct camera shifts
 
@@ -146,6 +147,10 @@ Resample mosaic grid to different resolution.
 ```bash
 linum-resample-mosaic-grid <input.ome.zarr> <output.ome.zarr> -r <resolution>
 ```
+
+When the input already holds a pyramid level at the requested resolution (a
+grid made with `--pyramid_resolutions`), that level is copied and nothing is
+resampled. `--no-use_existing_level` forces a resampling of level 0.
 
 ---
 
@@ -973,8 +978,11 @@ linum-view-oct-raw-tile <tile_dir>
 Generate screenshot from OME-Zarr.
 
 ```bash
-linum-screenshot-omezarr <input.ome.zarr> <output.png>
+linum-screenshot-omezarr <input.ome.zarr> <output.png> [--level <pyramid_level>]
 ```
+
+`--level -1` draws the coarsest level, which for a full-resolution mosaic grid
+avoids reading tens of GB.
 
 ### linum-screenshot-omezarr-annotated
 

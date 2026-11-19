@@ -164,6 +164,7 @@ Processes mosaic grids through multiple correction and stitching steps to produc
 resample_mosaic_grid
 ```
 - Resamples mosaic grids to target resolution
+- Copies the level instead when the grid already holds one at that resolution (grids made with `pyramid_resolutions`)
 - Skip if `resolution = -1`
 
 #### 2. Illumination Correction (Optional)

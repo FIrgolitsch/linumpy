@@ -28,7 +28,27 @@ mosaic_grid_3d_z00.ome.zarr/
 
 ### Resolution Levels
 
-Two pyramid creation modes are available:
+Three pyramid creation modes are available:
+
+#### Native Grid With a Resampled Level (Mosaic Grids From Preprocessing)
+
+A mosaic grid kept at its native resolution can hold the grid the 3D
+reconstruction works on as a second level of the same file:
+
+| Level | Resolution | Content |
+|-------|------------|---------|
+| 0 | native (for example 1.36 × 1.875 × 1.875 µm) | Tiles as acquired |
+| 1 | 10 µm isotropic | Each tile of level 0 resampled on its own |
+
+The levels are not a factor 2 apart; each carries its own voxel size in the
+metadata (`read_omezarr_resolutions` lists them). Level 1 is written while the
+grid is made, from the tile that is in memory, with
+`linum-create-mosaic-grid-3d --pyramid_resolutions 10` (`pyramid_resolutions`
+in the preprocessing workflow, 10 by default). It keeps the tile grid of
+level 0 (one chunk per tile) and is identical to what
+`linum-resample-mosaic-grid` computes from level 0, so that script copies the
+level when its resolution is the one asked for, and the full-resolution grid
+is never read back.
 
 #### Traditional Power-of-2 Pyramids (Mosaic Grids)
 

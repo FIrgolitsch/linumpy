@@ -80,3 +80,60 @@ def test_pipelined_resample_releases_the_tiles_it_has_read(monkeypatch):
 
     # The tile in hand, the previous one still bound to the loop variable, and the read-ahead.
     assert most_alive <= prefetch + 2
+
+
+def _grid_with_level(path, level_shape, level_chunks, level_res):
+    """A two-tile grid at 5 um with a hand-made second level holding a marker value."""
+    from linumpy.io.zarr import OmeZarrWriter
+
+    writer = OmeZarrWriter(path, shape=(8, 16, 32), chunk_shape=(8, 16, 16))
+    level = writer.add_level(shape=level_shape, chunk_shape=level_chunks)
+    rng = np.random.default_rng(0)
+    writer[:] = rng.random((8, 16, 32), dtype=np.float32)
+    level[:] = np.full(level_shape, 7.0, dtype=np.float32)
+    writer.finalize_levels([[0.005, 0.005, 0.005], [level_res] * 3])
+
+
+def test_existing_level_is_copied_not_resampled(script_runner, tmp_path):
+    """A level at the target resolution is taken as it is."""
+    from linumpy.io.zarr import read_omezarr
+
+    grid = tmp_path / "grid.ome.zarr"
+    _grid_with_level(grid, (4, 8, 16), (4, 8, 8), 0.010)
+    output = tmp_path / "out.ome.zarr"
+    ret = script_runner.run(["linum-resample-mosaic-grid", grid, output, "-r", 10, "--n_levels", 0, "--no-use_gpu"])
+    assert ret.success
+    out, res = read_omezarr(output)
+    assert out.shape == (4, 8, 16)
+    assert out.chunks == (4, 8, 8)
+    assert list(res) == [0.01, 0.01, 0.01]
+    np.testing.assert_array_equal(np.asarray(out[:]), np.full((4, 8, 16), 7.0, dtype=np.float32))
+
+
+@pytest.mark.parametrize(
+    ("level_shape", "level_chunks", "level_res", "extra_args"),
+    [
+        # Right resolution, but not the tile grid a resampling would give.
+        ((4, 8, 8), (4, 8, 8), 0.010, []),
+        # Another resolution.
+        ((4, 8, 16), (4, 8, 8), 0.020, []),
+        # A usable level, switched off.
+        ((4, 8, 16), (4, 8, 8), 0.010, ["--no-use_existing_level"]),
+    ],
+)
+def test_level_that_does_not_fit_is_ignored(script_runner, tmp_path, level_shape, level_chunks, level_res, extra_args):
+    """Without a matching level the grid is resampled from level 0 as before."""
+    from linumpy.io.zarr import read_omezarr
+
+    grid = tmp_path / "grid.ome.zarr"
+    _grid_with_level(grid, level_shape, level_chunks, level_res)
+    output = tmp_path / "out.ome.zarr"
+    ret = script_runner.run(
+        ["linum-resample-mosaic-grid", grid, output, "-r", 10, "--n_levels", 0, "--no-use_gpu", *extra_args]
+    )
+    assert ret.success
+    out, _ = read_omezarr(output)
+    assert out.shape == (4, 8, 16)
+    data = np.asarray(out[:])
+    assert data.max() < 1.0  # resampled random values in [0, 1), not the marker
+    assert data.any()

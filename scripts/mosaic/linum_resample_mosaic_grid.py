@@ -4,6 +4,11 @@
 GPU acceleration is used when available (--use_gpu, default on) for
 volume resampling/rescaling (5-12x speedup). Falls back to CPU if no GPU
 is detected or --no-use_gpu is passed.
+
+A grid made with linum-create-mosaic-grid-3d --pyramid_resolutions already
+holds resampled copies as further pyramid levels. When one of them is at the
+requested resolution it is copied to the output and nothing is resampled
+(--no-use_existing_level turns this off).
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -20,10 +25,10 @@ from typing import Any
 import numpy as np
 from tqdm import tqdm
 
-from linumpy.geometry.resampling import resolution_is_mm
+from linumpy.geometry.resampling import resampled_tile_shape, resolution_is_mm
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
-from linumpy.io import OmeZarrWriter, read_omezarr
+from linumpy.io import OmeZarrWriter, read_omezarr, read_omezarr_resolutions
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -47,6 +52,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Increases host RAM use by ~prefetch * tile_size. "
             "On sharded zstd inputs, raising from 1 to 8 yields a ~3x end-to-end speedup "
             "because zarr decode is the bottleneck and parallelises well. [%(default)s]"
+        ),
+    )
+    p.add_argument(
+        "--use_existing_level",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Copy a pyramid level of the input that is already at the requested resolution\n"
+            "instead of resampling level 0. [%(default)s]"
         ),
     )
     p.add_argument("--verbose", "-v", action="store_true", help="Print GPU information and timing.")
@@ -77,6 +91,34 @@ def rescale(image: Any, scale: float | Sequence[float], order: int = 1, use_gpu:
     # doesn't produce a zero-sized output that triggers ZeroDivisionError downstream.
     output_shape = tuple(max(1, round(s * sc)) for s, sc in zip(image.shape, scale_tuple, strict=False))
     return resize(image, output_shape, order=order, anti_aliasing=True, use_gpu=use_gpu)
+
+
+def find_level_at_resolution(in_mosaic: Any, target_res: float, out_shape: tuple, out_tile_shape: tuple) -> Any:
+    """Return the pyramid level of *in_mosaic* that already is the resampled grid, or None.
+
+    A level qualifies when its voxel size is the isotropic *target_res* and its
+    shape and tile size are the ones a resampling of level 0 would give. Level 0
+    itself is never returned.
+    """
+    for level, res in enumerate(read_omezarr_resolutions(in_mosaic)):
+        if level == 0 or not np.allclose(res, target_res, rtol=1e-6, atol=0.0):
+            continue
+        candidate, _ = read_omezarr(in_mosaic, level=level)
+        if tuple(candidate.shape) == tuple(out_shape) and tuple(candidate.chunks) == tuple(out_tile_shape):
+            print(f"Level {level} of the input is already at the target resolution.")
+            return candidate
+        print(
+            f"Level {level} of the input is at the target resolution, but its shape {candidate.shape} or tile size "
+            f"{candidate.chunks} is not the expected {tuple(out_shape)} / {tuple(out_tile_shape)}; resampling level 0."
+        )
+    return None
+
+
+def _copy_level(level: Any, out_zarr: Any, tile_rows: int, tile_height: int) -> None:
+    """Copy an existing level to the output, one row of tiles at a time."""
+    for i in tqdm(range(tile_rows), desc="Copying tile rows", unit="row"):
+        rows = slice(i * tile_height, (i + 1) * tile_height)
+        out_zarr[:, rows, :] = np.asarray(level[:, rows, :])
 
 
 def _read_tile(vol: Any, i: Any, j: Any, tile_shape: Any) -> Any:
@@ -186,7 +228,7 @@ def main() -> None:
     print(f"  Target resolution: {args.resolution} µm")
     print(f"  Scale factor: {scaling_factor}")
 
-    out_tile_shape = tuple(max(1, round(s * sc)) for s, sc in zip(tile_shape, scaling_factor, strict=False))
+    out_tile_shape = resampled_tile_shape(tile_shape, source_res, target_res)
 
     nx = vol.shape[1] // tile_shape[1]
     ny = vol.shape[2] // tile_shape[2]
@@ -195,10 +237,17 @@ def main() -> None:
     out_shape = (out_tile_shape[0], nx * out_tile_shape[1], ny * out_tile_shape[2])
     print(f"  Output shape: {out_shape} ({total_tiles} tiles)")
 
+    existing = None
+    if args.use_existing_level:
+        existing = find_level_at_resolution(args.in_mosaic, target_res, out_shape, out_tile_shape)
+
     out_zarr = OmeZarrWriter(args.out_mosaic, out_shape, out_tile_shape, dtype=vol.dtype, overwrite=True)
 
-    tile_iter = list(itertools.product(range(nx), range(ny)))
-    _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape, scaling_factor, use_gpu, prefetch=args.prefetch)
+    if existing is not None:
+        _copy_level(existing, out_zarr, nx, out_tile_shape[1])
+    else:
+        tile_iter = list(itertools.product(range(nx), range(ny)))
+        _run_pipelined(vol, out_zarr, tile_iter, tile_shape, out_tile_shape, scaling_factor, use_gpu, prefetch=args.prefetch)
 
     print("Building pyramid...")
     out_res = [target_res] * 3

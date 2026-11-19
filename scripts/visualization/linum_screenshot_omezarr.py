@@ -24,6 +24,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--x_slice", type=int, help="Slice index along the second axis.")
     p.add_argument("--y_slice", type=int, help="Slice index along the last axis.")
     p.add_argument("--cmap", default="magma", help="Colormap for the figure [%(default)s].")
+    p.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        help=(
+            "Pyramid level to draw; -1 is the coarsest one. Slice indices are in the voxels of that level.\n"
+            "A full-resolution mosaic grid is tens of GB at level 0, so prefer its coarse level. [%(default)s]"
+        ),
+    )
     return p
 
 
@@ -40,7 +49,7 @@ def main() -> None:
     # Resolve symlinks (common in Nextflow work directories)
     in_path = in_path.resolve()
 
-    image, _ = read_omezarr(Path(in_path))
+    image, _ = read_omezarr(Path(in_path), level=args.level)
 
     save_orthogonal_views(
         image, args.out_figure, z_slice=args.z_slice, x_slice=args.x_slice, y_slice=args.y_slice, cmap=args.cmap

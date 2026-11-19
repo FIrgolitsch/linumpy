@@ -5,6 +5,13 @@
 GPU acceleration is used when available (--use_gpu, default on) for
 volume resampling/resizing (5-12x speedup). Falls back to CPU if no GPU
 is detected or --no-use_gpu is passed.
+
+With --pyramid_resolutions the grid is saved at several resolutions in one
+OME-Zarr: level 0 as set by --resolution, and one further level per value
+given. Each tile is resampled while it is in memory, so a grid kept at its
+native resolution also holds, for instance, the 10 micron grid the 3D
+reconstruction works on, and that pipeline does not have to read the native
+grid back to resample it.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -14,11 +21,13 @@ import argparse
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from tqdm.auto import tqdm
 
 from linumpy.cli.args import add_processes_arg, parse_processes_arg
+from linumpy.geometry.resampling import resampled_tile_shape
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
 from linumpy.io.thorlabs import PreprocessingConfig, ThorOCT
@@ -50,6 +59,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     options_g.add_argument(
         "--axial_resolution", type=float, default=3.5, help="Axial resolution of the raw data in microns. [%(default)s]"
+    )
+    options_g.add_argument(
+        "--pyramid_resolutions",
+        type=float,
+        nargs="*",
+        default=[],
+        help=(
+            "Further isotropic resolutions in micron per pixel, saved as extra levels of the output\n"
+            "(for example 10). Each tile of level 0 is resampled on its own, the way\n"
+            "linum-resample-mosaic-grid does it, so that script can take the level as it is.\n"
+            "A value that is not coarser than level 0 is skipped. [none]"
+        ),
     )
     options_g.add_argument("-z", "--slice", type=int, help="Slice to process.")
     options_g.add_argument("--keep_galvo_return", action="store_true", help="Keep the galvo return signal [%(default)s]")
@@ -99,6 +120,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+def load_oct_tile(oct: OCT, **load_options: Any) -> np.ndarray:
+    """Load an OCT tile in the axis order of the mosaic grid: (Z, X, Y).
+
+    A tile named ``tile_xAA_yBB`` sits at index AA along the first in-plane
+    axis of the grid and BB along the second, so within a tile the a-lines
+    (X) have to run along the first in-plane axis and the b-scans (Y) along
+    the second. ``OCT.load_image`` returns (Z, Y, X); stored like that, every
+    tile is transposed in its cell and no tile continues into its neighbour.
+    """
+    return oct.load_image(**load_options).transpose(0, 2, 1)
+
+
 def preprocess_volume(vol: np.ndarray, apply: bool = True) -> np.ndarray:
     """Preprocess the volume by rotating and flipping it (for legacy data)."""
     if not apply:
@@ -126,7 +159,7 @@ def load_single_tile(params: dict) -> tuple:
 
     if data_type == "OCT":
         oct = OCT(f)
-        vol = oct.load_image(crop=crop, fix_galvo_shift=galvo_shift, fix_camera_shift=fix_camera_shift)
+        vol = load_oct_tile(oct, crop=crop, fix_galvo_shift=galvo_shift, fix_camera_shift=fix_camera_shift)
         vol = preprocess_volume(vol, apply=preprocess)
     elif data_type == "PSOCT":
         oct = ThorOCT(f, config=psoct_config)
@@ -161,21 +194,36 @@ def _load_shard_data(proc_params: dict) -> list:
     return [load_single_tile(tiles_params[0])]
 
 
+def _resize_tile(vol: Any, tile_size: tuple, use_gpu: bool) -> Any:
+    """Resize one tile to *tile_size* (linear, anti-aliased); complex data per component."""
+    if np.iscomplexobj(vol):
+        real_resized = resize(vol.real, tile_size, order=1, anti_aliasing=True, use_gpu=use_gpu)
+        imag_resized = resize(vol.imag, tile_size, order=1, anti_aliasing=True, use_gpu=use_gpu)
+        return real_resized + 1j * imag_resized
+    return resize(vol, tile_size, order=1, anti_aliasing=True, use_gpu=use_gpu)
+
+
 def _resize_and_write_shard(proc_params: dict, loaded_tiles: list) -> None:
     """Resize pre-loaded tiles and write the shard to zarr (compute/write stage).
 
     Separated from disk I/O so that _run_pipelined can overlap loading the
     next shard with GPU work on the current one.
+
+    Every further pyramid level gets the same tiles, each resampled from the
+    tile stored at level 0, in a shard of its own that covers the same tiles.
     """
     mosaic = proc_params["mosaic"]
     shard_shape = proc_params["shard_shape"]
     tiles_params = proc_params["params"]
     use_gpu = proc_params.get("use_gpu", _USE_GPU)
+    levels = proc_params.get("levels", [])
 
     shard = np.zeros(shard_shape, dtype=mosaic.dtype)
+    level_shards = [np.zeros(level["shard_shape"], dtype=mosaic.dtype) for level in levels]
 
-    mx_min = min(p["tile_pos"][0] for p in tiles_params)
-    my_min = min(p["tile_pos"][1] for p in tiles_params)
+    # Position of the shard in tiles; the same for every level.
+    tile_x_min = min(p["tile_pos"][0] for p in tiles_params)
+    tile_y_min = min(p["tile_pos"][1] for p in tiles_params)
 
     vol = None
     tile_size: list | tuple = []
@@ -184,32 +232,41 @@ def _resize_and_write_shard(proc_params: dict, loaded_tiles: list) -> None:
         tile_size = params["tile_size"]
 
         tile_size_tuple = tuple(tile_size)
-        if tuple(vol.shape) == tile_size_tuple:
-            # Native resolution (--resolution -1): the resize is the identity,
-            # so the tile is not sent to the GPU and back.
-            pass
-        elif np.iscomplexobj(vol):
-            real_resized = resize(vol.real, tile_size_tuple, order=1, anti_aliasing=True, use_gpu=use_gpu)
-            imag_resized = resize(vol.imag, tile_size_tuple, order=1, anti_aliasing=True, use_gpu=use_gpu)
-            vol = real_resized + 1j * imag_resized
-        else:
-            vol = resize(vol, tile_size_tuple, order=1, anti_aliasing=True, use_gpu=use_gpu)
+        # At native resolution (--resolution -1) the resize is the identity,
+        # so the tile is not sent to the GPU and back.
+        if tuple(vol.shape) != tile_size_tuple:
+            vol = _resize_tile(vol, tile_size_tuple, use_gpu)
 
-        rmin = (mx - mx_min) * vol.shape[1]
-        cmin = (my - my_min) * vol.shape[2]
+        rmin = (mx - tile_x_min) * vol.shape[1]
+        cmin = (my - tile_y_min) * vol.shape[2]
         rmax = rmin + vol.shape[1]
         cmax = cmin + vol.shape[2]
 
         shard[0 : tile_size[0], rmin:rmax, cmin:cmax] = vol
 
+        for level, level_shard in zip(levels, level_shards, strict=True):
+            level_tile = level["tile_size"]
+            rmin = (mx - tile_x_min) * level_tile[1]
+            cmin = (my - tile_y_min) * level_tile[2]
+            level_shard[:, rmin : rmin + level_tile[1], cmin : cmin + level_tile[2]] = _resize_tile(vol, level_tile, use_gpu)
+
     assert vol is not None
-    mx_min *= vol.shape[1]
-    my_min *= vol.shape[2]
+    mx_min = tile_x_min * vol.shape[1]
+    my_min = tile_y_min * vol.shape[2]
     output_extent_x = min(shard_shape[1], mosaic.shape[1] - mx_min)
     output_extent_y = min(shard_shape[2], mosaic.shape[2] - my_min)
     mosaic[0 : tile_size[0], mx_min : mx_min + output_extent_x, my_min : my_min + output_extent_y] = shard[
         :, :output_extent_x, :output_extent_y
     ]
+
+    for level, level_shard in zip(levels, level_shards, strict=True):
+        array = level["array"]
+        level_tile = level["tile_size"]
+        x_min = tile_x_min * level_tile[1]
+        y_min = tile_y_min * level_tile[2]
+        extent_x = min(level_shard.shape[1], array.shape[1] - x_min)
+        extent_y = min(level_shard.shape[2], array.shape[2] - y_min)
+        array[:, x_min : x_min + extent_x, y_min : y_min + extent_y] = level_shard[:, :extent_x, :extent_y]
 
 
 def _run_pipelined(params: list) -> None:
@@ -307,9 +364,11 @@ def main() -> None:
 
     if data_type == "OCT":
         oct = OCT(tiles[0], args.axial_resolution)
-        vol = oct.load_image(crop=crop)
+        vol = load_oct_tile(oct, crop=crop)
         vol = preprocess_volume(vol, apply=preprocess)
-        resolution = list(oct.resolution)
+        # oct.resolution is (rz, ry, rx); the grid is (Z, X, Y).
+        rz, ry, rx = oct.resolution
+        resolution = [rz, rx, ry]
         n_extra = oct.info.get("n_extra", 0)
     elif data_type == "PSOCT":
         oct = ThorOCT(tiles[0], config=psoct_config)
@@ -323,7 +382,7 @@ def main() -> None:
         vol = ThorOCT.orient_volume_psoct(vol)
         resolution = [oct.resolution[2], oct.resolution[0], oct.resolution[1]]
         n_extra = 0
-    print(f"Resolution: z = {resolution[0]} , y = {resolution[1]} , x = {resolution[2]} ")
+    print(f"Resolution: z = {resolution[0]} , x = {resolution[1]} , y = {resolution[2]} ")
 
     galvo_shift = 0
     if fix_galvo_shift and data_type == "OCT" and n_extra > 0:
@@ -363,6 +422,26 @@ def main() -> None:
         overwrite=True,
     )
 
+    # Further pyramid levels: one array per resolution, with the tile grid and
+    # the shard layout of level 0, filled tile by tile along with it.
+    levels: list = []
+    level_resolutions: list = []
+    for level_um in sorted(set(args.pyramid_resolutions)):
+        level_res = level_um / 1000.0
+        if level_res <= max(output_resolution):
+            print(f"Pyramid resolution {level_um} um is not coarser than level 0; skipped.")
+            continue
+        level_tile = resampled_tile_shape(tile_size, output_resolution, level_res)
+        level_shard = (level_tile[0], args.sharding_factor * level_tile[1], args.sharding_factor * level_tile[2])
+        level_array = writer.add_level(
+            shape=(level_tile[0], nb_tiles_xy[0] * level_tile[1], nb_tiles_xy[1] * level_tile[2]),
+            chunk_shape=level_tile,
+            shards=level_shard,
+        )
+        levels.append({"array": level_array, "tile_size": level_tile, "shard_shape": level_shard})
+        level_resolutions.append([level_res] * 3)
+        print(f"Pyramid level {len(levels)}: {level_um} um, tile {level_tile}, shape {level_array.shape}")
+
     params_grid = np.full((nb_shards_xy[0], nb_shards_xy[1]), None, dtype=object)
     for i in range(len(tiles)):
         shard_pos = (pos_xy[i] / args.sharding_factor).astype(int)
@@ -373,6 +452,7 @@ def main() -> None:
                 "mosaic": writer,
                 "shard_shape": shards if shards is not None else tile_size,
                 "use_gpu": _USE_GPU,
+                "levels": levels,
             }
 
         params_grid[shard_pos[0], shard_pos[1]]["params"].append(
@@ -403,7 +483,10 @@ def main() -> None:
         # GPU mode: pipeline disk I/O with GPU compute + zarr write
         _run_pipelined(params)
 
-    writer.finalize(output_resolution, 0)
+    if levels:
+        writer.finalize_levels([output_resolution, *level_resolutions])
+    else:
+        writer.finalize(output_resolution, 0)
 
 
 if __name__ == "__main__":

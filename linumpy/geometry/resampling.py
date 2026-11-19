@@ -21,6 +21,33 @@ def resolution_is_mm(source_res: tuple | list) -> bool:
     return float(source_res[0]) < 1.0
 
 
+def resampled_tile_shape(tile_shape: tuple | list, source_res: tuple | list, target_res: float) -> tuple[int, ...]:
+    """Shape of one mosaic tile after resampling to the isotropic *target_res*.
+
+    The one place that decides the size of a resampled tile, so that a level
+    written while the grid is made (``linum-create-mosaic-grid-3d
+    --pyramid_resolutions``) and a grid resampled afterwards
+    (``linum-resample-mosaic-grid``) agree to the voxel.
+
+    Parameters
+    ----------
+    tile_shape : tuple
+        Shape of the tile at the source resolution.
+    source_res : tuple
+        Voxel size of the source, one value per axis.
+    target_res : float
+        Target voxel size, in the unit of *source_res*.
+
+    Returns
+    -------
+    tuple of int
+        Tile shape at the target resolution, at least 1 along each axis so a
+        thin axis does not vanish under a strong reduction.
+    """
+    scaling_factor = np.asarray(source_res) / target_res
+    return tuple(max(1, round(s * sc)) for s, sc in zip(tile_shape, scaling_factor, strict=False))
+
+
 def resample_mosaic_grid(
     vol: Any,
     source_res: tuple | list,

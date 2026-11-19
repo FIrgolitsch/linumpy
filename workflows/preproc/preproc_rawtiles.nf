@@ -24,9 +24,10 @@ workflow {
     }
 
     // [Optional] Generate orthogonal view previews of mosaic grids.
-    // maxForks 1 on the process keeps screenshots sequential to avoid spawning
-    // 52 concurrent I/O-heavy jobs. Each task depends only on its own zarr
-    // being complete, which Nextflow already guarantees via channel ordering.
+    // The preview is drawn from the coarsest pyramid level. With
+    // pyramid_resolutions set that is a small array; without it the grid has
+    // only its full-resolution level and each preview reads the whole grid,
+    // which is why maxForks 1 on the process keeps the screenshots sequential.
     if (params.generate_previews) {
         generate_mosaic_preview(create_mosaic_grid.out)
     }
@@ -67,8 +68,12 @@ process create_mosaic_grid {
     options += params.preprocess ? "--preprocess" : "--no-preprocess"
     // Select GPU or CPU script based on use_gpu parameter
     def gpu_opts: String = params.use_gpu ? "--use_gpu --galvo_threshold ${params.galvo_confidence_threshold}" : "--no-use_gpu"
+    // Extra pyramid levels (e.g. 10 um next to the native grid). Empty when the
+    // parameter is unset, so the command of a grid without levels is unchanged.
+    def pyramid_res: String = [params.pyramid_resolutions].flatten().findAll { r -> r != null && r.toString().trim() }.join(' ')
+    def pyramid_opts: String = pyramid_res ? " --pyramid_resolutions ${pyramid_res}" : ""
     """
-    linum-create-mosaic-grid-3d mosaic_grid_3d_z${slice_id}.ome.zarr --from_tiles_list ${tiles} --resolution ${params.resolution} --n_processes ${params.processes} --axial_resolution ${params.axial_resolution} --sharding_factor ${params.sharding_factor} ${options} ${gpu_opts}
+    linum-create-mosaic-grid-3d mosaic_grid_3d_z${slice_id}.ome.zarr --from_tiles_list ${tiles} --resolution ${params.resolution} --n_processes ${params.processes} --axial_resolution ${params.axial_resolution} --sharding_factor ${params.sharding_factor} ${options} ${gpu_opts}${pyramid_opts}
     """
 
     stub:
@@ -110,7 +115,7 @@ process generate_mosaic_preview {
 
     script:
     """
-    linum-screenshot-omezarr ${mosaic_grid} mosaic_grid_z${slice_id}_preview.png
+    linum-screenshot-omezarr ${mosaic_grid} mosaic_grid_z${slice_id}_preview.png --level -1
     """
 
     stub:

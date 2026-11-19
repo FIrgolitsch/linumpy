@@ -310,6 +310,35 @@ def read_omezarr(zarr_path: Path, level: int = 0) -> tuple:
     return vol, scale
 
 
+def read_omezarr_resolutions(zarr_path: Path) -> list[list[float]]:
+    """Return the voxel size of every pyramid level of the OME-Zarr at *zarr_path*.
+
+    The levels of a pyramid do not have to be a factor 2 apart: a mosaic grid
+    can hold its native resolution at level 0 and, for instance, an isotropic
+    10 µm copy at level 1. This lists what is there without opening an array.
+
+    :type zarr_path: str or Path
+    :param zarr_path: Path of the OME-Zarr group.
+    :return resolutions: One ``[z, y, x]`` voxel size per level, level 0 first.
+    """
+    zarr_loc = parse_url(zarr_path)
+    assert zarr_loc is not None
+    reader = Reader(zarr_loc)
+    nodes = list(reader())
+    image_node = nodes[0]
+
+    resolutions = []
+    for coord_transforms in image_node.metadata["coordinateTransformations"]:
+        scale = None
+        for tr in coord_transforms:
+            if tr["type"] == "scale":
+                scale = [float(v) for v in tr["scale"]]
+                break
+        assert scale is not None, "A pyramid level has no scale transformation"
+        resolutions.append(scale)
+    return resolutions
+
+
 def read_omezarr_array(
     zarr_path: Path,
     level: int = 0,
@@ -368,6 +397,7 @@ class OmeZarrWriter:
     root: zarr.Group
     axes: list
     zarray: zarr.Array
+    level_arrays: list
 
     def __init__(
         self,
@@ -440,6 +470,69 @@ class OmeZarrWriter:
             chunk_key_encoding=self.fmt.chunk_key_encoding,
             dimension_names=[axis["name"] for axis in self.axes],  # omit for v0.4
         )
+        # Levels the caller fills itself (see add_level).
+        self.level_arrays = []
+
+    def add_level(
+        self,
+        shape: tuple | Sequence,
+        chunk_shape: tuple | Sequence,
+        shards: tuple | None = None,
+    ) -> zarr.Array:
+        """Create the array of a further pyramid level that the caller fills itself.
+
+        ``finalize`` builds the lower levels by reading level 0 back from disk.
+        When the data of a level is at hand while level 0 is written (a tile
+        that is in memory anyway), it is cheaper to write that level in the
+        same pass. Levels are numbered in the order they are added, starting
+        at 1, and can have any shape. Close the file with ``finalize_levels``.
+
+        :type shape: tuple of n `int`
+        :param shape: Shape of the level.
+        :type chunk_shape: tuple of n `int`
+        :param chunk_shape: Chunk size on disk.
+        :type shards: tuple of `int`
+        :param shards: Dimension of shards. `None` for no sharding.
+        :return array: The empty zarr array of the new level.
+        """
+        array = self.root.require_array(
+            str(len(self.level_arrays) + 1),
+            shape=tuple(int(v) for v in shape),
+            exact=True,
+            chunks=tuple(int(v) for v in chunk_shape),
+            shards=shards,
+            dtype=self.zarray.dtype,
+            chunk_key_encoding=self.fmt.chunk_key_encoding,
+            dimension_names=[axis["name"] for axis in self.axes],
+        )
+        self.level_arrays.append(array)
+        return array
+
+    def finalize_levels(self, resolutions: Sequence[Sequence[float]]) -> None:
+        """Write the pyramid metadata for level 0 and the levels made with ``add_level``.
+
+        Parameters
+        ----------
+        resolutions : list of list of float
+            Voxel size of each level in the unit of the axes (mm by default),
+            level 0 first: one entry for level 0 plus one per added level.
+        """
+        n_expected = len(self.level_arrays) + 1
+        if len(resolutions) != n_expected:
+            raise ValueError(f"Expected {n_expected} voxel sizes (one per level), got {len(resolutions)}.")
+        datasets = []
+        for i, res in enumerate(resolutions):
+            if len(res) != len(self.shape):
+                raise ValueError(f"Voxel size of level {i} has {len(res)} values for {len(self.shape)} axes.")
+            scale = [float(v) for v in res]
+            datasets.append({"path": str(i), "coordinateTransformations": [{"type": "scale", "scale": scale}]})
+
+        metadata = {
+            "method": "linumpy.io.zarr.OmeZarrWriter.add_level",
+            "version": version("ome-zarr"),
+            "args": {"max_layer": len(self.level_arrays)},
+        }
+        write_multiscales_metadata(self.root, datasets, axes=self.axes, metadata=metadata)
 
     def _downsample_pyramid_on_disk(self, parent: zarr.Group, paths: list) -> None:
         """Downsample the high-resolution array at *paths[0]* to fill each remaining level."""
@@ -504,6 +597,8 @@ class OmeZarrWriter:
         n_levels : int
             Number of pyramid levels (default: 5). Each level is 2x downsampled.
         """
+        if self.level_arrays:
+            raise ValueError("This file has levels made with add_level; close it with finalize_levels.")
         n_levels = validate_n_levels(n_levels, self.shape, self.downscale_factor)
         paths = [f"{i}" for i in range(n_levels + 1)]
         self._downsample_pyramid_on_disk(self.root, paths)

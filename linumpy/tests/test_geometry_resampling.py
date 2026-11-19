@@ -96,3 +96,19 @@ def test_resample_mosaic_grid_multi_tile_consistency(tmp_path):
     ts = res_1x1.shape
     assert res_2x2.shape[1] == pytest.approx(ts[1] * 2, abs=2)
     assert res_2x2.shape[2] == pytest.approx(ts[2] * 2, abs=2)
+
+
+def test_resampled_tile_shape_rounds_to_the_nearest_voxel():
+    """A 401 x 400 x 400 tile at 1.36 x 1.875 x 1.875 um becomes 55 x 75 x 75 at 10 um."""
+    from linumpy.geometry.resampling import resampled_tile_shape
+
+    assert resampled_tile_shape((401, 400, 400), (0.00136, 0.001875, 0.001875), 0.010) == (55, 75, 75)
+    # The unit does not matter as long as source and target share it.
+    assert resampled_tile_shape((401, 400, 400), (1.36, 1.875, 1.875), 10.0) == (55, 75, 75)
+
+
+def test_resampled_tile_shape_keeps_a_thin_axis():
+    """A strong reduction never makes an axis vanish."""
+    from linumpy.geometry.resampling import resampled_tile_shape
+
+    assert resampled_tile_shape((3, 100, 100), (0.001, 0.001, 0.001), 0.010) == (1, 10, 10)

@@ -150,7 +150,9 @@ def detect_galvo_for_slice(
 
         oct_obj = OCT(tiles[idx], axial_resolution) if axial_resolution else OCT(tiles[idx])
         vol = oct_obj.load_image(crop=False, fix_galvo_shift=False, fix_camera_shift=False)
-        aip = vol.mean(axis=0)
+        # load_image returns (Z, Y, X) = (depth, b-scan, a-line); the detector
+        # looks for the galvo return along the a-lines and wants (a-line, b-scan).
+        aip = vol.mean(axis=0).T
 
         if np.mean(aip) < min_intensity:
             continue

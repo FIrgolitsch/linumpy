@@ -99,6 +99,7 @@ nextflow run preproc_rawtiles.nf \
 | `axial_resolution` | `1.36` | Axial resolution (µm) |
 | `resolution` | `-1` | Output resolution (-1 = full native resolution) |
 | `sharding_factor` | `4` | Zarr sharding (NxN chunks/shard) |
+| `pyramid_resolutions` | `10` | Extra isotropic levels (µm) written into each grid next to level 0; `''` for none. Set it to the `resolution` of the 3D reconstruction, which then copies the level instead of resampling the native grid |
 | `fix_galvo_shift` | `true` | Correct galvo shifts |
 | `fix_camera_shift` | `false` | Correct camera shifts |
 | `preprocess` | `false` | Apply rotation/flip preprocessing (true for legacy data) |
@@ -106,7 +107,7 @@ nextflow run preproc_rawtiles.nf \
 | `generate_slice_config` | `true` | Generate slice_config.csv |
 | `exclude_first_slices` | `1` | Number of leading slices to mark as excluded |
 | `detect_galvo` | `false` | Include galvo detection results in slice_config.csv |
-| `generate_previews` | `false` | Generate orthogonal view previews of mosaic grids |
+| `generate_previews` | `false` | Generate orthogonal view previews of mosaic grids (drawn from the coarsest level of each grid) |
 | `generate_aips` | `false` | Generate AIP images from mosaic grids for QC |
 
 ### Outputs
