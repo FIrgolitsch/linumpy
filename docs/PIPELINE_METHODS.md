@@ -597,6 +597,14 @@ The output OME-Zarr is finalised with multi-resolution levels at
 scales each axis independently to the target spacing
 (<ref_file file="/Users/frans/code/linumpy/linumpy/io/zarr.py" />).
 
+Each lower level is the full-resolution volume resized with a Gaussian
+against aliasing ($\sigma = (f - 1)/2$ for a factor $f$) and linear
+interpolation, at exactly the ratio of the voxel sizes. All levels are made
+in one pass over level 0, as matrix products on the GPU or in NumPy
+(`linumpy/io/pyramid.py`). The chunk-wise resize used before rounded the
+scale to the chunk size: with 128-voxel chunks the 25 µm level came out
+0.4 % too large.
+
 ### Stage 8 — Bias-field correction (optional, `correct_bias_field`)
 
 N4 bias correction assumes a multiplicative bias $s(x) = u(x)\,b(x)$; in log

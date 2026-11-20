@@ -309,6 +309,9 @@ def _save(arr: np.ndarray, path: str, res: list, args: argparse.Namespace) -> No
         n_levels=args.n_levels,
         target_resolutions_um=args.pyramid_resolutions,
         make_isotropic=args.make_isotropic,
+        # The volume is still in memory: the levels are made from it.
+        use_gpu=False if args.backend == "cpu" else None,
+        source=arr,
     )
 
 

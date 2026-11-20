@@ -4,6 +4,7 @@
 from linumpy.config.threads import configure_dask
 
 import atexit
+import logging
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -674,6 +675,48 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         da.to_zarr(arr=output, url=img_path, component=target_path, zarr_format=self.fmt.zarr_format, **options)
 
+    def _write_lower_levels(
+        self, lower_levels: list[tuple[str, list[int], list[float]]], use_gpu: bool | None, source: Any
+    ) -> None:
+        """Make the levels below level 0, all from one pass over level 0."""
+        if not lower_levels:
+            return
+        if use_gpu is None:
+            from linumpy.gpu import GPU_AVAILABLE
+
+            use_gpu = GPU_AVAILABLE
+        if len(self.shape) != 3 or not np.issubdtype(self.zarray.dtype, np.floating):
+            # Not a floating-point ZYX volume: resized chunk by chunk as before.
+            for path, shape, _factors in lower_levels:
+                self._downsample_to_resolution(self.root, "0", path, shape)
+            return
+
+        from linumpy.io.pyramid import downsample_antialiased
+
+        base = source if source is not None else self.root["0"]
+        shapes = [shape for _path, shape, _factors in lower_levels]
+        factors = [level_factors for _path, _shape, level_factors in lower_levels]
+        volumes = None
+        if use_gpu:
+            try:
+                volumes = downsample_antialiased(base, shapes, use_gpu=True, factors=factors)
+            except Exception:
+                # Nothing is on disk yet, so the same products can run in NumPy.
+                logging.getLogger(__name__).warning("Pyramid on the GPU failed, using NumPy", exc_info=True)
+        if volumes is None:
+            volumes = downsample_antialiased(base, shapes, use_gpu=False, factors=factors)
+        for (path, shape, _factors), volume in zip(lower_levels, volumes, strict=True):
+            level = self.root.require_array(
+                path,
+                shape=tuple(int(v) for v in shape),
+                exact=True,
+                chunks=tuple(min(int(c), int(s)) for c, s in zip(self.zarray.chunks, shape, strict=True)),
+                dtype=self.zarray.dtype,
+                chunk_key_encoding=self.fmt.chunk_key_encoding,
+                dimension_names=[axis["name"] for axis in self.axes],
+            )
+            level[:] = volume
+
     def finalize(
         self,
         res: list | tuple,
@@ -681,6 +724,8 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
         *,
         target_resolutions_um: tuple | Sequence = (10, 25, 50, 100),
         make_isotropic: bool = True,
+        use_gpu: bool | None = None,
+        source: Any = None,
     ) -> None:
         """
         Finalize the OME-Zarr with pyramid levels.
@@ -702,6 +747,17 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
             to achieve the target resolution.
             If False, preserves the original aspect ratio by scaling all dimensions
             uniformly based on the finest (smallest) base resolution.
+        use_gpu : bool, optional
+            Do the matrix products that make the lower levels on the GPU.
+            ``None`` (default) uses the GPU when one is available; NumPy gives
+            the same levels to rounding. The levels are made in one pass over
+            level 0 (see :mod:`linumpy.io.pyramid`), at exactly the ratio of
+            the voxel sizes. A volume that is not a floating-point ZYX volume
+            is resized chunk by chunk instead, which rounds the scale to the
+            chunk size.
+        source : array, optional
+            Level 0 in host memory, when the caller still holds it, so the GPU
+            path does not read it back from disk.
 
         Notes
         -----
@@ -757,6 +813,7 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
 
         paths = []
         resolutions = []
+        lower_levels: list[tuple[str, list[int], list[float]]] = []
 
         # Get the path to level 0 (base resolution) for downsampling source
         # Remove file:// prefix if present (from zarr URL format)
@@ -810,9 +867,13 @@ class AnalysisOmeZarrWriter(OmeZarrWriter):
                 if original_path.exists():
                     shutil.rmtree(original_path)
                 shutil.move(temp_full_path, original_path)
+                # The caller's copy of level 0 is no longer what is on disk.
+                source = None
             else:
-                # For other levels, downsample from the new level 0
-                self._downsample_to_resolution(self.root, "0", path, target_shape)
+                # The other levels are made from level 0, after this loop.
+                lower_levels.append((path, target_shape, scale_factors))
+
+        self._write_lower_levels(lower_levels, use_gpu, source)
 
         # Create transformation metadata
         datasets = []

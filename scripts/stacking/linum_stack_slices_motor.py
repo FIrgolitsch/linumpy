@@ -1582,7 +1582,9 @@ def main() -> None:
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
-    output.finalize(first_res, target_resolutions_um=args.pyramid_resolutions, make_isotropic=args.make_isotropic)
+    output.finalize(
+        first_res, target_resolutions_um=args.pyramid_resolutions, make_isotropic=args.make_isotropic, use_gpu=args.use_gpu
+    )
 
     write_slab_z_starts(output_path, slab_z_starts, int(output_shape[0]))
 

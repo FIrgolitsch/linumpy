@@ -457,7 +457,10 @@ def apply_transform_to_zarr(
             target_resolutions = get_pyramid_resolutions_from_zarr(Path(input_path))
             if target_resolutions is None:
                 target_resolutions = list(allen.AVAILABLE_RESOLUTIONS)
-        writer.finalize(list(resolution), target_resolutions_um=target_resolutions, make_isotropic=make_isotropic)
+        # The volume is still in memory: the levels are made from it.
+        writer.finalize(
+            list(resolution), target_resolutions_um=target_resolutions, make_isotropic=make_isotropic, source=transformed
+        )
 
     update_pbar()
 

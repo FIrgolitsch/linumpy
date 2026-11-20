@@ -111,17 +111,20 @@ def test_analysis_pyramid_keeps_level_0_when_it_is_the_first_target(tmp_path: Pa
     writer = AnalysisOmeZarrWriter(path, vol.shape, chunk_shape=(32, 64, 64), dtype=np.float32)
     writer[:] = vol
 
-    resampled_to: list[str] = []
-    original = AnalysisOmeZarrWriter._downsample_to_resolution
+    import linumpy.io.pyramid as pyramid
 
-    def spy(self: AnalysisOmeZarrWriter, parent: object, source_path: str, target_path: str, target_shape: object) -> None:
-        resampled_to.append(target_path)
-        original(self, parent, source_path, target_path, target_shape)  # ty: ignore[invalid-argument-type]
+    resampled_to: list[tuple[int, ...]] = []
+    original = pyramid.downsample_antialiased
 
-    monkeypatch.setattr(AnalysisOmeZarrWriter, "_downsample_to_resolution", spy)
-    writer.finalize([0.01, 0.01, 0.01], target_resolutions_um=[10, 25, 50, 100], make_isotropic=True)
+    def spy(source: object, target_shapes: list, **kwargs: object) -> list[np.ndarray]:
+        resampled_to.extend(tuple(int(v) for v in shape) for shape in target_shapes)
+        return original(source, target_shapes, **kwargs)  # ty: ignore[invalid-argument-type]
 
-    assert resampled_to == ["1", "2", "3"]
+    monkeypatch.setattr(pyramid, "downsample_antialiased", spy)
+    writer.finalize([0.01, 0.01, 0.01], target_resolutions_um=[10, 25, 50, 100], make_isotropic=True, use_gpu=False)
+
+    # Only the coarser levels are computed, in one call.
+    assert resampled_to == [(24, 60, 68), (12, 30, 34), (6, 15, 17)]
     level0, res0 = read_omezarr(path, level=0)
     np.testing.assert_array_equal(level0[:], vol)
     assert level0.chunks == (32, 64, 64)
