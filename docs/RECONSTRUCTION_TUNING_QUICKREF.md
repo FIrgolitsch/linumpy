@@ -27,7 +27,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 |---|---|
 | Seams within a slice | `stitch_overlap_fraction` (match acquisition); `stitch_blending_method='diffusion'`; raise `max_blend_refinement_px` |
 | Per-slice stitch transform jitter | `stitch_global_transform=true` |
-| One/two bad slices contaminating neighbours | `auto_assess_quality=true`, `auto_assess_min_quality=0.3` |
+| One/two bad slices contaminating neighbours | Mark them `use=false` in `slice_config.csv` |
 | Large XY jump at specific slices | Check `shifts_xy.csv`; `detect_rehoming=true`; `common_space_refine_unreliable=true` |
 | Repeating large XY steps near tile-FOV multiples (legacy data) | `tile_fov_mm=<acquisition_fov_mm>`, `tile_fov_tolerance=0.05` |
 | Image refinement producing wild values | `common_space_refine_max_discrepancy_px=50`, `common_space_refine_min_correlation=0.15` |
@@ -167,7 +167,6 @@ Use `-resume` — Nextflow caches everything upstream automatically.
 | `align_to_ras_*`, `allen_*`, `ras_*` | `align_to_ras` only |
 | `stitch_*`, `use_motor_positions_for_stitching` | `stitch_3d_with_refinement` → all downstream |
 | `fix_focal_*`, `fix_illumination*`, `normalize*` | respective preprocess process → all downstream |
-| `auto_assess_*` | `auto_assess_quality` → all downstream |
 
 ### Code-change invalidation
 

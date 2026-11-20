@@ -160,8 +160,8 @@ workflow {
             return true
         }
 
-    def has_slice_config = file(slice_config_path).exists() || params.auto_assess_quality
-    // Value channel — consumed by auto_assess, common_space, finalise, stack.
+    def has_slice_config = file(slice_config_path).exists()
+    // Value channel — consumed by common_space, finalise, stack.
     slice_config_channel = channel.value(
         file(slice_config_path).exists() ? file(slice_config_path) : file('NO_SLICE_CONFIG')
     )
@@ -239,19 +239,9 @@ workflow {
     }
     normalize(attn_corrected)
 
-    // Stage 3.5: Auto slice quality assessment (optional). Generates a
-    // slice_config.csv that marks degraded slices; an existing static
-    // slice_config.csv is merged so manually-excluded slices stay excluded.
     // current_slice_config = the latest slice_config as it flows through the
-    // pipeline; rebound by auto_assess / detect_rehoming when each runs.
+    // pipeline; rebound by detect_rehoming when it runs.
     current_slice_config = slice_config_channel
-    if (params.auto_assess_quality) {
-        auto_assess_inputs = normalize.out.normalized
-            .map { _id, norm_path -> norm_path }
-            .collect()
-        auto_assess_quality(auto_assess_inputs, slice_config_channel)
-        current_slice_config = auto_assess_quality.out.slice_config
-    }
 
     // Stage 4: Common Space Alignment.
     // detect_rehoming optionally corrects encoder-glitch spikes in the
@@ -970,38 +960,6 @@ process detect_rehoming_events {
     stub:
     """
     printf 'fixed_id,moving_id,x_shift,y_shift,x_shift_mm,y_shift_mm,reliable\n' > shifts_xy_clean.csv
-    """
-}
-
-// Auto-assess slice quality after normalization. An existing slice_config.csv
-// (when supplied) is merged so manually-excluded slices stay excluded.
-// See docs/NEXTFLOW_WORKFLOWS.md "Authoring Notes" for the two-input pattern.
-process auto_assess_quality {
-    input:
-    path "inputs/*"
-    path existing_slice_config
-
-    output:
-    path "slice_config.csv", emit: slice_config
-    path "*_metrics.json", optional: true, emit: metrics
-
-    script:
-    def update_args = existing_slice_config.name != 'NO_SLICE_CONFIG'
-        ? "--update_existing --existing_config ${existing_slice_config}"
-        : ""
-    """
-    linum-assess-slice-quality inputs slice_config.csv \\
-        --min_quality ${params.auto_assess_min_quality} \\
-        --exclude_first ${params.auto_assess_exclude_first} \\
-        --roi_size ${params.auto_assess_roi_size} \\
-        --processes ${params.processes} \\
-        ${update_args} \\
-        -f
-    """
-
-    stub:
-    """
-    printf 'slice_id,use\n' > slice_config.csv
     """
 }
 

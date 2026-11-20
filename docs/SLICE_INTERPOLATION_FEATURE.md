@@ -63,7 +63,7 @@ constraints.
 
 The preprocessing pipeline generates an initial `slice_config.csv`
 (see {doc}`SLICE_CONFIG_FEATURE`). The user
-(or the automated quality assessment) may mark additional slices with
+may mark additional slices with
 `use=false`. In the reconstruction pipeline those slices are filtered out
 *before* common-space alignment, which leaves a gap in the numeric slice ID
 sequence. `detectSingleGaps` in `soct_3d_reconst.nf` inspects the

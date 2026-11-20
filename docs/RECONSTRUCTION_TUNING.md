@@ -104,20 +104,14 @@ transform problem. Try `stitch_global_transform = true`.
 
 ---
 
-## Stage 2: Slice quality assessment
+## Stage 2: Slice exclusion
 
-Optionally scores each slice and excludes the bad ones from common-space
-alignment so they don't poison their neighbours.
+Bad slices are kept out of common-space alignment so they don't poison
+their neighbours. Mark them `use=false` in `slice_config.csv`.
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `auto_assess_quality` | `false` | Enable automatic quality scoring. |
-| `auto_assess_min_quality` | `0.3` | Slices scored below this are excluded. Lower = more permissive. |
-| `auto_assess_exclude_first` | `1` | Always exclude the first N calibration slices. |
-| `auto_exclude_enabled` | `true` | Detect runs of consecutive low-quality registrations after pairwise (different mechanism). |
-
-**When to enable:** if you see one or two badly degraded slices dragging the
-common-space alignment of their neighbours.
+| `auto_exclude_enabled` | `true` | Detect runs of consecutive low-quality registrations after pairwise. |
 
 ---
 
@@ -385,8 +379,6 @@ bias_zprofile_smooth_sigma = 2.0
 
 **For one or two bad slices contaminating the stack:**
 ```groovy
-auto_assess_quality = true
-auto_assess_min_quality = 0.3
 auto_exclude_enabled = true
 auto_exclude_consecutive = 3
 auto_exclude_z_corr = 0.6

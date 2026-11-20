@@ -466,11 +466,10 @@ process generate_slice_config {
 ```groovy
 // Parameter in nextflow.config
 params.slice_config = ""        // Optional path to slice_config.csv
-params.auto_assess_quality = false  // If true, bootstrap a slice_config.csv from quality assessment
 
 // Workflow logic (simplified)
 def slice_config_path = params.slice_config ?: "${params.output}/slice_config.csv"
-def has_slice_config = file(slice_config_path).exists() || params.auto_assess_quality
+def has_slice_config = file(slice_config_path).exists()
 
 // Filter slices using slice_config.csv (python-side; the workflow just passes the path through).
 // Each stage that has something to stamp takes the current slice_config as input and
@@ -730,7 +729,7 @@ See `linumpy/io/slice_config.py` for the concurrency contract in the module docs
 | `scripts/linum_update_slice_config_with_interpolation.py` | **REMOVED** — replaced by `linum-interpolate-missing-slice --finalise`. |
 | `workflows/preproc/preproc_rawtiles.nf` | Adds `generate_slice_config` process. |
 | `workflows/reconst_3d/soct_3d_reconst.nf` | Threads `slice_config.csv` through `detect_rehoming_events` → `finalise_interpolation` → `auto_exclude_slices` → `stack`. |
-| `workflows/reconst_3d/nextflow.config` | `slice_config` parameter; `auto_assess_quality` can bootstrap one. |
+| `workflows/reconst_3d/nextflow.config` | `slice_config` parameter. |
 
 ---
 

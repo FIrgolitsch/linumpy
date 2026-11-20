@@ -198,7 +198,7 @@ flowchart TD
     C -->|large inter-slice XY jumps| F[Motor / encoder issue]
     C -->|tile-level mismatch| G[Tile dilation]
     D --> D1[Set registration_transform=euler<br/>raise registration_max_rotation]
-    E --> E1[auto_assess_quality=true<br/>auto_exclude_enabled=true]
+    E --> E1[use=false in slice_config.csv<br/>auto_exclude_enabled=true]
     F --> F1[detect_rehoming=true<br/>tile_fov_mm=0.875<br/>common_space_refine_unreliable=true]
     G --> G1[linum-analyze-tile-dilation<br/>then per-tile correction]
     D1 --> R[Re-run with --debug_slices subset]
@@ -229,10 +229,8 @@ registration_max_rotation = 35.0  // Increase if needed for oblique cuts
 
 **If specific slices are problematic**:
 ```groovy
-// Exclude degraded slices via slice_config.csv
-// Or enable automatic quality assessment and exclusion:
-auto_assess_quality = true
-auto_assess_min_quality = 0.3
+// Exclude degraded slices via slice_config.csv (use=false)
+// Or exclude runs of consecutive low-quality registrations:
 auto_exclude_enabled = true
 ```
 

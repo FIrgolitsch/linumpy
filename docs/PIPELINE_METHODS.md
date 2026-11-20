@@ -332,13 +332,6 @@ $$
 I'_k = \frac{\min(I_k,\, P_{99.9}(I_k)) - \mathrm{median}(I_k[\text{agarose}])}{P_{90}(\{P_{\max,z} - \text{bg}_z\}_k)}.
 $$
 
-### Stage 3.5 — Auto slice quality assessment (optional, `auto_assess_quality`)
-
-GPU-accelerated quality scoring on centre-cropped ROIs; slices below
-`auto_assess_min_quality` (default 0.3) are stamped `auto_excluded` in
-`slice_config.csv`, merged with any manual exclusions
-(<ref_file file="/Users/frans/code/linumpy/scripts/analysis/linum_assess_slice_quality.py" />).
-
 ### Stage 4 — Common-space alignment
 
 #### 4a. Re-homing detection (optional, `detect_rehoming`)

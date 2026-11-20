@@ -15,7 +15,6 @@ nextflow_pipeline {
                 fix_illum_enabled = false
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -65,7 +64,6 @@ nextflow_pipeline {
                 fix_illum_backend = 'linum-basic'
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -108,7 +106,6 @@ nextflow_pipeline {
                 fix_illum_backend = 'linum-basic'
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -161,7 +158,6 @@ nextflow_pipeline {
                 fix_illum_backend = 'linum-basic'
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -213,7 +209,6 @@ nextflow_pipeline {
                 fix_illum_backend = 'basicpy'
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -254,7 +249,6 @@ nextflow_pipeline {
                 fix_illum_enabled = false
                 stitch_global_transform = false
                 detect_rehoming = true
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false
@@ -298,7 +292,6 @@ nextflow_pipeline {
                 fix_illum_enabled = false
                 stitch_global_transform = false
                 detect_rehoming = false
-                auto_assess_quality = false
                 analyze_shifts = false
                 stitch_preview = false
                 common_space_preview = false

@@ -677,8 +677,7 @@ def discover_slice_config_summary(input_dir: Path) -> dict | None:
     2. ``interpolate_missing_slice/`` (post-finalise CSVs);
     3. ``auto_exclude_slices/``;
     4. ``detect_rehoming_events/``;
-    5. ``auto_assess_quality/``;
-    6. ``input_dir`` itself.
+    5. ``input_dir`` itself.
 
     Returns ``None`` when no slice_config CSV is found.
     """
@@ -692,7 +691,6 @@ def discover_slice_config_summary(input_dir: Path) -> dict | None:
         "interpolate_missing_slice",
         "auto_exclude_slices",
         "detect_rehoming_events",
-        "auto_assess_quality",
     ):
         d = input_dir / sub
         if d.is_dir():

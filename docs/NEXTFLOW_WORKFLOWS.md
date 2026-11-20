@@ -281,19 +281,6 @@ When zmorph's quality gates fail the slot is left as a genuine gap (no zarr
 output); a manifest fragment and diagnostics JSON are still emitted. See
 {doc}`SLICE_INTERPOLATION_FEATURE` for details.
 
-#### Automatic Slice Quality Assessment
-
-Runs `linum_assess_slice_quality` on normalized slices and stamps a
-`slice_config.csv` that marks degraded slices for exclusion before the common-
-space step.
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `auto_assess_quality` | `false` | Enable automatic quality assessment |
-| `auto_assess_min_quality` | `0.3` | Exclude slices with quality score below this |
-| `auto_assess_exclude_first` | `1` | Exclude first N calibration slices automatically |
-| `auto_assess_roi_size` | `1024` | Centre-crop size in XY for quality metrics (0 = full plane) |
-
 #### Pairwise Registration
 
 Computes small corrections (rotation, sub-pixel translation) between consecutive slices. The main XY alignment comes from motor positions; these transforms are refinements applied on top.
@@ -601,7 +588,6 @@ output/
 ├── crop_interface/
 ├── normalize/
 ├── detect_rehoming_events/             # Only when detect_rehoming = true
-├── auto_assess_quality/                # Only when auto_assess_quality = true
 ├── bring_to_common_space/
 ├── common_space_previews/              # Only when common_space_preview = true
 ├── interpolate_missing_slice/          # Only when interpolate_missing_slices = true
@@ -1054,7 +1040,7 @@ consumers. They must therefore be value channels:
 | Channel             | Consumers                                                              |
 |---------------------|------------------------------------------------------------------------|
 | `shifts_xy`         | `analyze_shifts`, `detect_rehoming`, `bring_to_common_space`, `stack`, `analyze_acquisition_rotation`, `stack_motor_only` |
-| `slice_config_channel` / `current_slice_config` | `auto_assess`, `detect_rehoming`, `bring_to_common_space`, `finalise_interpolation`, `auto_exclude_slices`, `stack` |
+| `slice_config_channel` / `current_slice_config` | `detect_rehoming`, `bring_to_common_space`, `finalise_interpolation`, `auto_exclude_slices`, `stack` |
 | `no_transform`      | `stitch_3d_with_refinement` (combined with every slice tuple)           |
 
 To create a value channel from a file path, use `channel.value(file(path))`,
@@ -1094,30 +1080,28 @@ When a process input is declared as a tuple of paths and the upstream
 channel is built with `.combine()` against a `.collect()`-ed list:
 
 ```groovy
-auto_assess_inputs = normalize.out.normalized.map { _id, p -> p }.collect()  // list of paths
-auto_assess_quality(auto_assess_inputs.combine(existing_slice_config))
+transforms_for_stack = register_pairwise.out.collect()  // list of paths
+auto_exclude_slices(transforms_for_stack.combine(current_slice_config))
 ```
 
 …Nextflow flattens the collected list into the tuple binding, so the first
-zarr in the list is bound to the slot that was supposed to receive the
-config CSV (we observed this as
-`IsADirectoryError: Is a directory: 'slice_z02_normalize.ome.zarr'`).
+item of the list is bound to the slot that was supposed to receive the
+config CSV (seen as an `IsADirectoryError` on a slice zarr).
 
 The fix is to declare each item as a separate input and pass them as
 separate positional arguments:
 
 ```groovy
-process auto_assess_quality {
+process auto_exclude_slices {
     input:
-    path "inputs/*"
-    path existing_slice_config
+    path "transforms/*"
+    path slice_config_in
 }
 
-auto_assess_quality(auto_assess_inputs, channel.value(existing_slice_config_file))
+auto_exclude_slices(transforms_for_stack, current_slice_config)
 ```
 
-The same pattern applies to `finalise_interpolation` and
-`auto_exclude_slices`.
+The same pattern applies to `finalise_interpolation`.
 
 ### Slice config flow
 
@@ -1125,10 +1109,7 @@ Several stages produce or consume a per-slice configuration CSV
 (`slice_config.csv`). The flow is:
 
 ```
-slice_config_channel
-   └── (auto_assess_quality, optional) ──┐
-                                         ▼
-                       effective_slice_config (value)
+                          slice_config_channel (value)
                                          │
                                          ▼
                           current_slice_config (value)

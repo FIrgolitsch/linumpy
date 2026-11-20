@@ -219,20 +219,7 @@ normalize
 - Normalizes intensities per slice
 - Compensates signal attenuation with depth
 
-#### 8. Auto Slice Quality Assessment (Optional)
-
-```
-auto_assess_quality
-```
-- Runs GPU-accelerated quality scoring on all normalized slices
-- Enabled by `auto_assess_quality = true`
-- Stamps quality scores into `slice_config.csv`; slices below `auto_assess_min_quality` are marked `auto_excluded`
-- Any existing manually-excluded slices are preserved (merged with the incoming config)
-
-**Key Parameters:**
-- `auto_assess_quality`, `auto_assess_min_quality`, `auto_assess_exclude_first`, `auto_assess_roi_size`
-
-#### 9. Re-homing Detection (Optional)
+#### 8. Re-homing Detection (Optional)
 
 ```
 detect_rehoming_events
@@ -248,7 +235,7 @@ detect_rehoming_events
 - `tile_fov_mm` (legacy shifts only)
 - `rehoming_diagnostics` — write `rehoming_report.json` + diagnostic plot
 
-#### 10. Common Space Alignment
+#### 9. Common Space Alignment
 
 ```
 bring_to_common_space
@@ -266,7 +253,7 @@ bring_to_common_space
 - Enable `common_space_preview = true` for aligned-slice previews
 - Check `bring_to_common_space/` for the aligned slices
 
-#### 11. Missing Slice Interpolation (Optional)
+#### 10. Missing Slice Interpolation (Optional)
 
 ```
 interpolate_missing_slice
@@ -280,7 +267,7 @@ interpolate_missing_slice
 - `finalise_interpolation` merges per-slice manifest fragments into
   `slice_config_final.csv`
 
-#### 12. Slice Registration
+#### 11. Slice Registration
 
 ```
 register_pairwise
@@ -291,9 +278,9 @@ register_pairwise
 - Refines with SimpleITK gradient descent (translation, or rotation + translation via `euler` transform)
 - Falls back to identity transform if registration exceeds thresholds
 
-The `bring_to_common_space` step (step 10) provides initial XY alignment using microscope metadata, while pairwise registration fine-tunes the alignment between adjacent slices.
+The `bring_to_common_space` step (step 9) provides initial XY alignment using microscope metadata, while pairwise registration fine-tunes the alignment between adjacent slices.
 
-#### 13. Auto-Exclude Clusters (Optional)
+#### 12. Auto-Exclude Clusters (Optional)
 
 ```
 auto_exclude_slices
@@ -305,7 +292,7 @@ auto_exclude_slices
 **Key Parameters:**
 - `auto_exclude_quality`, `auto_exclude_consecutive`, `auto_exclude_z_corr`
 
-#### 14. Volume Stacking
+#### 13. Volume Stacking
 
 ```
 stack
@@ -318,7 +305,7 @@ stack
 - Confidence-based transform degradation: high-confidence pairs get full transforms, low-confidence get rotation-only, very low get skipped
 - Translation accumulation steers the viewing plane to reduce inter-slice drift
 
-#### 15. Bias Field Correction (Optional)
+#### 14. Bias Field Correction (Optional)
 
 ```
 correct_bias_field
@@ -328,7 +315,7 @@ correct_bias_field
 - Three modes: `per_section` (N4 per thick section), `global` (single volume pass), or `two_pass` (per-section then global)
 - Controlled by `bias_strength` (0 = passthrough, 1 = full correction)
 
-#### 16. Atlas Registration (Optional)
+#### 15. Atlas Registration (Optional)
 
 ```
 align_to_ras
@@ -838,7 +825,6 @@ output/
 ├── beam_profile_correction/          # PSF-corrected slices
 ├── crop_interface/                   # Cropped slices
 ├── normalize/                        # Normalized slices
-├── auto_assess_quality/              # (auto_assess_quality = true) Quality-stamped slice_config.csv
 ├── detect_rehoming_events/           # Corrected shifts_xy_clean.csv + diagnostics (when enabled)
 ├── bring_to_common_space/            # Aligned slices
 ├── common_space_previews/            # Common space previews (when common_space_preview = true)

@@ -265,7 +265,6 @@ nextflow run soct_2.5d_reconst.nf \
 | Tile illumination | BaSIC (per-slice) | BaSIC (per-slice via `fix_illumination`) |
 | Tile placement | Image-based (phase correlation) | Motor positions + optional image refinement |
 | Slice alignment | Motor XY shifts only | Motor + pairwise registration |
-| Quality assessment | None | Optional auto quality assessment |
 | Re-homing correction | None | `detect_rehoming` pass |
 | Interpolation | None | `interpolate_missing_slice` |
 | Atlas registration | None (requires separate NIfTI step) | Integrated `align_to_ras` |
