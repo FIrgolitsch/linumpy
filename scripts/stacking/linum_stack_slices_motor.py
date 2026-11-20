@@ -31,6 +31,7 @@ from linumpy.io import slice_config as slice_config_io
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.metrics import collect_stack_metrics
 from linumpy.mosaic.stacking import (
+    apply_local_depth_gain,
     apply_overlap_z_gain,
     apply_rigid_euler_padded,
     apply_seam_notch,
@@ -342,17 +343,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
     )
     p.add_argument(
-        "--notch_slice_seams",
+        "--local_depth_gain",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Remove the brightness that repeats once per slice. Does not move tissue. [%(default)s]",
+        help="Remove the depth trend inside each slice with a gain that is smooth in XY:\n"
+        "the median depth profile of a slice and its neighbours, in 8-pixel cells.\n"
+        "Does not move tissue and filters nothing along Z. [%(default)s]",
+    )
+    p.add_argument(
+        "--local_depth_gain_slabs",
+        type=int,
+        default=3,
+        help="Slices on each side that enter the median depth profile. [%(default)s]",
+    )
+    p.add_argument(
+        "--notch_slice_seams",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fourier-notch the brightness that repeats once per slice, in every voxel column.\n"
+        "It also removes anatomy at that period and softens thin structures.\n"
+        "Replaced by --local_depth_gain. [%(default)s]",
     )
     p.add_argument(
         "--flatten_z_profile",
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Scale each slice along Z so its tissue median is flat.\n"
-        "Off: the seam notch removes the stripe without moving tissue. [%(default)s]",
+        "Off: the local depth gain removes the stripe without moving tissue. [%(default)s]",
     )
     p.add_argument(
         "--blend_tissue_threshold",
@@ -1501,7 +1518,16 @@ def main() -> None:
         decisions_df.to_csv(args.output_stacking_decisions, index=False)
         logger.info("Stacking decisions saved to %s", args.output_stacking_decisions)
 
-    # Remove the repeating slice stripe. Does not move tissue.
+    # Remove the depth trend inside each slab. Does not move tissue.
+    if args.local_depth_gain:
+        depth_rms = apply_local_depth_gain(
+            output.zarray,
+            slab_z_starts,
+            threshold=args.blend_tissue_threshold,
+            half_window=args.local_depth_gain_slabs,
+        )
+        logger.info("Removed the depth trend inside the slabs (rms %.1f %%)", 100.0 * depth_rms)
+
     if args.notch_slice_seams:
         period = apply_seam_notch(output.zarray)
         logger.info("Notched slice seams (period %.1f voxels)", period)

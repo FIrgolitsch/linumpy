@@ -7,6 +7,7 @@ from linumpy.intensity.slab_harmonize import (
     coarse_log_tissue,
     depth_band_field,
     harmonize_slab_intensity,
+    local_depth_field,
     plane_log_gains,
     slab_log_gains,
     slab_period,
@@ -168,3 +169,76 @@ def test_slab_gains_keep_a_joint_a_few_planes_off_the_period():
     # Slab 1 is 13 planes tall: a measured joint, not a missing slice.
     assert np.isfinite(info["steps"][1])
     assert np.isfinite(info["steps"][0])
+
+
+def _slab_anatomy(n_slabs=N_SLABS, period=PERIOD, cells=(12, 12), seed=0):
+    """Coarse log level with a different, depth-independent anatomy in every slab."""
+    rng = np.random.default_rng(seed)
+    per_slab = rng.normal(0.0, 0.2, size=(n_slabs, *cells)).astype(np.float32)
+    return np.repeat(per_slab, period, axis=0)
+
+
+def test_local_depth_field_follows_a_trend_that_differs_between_tissues():
+    level = _slab_anatomy()
+    depth = (np.arange(level.shape[0]) % PERIOD) / PERIOD
+    strength = np.full((12, 12), 0.1, np.float32)
+    strength[:, 6:] = 0.5  # white matter on the right keeps a stronger trend
+    level -= depth[:, None, None] * strength
+    field = local_depth_field(level, np.ones_like(level), _bounds(), sigma_cells=0.0)
+    profile = -(depth[:PERIOD] - depth[:PERIOD].mean())
+    for s in range(N_SLABS):
+        np.testing.assert_allclose(field[s * PERIOD : (s + 1) * PERIOD, 3, 2], 0.1 * profile, atol=1e-5)
+        np.testing.assert_allclose(field[s * PERIOD : (s + 1) * PERIOD, 3, 9], 0.5 * profile, atol=1e-5)
+    corrected = level - field
+    # Each slab is flat in depth again, and keeps its own level.
+    assert np.abs(np.diff(corrected.reshape(N_SLABS, PERIOD, 12, 12), axis=1)).max() < 1e-5
+    np.testing.assert_allclose(
+        corrected.reshape(N_SLABS, PERIOD, 12, 12).mean(axis=1),
+        level.reshape(N_SLABS, PERIOD, 12, 12).mean(axis=1),
+        atol=1e-5,
+    )
+
+
+def test_local_depth_field_leaves_a_structure_that_is_in_one_slab_only():
+    level = _slab_anatomy()
+    # A structure that ends inside slab 4: a step with depth in a few cells of one slab.
+    level[4 * PERIOD + 5 : 5 * PERIOD, 2:5, 2:5] += 0.6
+    field = local_depth_field(level, np.ones_like(level), _bounds(), sigma_cells=0.0)
+    assert np.abs(field).max() < 1e-5
+
+
+def test_local_depth_field_needs_tissue_in_enough_slabs():
+    level = _slab_anatomy()
+    depth = (np.arange(level.shape[0]) % PERIOD) / PERIOD
+    level -= 0.4 * depth[:, None, None]
+    weight = np.ones_like(level)
+    weight[3 * PERIOD :, :, :3] = 0.0  # these cells hold tissue in three slabs only
+    field = local_depth_field(level, weight, _bounds(), sigma_cells=0.0)
+    assert np.abs(field[:, :, :3]).max() == 0.0
+    assert np.abs(field[:, :, 3:]).max() > 0.1
+    # Too few slabs for a median that anatomy drops out of.
+    assert not local_depth_field(level[: 3 * PERIOD], weight[: 3 * PERIOD], _bounds(3)).any()
+
+
+def test_local_depth_field_spreads_into_cells_without_a_profile_of_their_own():
+    level = _slab_anatomy()
+    depth = (np.arange(level.shape[0]) % PERIOD) / PERIOD
+    level -= 0.4 * depth[:, None, None]
+    weight = np.ones_like(level)
+    weight[::PERIOD, :, 0] = 0.5  # an edge cell that is half tissue in one plane of every slab
+    field = local_depth_field(level, weight, _bounds())
+    np.testing.assert_allclose(field[:, 5, 0], field[:, 5, 6], atol=1e-4)
+
+
+def test_local_depth_field_with_slabs_of_uneven_height():
+    bounds = [(0, 10), (10, 23), (23, 33), (33, 41), (41, 51), (51, 61), (61, 71), (71, 81)]
+    level = np.zeros((81, 6, 6), np.float32)
+    for start, end in bounds:
+        level[start:end] = -0.03 * np.arange(end - start)[:, None, None]
+    field = local_depth_field(level, np.ones_like(level), bounds, sigma_cells=0.0)
+    ramp = -0.03 * (np.arange(PERIOD) - 4.5)
+    np.testing.assert_allclose(field[0:10, 2, 2], ramp, atol=1e-5)
+    # A taller slab keeps the last value below one period, a shorter one is zero-mean over its own planes.
+    np.testing.assert_allclose(field[10:20, 2, 2], ramp, atol=1e-5)
+    np.testing.assert_allclose(field[20:23, 2, 2], ramp[-1], atol=1e-5)
+    np.testing.assert_allclose(field[33:41, 2, 2], -0.03 * (np.arange(8) - 3.5), atol=1e-5)

@@ -520,6 +520,28 @@ same A-line, is below half of that A-line's brightest smoothed value in the top
 of the slab; the stack then keeps the slab above there. This is the per-A-line
 water/tissue mask of Lefebvre et al. 2017.
 
+`stack_local_depth_gain` removes the depth trend that is left inside a slab.
+After the beam-profile and attenuation corrections the signal still changes
+with depth below the cut face, and by a different amount in each tissue: white
+matter keeps a stronger trend than grey matter. In the stack that is one band
+per slab whose strength follows the anatomy, so a correction per plane or per
+slab cannot remove it. The stacked volume is reduced to the mean log intensity
+of the tissue in cells of 8 x 8 pixels. In each cell the depth profile of a
+slab is its log level minus its own mean, and the profile to remove is the
+median of that over the slab and `stack_local_depth_gain_slabs` (3) slabs on
+each side. Anatomy differs from slab to slab and drops out of the median; the
+trend of the system is the same in all of them and stays. A cell needs tissue
+through the whole slab in at least 4 slabs of the window; elsewhere the profile
+comes from the cells around it (Gaussian, one cell). The profile is zero-mean
+over the slab, brought to the pixel grid by bilinear interpolation and removed
+as a gain, so the level of a slab does not change, the image inside a plane
+keeps its detail, and nothing is filtered along the slicing axis.
+
+`stack_notch_seams` is the earlier correction for the same band: a Fourier
+notch at the slab period and its harmonics in every voxel column. It removes
+the mean band of a column, and with it the anatomy at that period, which
+softens thin structures that cross the slabs. It is off by default.
+
 #### 7c. Pairwise transform application
 
 Each slice's 2-D Euler transform is applied per Z-plane via SimpleITK

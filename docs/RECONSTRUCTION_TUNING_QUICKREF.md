@@ -41,7 +41,9 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Rectangular holes or a stepped outline at the brain edge in orthogonal views | `bias_mask_threshold_scale=0.3`, `bias_zero_mask_mode='section_outline'` |
 | Specks or bubbles left around the brain | `bias_mask_min_component_fraction=0.001` |
 | Loose tissue or a slab rim attached to the brain | `bias_mask_opening_px=10` |
-| Bands at the slab joints in the side views | `bias_band_sigma_px=240` |
+| One band per slab in the side views, stronger in white matter than in grey | `stack_local_depth_gain=true` (default), `stack_notch_seams=false` |
+| Thin structures soft or broken along the slicing axis | `stack_notch_seams=false` |
+| Broad bands at the slab joints that remain in the side views | `bias_band_sigma_px=240` |
 | Some slabs brighter or darker than their neighbours | `bias_slab_gain=true`, `bias_zprofile_equalize=false` |
 | Brains on different intensity scales | the same `bias_target_tissue_level` for all |
 | White matter brighter on one side of a joint, grey level the same (sample height changed between slabs) | `compensate_attenuation_calibrate_strength=true` |

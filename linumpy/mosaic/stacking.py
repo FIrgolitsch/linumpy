@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from linumpy.intensity.slab_harmonize import coarse_log_tissue, local_depth_field, upsample_plane
+
 logger = logging.getLogger(__name__)
 
 
@@ -1180,6 +1182,87 @@ def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05, worke
         for bounds in tiles:
             _notch_tile(bounds)
     return period
+
+
+def apply_local_depth_gain(
+    array: Any,
+    slab_starts: Sequence[int],
+    threshold: float = 0.01,
+    cell: int = 8,
+    half_window: int = 3,
+    workers: int | None = None,
+) -> float:
+    """Remove the depth trend inside each slab of a ZYX stack. Returns its rms in log units.
+
+    The trend is measured in XY cells of ``cell`` pixels as the median depth
+    profile of a slab and its neighbours (:func:`local_depth_field`), and
+    removed with a gain that is smooth in XY. Each voxel is multiplied by one
+    factor: the image inside a plane keeps its detail, nothing is filtered
+    along Z, and voxels at zero stay at zero.
+
+    The array is usually the stacked volume on disk, in compressed chunks.
+    It is read twice and written once, in runs of planes one chunk deep.
+
+    Parameters
+    ----------
+    array
+        ZYX array, changed in place (a zarr array or a NumPy array).
+    slab_starts
+        First plane of every slab, as the stack placed them.
+    threshold
+        Voxels above it count as tissue.
+    cell
+        Edge of the XY cells the trend is measured in, in pixels.
+    half_window
+        Slabs on each side that enter the median profile.
+    workers
+        Planes scaled at the same time. ``None`` takes the thread budget of
+        the task (``OMP_NUM_THREADS``), at most 8.
+    """
+    nz, ny, nx = array.shape
+    starts = [int(s) for s in slab_starts]
+    if len(starts) < 2 or min(ny, nx) < cell:
+        return 0.0
+    if starts[0] != 0 or any(b <= a for a, b in pairwise(starts)) or starts[-1] >= nz:
+        logger.warning("Slab starts are not increasing from 0, local depth gain skipped")
+        return 0.0
+    bounds = list(zip(starts, [*starts[1:], nz], strict=True))
+    chunks = getattr(array, "chunks", None)
+    z_block = int(chunks[0]) if chunks else 64
+
+    log_level = np.zeros((nz, ny // cell, nx // cell), dtype=np.float32)
+    weight = np.zeros_like(log_level)
+    for z0 in range(0, nz, z_block):
+        planes = np.asarray(array[z0 : z0 + z_block], dtype=np.float32)
+        z1 = z0 + planes.shape[0]
+        log_level[z0:z1], weight[z0:z1] = coarse_log_tissue(planes, planes > threshold, block=cell)
+    field = local_depth_field(log_level, weight, bounds, half_window=half_window)
+    solid = weight > 0.9
+    rms = float(np.sqrt(np.mean(field[solid] ** 2))) if solid.any() else 0.0
+    del log_level, weight, solid
+    if not field.any():
+        return 0.0
+
+    if workers is None:
+        workers = min(8, max(1, int(os.environ.get("OMP_NUM_THREADS", "1") or 1)))
+    for z0 in range(0, nz, z_block):
+        if not field[z0 : z0 + z_block].any():
+            continue
+        planes = np.asarray(array[z0 : z0 + z_block], dtype=np.float32)
+
+        def _scale_plane(k: int, planes: np.ndarray = planes, z0: int = z0) -> None:
+            if field[z0 + k].any():
+                planes[k] *= np.exp(-upsample_plane(field[z0 + k], cell, (ny, nx)))
+
+        if workers > 1 and planes.shape[0] > 1:
+            # Every plane is scaled on its own, so the threads share nothing.
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                list(executor.map(_scale_plane, range(planes.shape[0])))
+        else:
+            for k in range(planes.shape[0]):
+                _scale_plane(k)
+        array[z0 : z0 + z_block] = planes
+    return rms
 
 
 def estimate_slice_period(medians: np.ndarray, period_min: float, period_max: float) -> float:

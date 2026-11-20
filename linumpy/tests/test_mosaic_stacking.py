@@ -851,3 +851,64 @@ def test_apply_seam_notch_reads_each_chunk_once_for_the_medians():
     apply_seam_notch(array, workers=1)
     # 4 slabs of 50 planes for the medians, then one read per chunk column (2 x 2).
     assert array.reads == 4 + 4
+
+
+def _banded_stack(n_slabs: int = 8, period: int = 20, plane: tuple[int, int] = (88, 104)) -> tuple[np.ndarray, list[int]]:
+    """Slabs with their own anatomy and fine detail, and a depth trend that is stronger on the right half."""
+    rng = np.random.default_rng(1)
+    ny, nx = plane
+    volume = np.empty((n_slabs * period, ny, nx), dtype=np.float32)
+    strength = np.where(np.arange(nx) < nx // 2, 0.2, 0.8)[None, None, :]
+    depth = (np.arange(period) / period)[:, None, None]
+    for s in range(n_slabs):
+        coarse = 0.25 * np.exp(rng.normal(0.0, 0.2, size=(ny // 8, nx // 8)))
+        anatomy = np.kron(coarse, np.ones((8, 8)))
+        detail = 1.0 + 0.1 * rng.random((period, ny, nx))
+        volume[s * period : (s + 1) * period] = anatomy[None] * detail * np.exp(-strength * depth)
+    volume[:, :8, :] = 0  # empty margin
+    return volume, [s * period for s in range(n_slabs)]
+
+
+def _depth_drop(volume: np.ndarray, period: int, columns: slice) -> float:
+    """Mean ratio of the last to the first plane of a slab, over all slabs."""
+    slabs = volume[:, 16:, columns].reshape(-1, period, volume.shape[1] - 16, volume[:, :, columns].shape[2])
+    return float(np.mean(slabs[:, -1].mean(axis=(1, 2)) / slabs[:, 0].mean(axis=(1, 2))))
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_apply_local_depth_gain_flattens_each_tissue_by_its_own_trend(tmp_path, workers):
+    import zarr
+
+    from linumpy.mosaic.stacking import apply_local_depth_gain
+
+    volume, starts = _banded_stack()
+    stored = zarr.open_array(tmp_path / "stack.zarr", mode="w", shape=volume.shape, chunks=(64, 40, 48), dtype=np.float32)
+    stored[:] = volume
+    rms = apply_local_depth_gain(stored, starts, workers=workers)
+    out = np.asarray(stored[:])
+
+    assert 0.05 < rms < 0.3
+    # Away from the border between the two tissues the trend is gone on both sides.
+    assert _depth_drop(volume, 20, slice(0, 40)) < 0.86
+    assert _depth_drop(volume, 20, slice(64, 104)) < 0.5
+    assert _depth_drop(out, 20, slice(0, 40)) == pytest.approx(1.0, abs=0.03)
+    assert _depth_drop(out, 20, slice(64, 104)) == pytest.approx(1.0, abs=0.03)
+    # Empty voxels stay empty, and the gain is smooth inside a plane: neighbours keep their ratio.
+    assert not out[:, :8, :].any()
+    gain = out[:, 16:, :] / volume[:, 16:, :]
+    assert np.abs(np.diff(np.log(gain), axis=2)).max() < 0.03
+    # The level of a slab does not change.
+    before = np.log(volume[:, 16:, :]).reshape(8, 20, -1).mean(axis=(1, 2))
+    after = np.log(out[:, 16:, :]).reshape(8, 20, -1).mean(axis=(1, 2))
+    np.testing.assert_allclose(after, before, atol=0.01)
+
+
+def test_apply_local_depth_gain_skips_starts_it_cannot_use():
+    from linumpy.mosaic.stacking import apply_local_depth_gain
+
+    volume, starts = _banded_stack()
+    original = volume.copy()
+    assert apply_local_depth_gain(volume, [0, 40, 20, 60, 80, 100, 120, 140]) == 0.0
+    assert apply_local_depth_gain(volume, starts[:1]) == 0.0
+    assert apply_local_depth_gain(volume, [5, *starts[1:]]) == 0.0
+    np.testing.assert_array_equal(volume, original)

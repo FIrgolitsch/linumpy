@@ -743,9 +743,14 @@ def _append_stack_options(argv: list[str], cfg: dict[str, object], root: Path) -
             "--no-flatten_z_profile",
             "--max_outline_step_px",
             "0",
-            "--notch_slice_seams",
+            "--notch_slice_seams" if _flag_bool(cfg, "stack_notch_seams", False) else "--no-notch_slice_seams",
         ]
     )
+    if _flag_bool(cfg, "stack_local_depth_gain", True):
+        half_window = _flag_number(cfg, "stack_local_depth_gain_slabs", 3)
+        argv.extend(["--local_depth_gain", "--local_depth_gain_slabs", _num(half_window)])
+    else:
+        argv.append("--no-local_depth_gain")
     cut_face_planes = _flag_number(cfg, "stack_blend_cut_face_planes", 0)
     if cut_face_planes > 0:
         argv.extend(["--blend_cut_face_planes", _num(cut_face_planes)])

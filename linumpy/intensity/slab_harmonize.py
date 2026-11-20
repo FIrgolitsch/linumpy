@@ -16,9 +16,13 @@ slabs shows almost the same tissue, so the median difference between them is
 the gain step. A loose pull towards the brain-wide level stops the chained
 steps from drifting. The depth bands are whatever repeats with the slab
 period: the smoothed log intensity minus its running mean over one period.
+
+:func:`local_depth_field` is the depth band at the scale of one cell. It is
+applied by the stacking step, before the two corrections above.
 """
 
 import logging
+import warnings
 from typing import Any
 
 import numpy as np
@@ -206,7 +210,97 @@ def depth_band_field(
     return np.clip(field, -clamp, clamp).astype(np.float32)
 
 
-def _upsample_plane(field: np.ndarray, block: int, shape: tuple[int, int]) -> np.ndarray:
+def local_depth_field(
+    log_level: np.ndarray,
+    weight: np.ndarray,
+    bounds: list[tuple[int, int]],
+    half_window: int = 3,
+    min_slabs: int = 4,
+    min_weight: float = 0.9,
+    sigma_cells: float = 1.0,
+    clamp: float = 0.7,
+) -> np.ndarray:
+    """Depth profile of the log intensity inside each slab, for every XY cell.
+
+    The signal that is left after the depth corrections still changes with
+    depth below the cut face, by an amount that depends on the tissue: white
+    matter keeps a stronger trend than grey matter. That leaves one band per
+    slab, with a different strength in every structure.
+
+    In each cell, the profile of a slab is its log level minus its own mean.
+    The profile of the system is the median of that over the slab and its
+    neighbours along the stack: anatomy differs from slab to slab and drops
+    out of the median, the depth trend is the same in all of them and stays.
+    The result is zero-mean over every slab, so the level of a slab in a cell
+    does not change, and nothing is filtered along the stacking axis.
+
+    Parameters
+    ----------
+    log_level
+        Coarse log intensity from :func:`coarse_log_tissue`.
+    weight
+        Tissue fraction of each coarse cell, same shape.
+    bounds
+        ``(start, end)`` plane range of each slab in the stack.
+    half_window
+        Slabs on each side that enter the median.
+    min_slabs
+        A profile is used only where at least this many slabs of the window
+        have the cell filled with tissue. With fewer, the median would follow
+        the anatomy of those slabs.
+    min_weight
+        A cell counts in a slab when more than this fraction of it is tissue
+        in every plane of the slab.
+    sigma_cells
+        XY smoothing of the profile, in cells. It also carries the profile
+        into the cells at the tissue edge that have none of their own.
+    clamp
+        Largest correction, in log units.
+
+    Returns
+    -------
+    np.ndarray
+        Field of the shape of ``log_level``. Subtract it from the log intensity.
+    """
+    field = np.zeros(log_level.shape, dtype=np.float32)
+    n_slabs = len(bounds)
+    period = slab_period(bounds)
+    if n_slabs < min_slabs or period < 2:
+        return field
+    profiles = np.full((n_slabs, period, *log_level.shape[1:]), np.nan, dtype=np.float32)
+    for s, (start, end) in enumerate(bounds):
+        n = min(end - start, period)
+        if n < 2:
+            continue
+        segment = log_level[start : start + n]
+        solid = (weight[start : start + n] > min_weight).all(axis=0)
+        profiles[s, :n] = np.where(solid, segment - segment.mean(axis=0), np.nan)
+
+    width = min(n_slabs, 2 * half_window + 1)
+    sigma = (0.0, float(sigma_cells), float(sigma_cells))
+    for s, (start, end) in enumerate(bounds):
+        n = min(end - start, period)
+        if n < 2:
+            continue
+        # At the ends of the stack the window keeps its width and becomes one-sided.
+        first = min(max(0, s - half_window), n_slabs - width)
+        window = profiles[first : first + width]
+        known = np.isfinite(window).sum(axis=0) >= min_slabs
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            median = np.nanmedian(window, axis=0)
+        cover = ndi.gaussian_filter(known.astype(np.float32), sigma)
+        smooth = ndi.gaussian_filter(np.where(known, median, 0.0).astype(np.float32), sigma) / np.maximum(cover, 1e-3)
+        profile = np.where(cover > 0.3, smooth, 0.0)[:n]
+        profile -= profile.mean(axis=0)
+        field[start : start + n] = profile
+        # A slab that reaches deeper than one period (before a missing slice) keeps its last value.
+        field[start + n : end] = profile[n - 1]
+    return np.clip(field, -clamp, clamp)
+
+
+def upsample_plane(field: np.ndarray, block: int, shape: tuple[int, int]) -> np.ndarray:
+    """Bring one plane of a coarse field to the pixel grid (bilinear, edge cells repeated)."""
     up = ndi.zoom(field, block, order=1, mode="nearest", grid_mode=True)
     pad_y = shape[0] - up.shape[0]
     pad_x = shape[1] - up.shape[1]
@@ -290,7 +384,7 @@ def harmonize_slab_intensity(
         if not tissue.any():
             continue
         if field is not None:
-            total = np.clip(_upsample_plane(field[z], block, plane_shape) + log_correction, -limit, limit)
+            total = np.clip(upsample_plane(field[z], block, plane_shape) + log_correction, -limit, limit)
             factor = np.exp(-total).astype(np.float32)
             vol[z] = np.where(tissue, vol[z] * factor, vol[z])
         elif log_correction != 0.0:
