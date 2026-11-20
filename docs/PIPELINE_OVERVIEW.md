@@ -238,9 +238,10 @@ detect_rehoming_events
 #### 9. Common Space Alignment
 
 ```
-bring_to_common_space
+plan_common_space → bring_to_common_space (one task per slice)
 ```
 - Aligns all slices using (optionally corrected) XY shifts from microscope metadata
+- `plan_common_space` sizes the shared canvas and writes each slice's position to `common_space_plan.csv`; `bring_to_common_space` resamples one slice per task
 - Resamples to a shared canvas; centres drift around the middle slice to keep tissue in the common volume
 - **Excluded-slice handling**: shifts involving excluded slices are replaced using the neighbours (`local_median` by default)
 - **Optional image-based refinement** (`common_space_refine_unreliable`) uses 2-D phase correlation to recompute shifts flagged `reliable=0`
@@ -826,6 +827,7 @@ output/
 ├── crop_interface/                   # Cropped slices
 ├── normalize/                        # Normalized slices
 ├── detect_rehoming_events/           # Corrected shifts_xy_clean.csv + diagnostics (when enabled)
+├── plan_common_space/                # common_space_plan.csv + alignment metrics
 ├── bring_to_common_space/            # Aligned slices
 ├── common_space_previews/            # Common space previews (when common_space_preview = true)
 ├── interpolate_missing_slice/        # (interpolate_missing_slices = true)

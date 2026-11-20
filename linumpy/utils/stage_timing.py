@@ -4,6 +4,7 @@ import atexit
 import json
 import math
 import os
+import threading
 import time
 from collections.abc import Sequence
 from typing import TypeGuard
@@ -11,6 +12,8 @@ from typing import TypeGuard
 _SECONDS: dict[str, float] = {}
 _COUNTS: dict[str, int] = {}
 _META: dict[str, dict[str, object]] = {}
+# Stages are timed from worker threads too.
+_LOCK = threading.Lock()
 
 
 def add(stage: str, seconds: float, **meta: object) -> None:
@@ -29,21 +32,22 @@ def add(stage: str, seconds: float, **meta: object) -> None:
     """
     if not os.environ.get("LINUMPY_STAGE_TIMING"):
         return
-    _SECONDS[stage] = _SECONDS.get(stage, 0.0) + seconds
-    _COUNTS[stage] = _COUNTS.get(stage, 0) + 1
-    stored = _META.setdefault(stage, {})
-    for key, value in meta.items():
-        if key == "function":
-            current = stored.get("functions")
-            if isinstance(current, list):
-                updated: list[object] = [*current, value]
-            else:
-                updated = [value]
-            stored["functions"] = updated
-            continue
-        if key in stored and stored[key] != value:
-            raise ValueError(f"{key} disagrees for stage {stage}")
-        stored[key] = value
+    with _LOCK:
+        _SECONDS[stage] = _SECONDS.get(stage, 0.0) + seconds
+        _COUNTS[stage] = _COUNTS.get(stage, 0) + 1
+        stored = _META.setdefault(stage, {})
+        for key, value in meta.items():
+            if key == "function":
+                current = stored.get("functions")
+                if isinstance(current, list):
+                    updated: list[object] = [*current, value]
+                else:
+                    updated = [value]
+                stored["functions"] = updated
+                continue
+            if key in stored and stored[key] != value:
+                raise ValueError(f"{key} disagrees for stage {stage}")
+            stored[key] = value
 
 
 class span:  # noqa: N801

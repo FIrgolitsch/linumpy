@@ -242,3 +242,22 @@ def test_local_depth_field_with_slabs_of_uneven_height():
     np.testing.assert_allclose(field[10:20, 2, 2], ramp, atol=1e-5)
     np.testing.assert_allclose(field[20:23, 2, 2], ramp[-1], atol=1e-5)
     np.testing.assert_allclose(field[33:41, 2, 2], -0.03 * (np.arange(8) - 3.5), atol=1e-5)
+
+
+@pytest.mark.parametrize("n_values", [6, 7])
+def test_nanmedian_axis0_matches_numpy(n_values):
+    import warnings
+
+    from linumpy.intensity.slab_harmonize import _nanmedian_axis0
+
+    rng = np.random.default_rng(5)
+    values = rng.standard_normal((n_values, 9, 30, 31)).astype(np.float32)
+    values[rng.random(values.shape) < 0.3] = np.nan
+    values[:, :, :4] = np.nan  # columns without any value
+    count = np.isfinite(values).sum(axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        expected = np.nanmedian(values, axis=0)
+    median = _nanmedian_axis0(values, count)
+    assert median.dtype == np.float32
+    assert np.array_equal(median, expected, equal_nan=True)

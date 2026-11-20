@@ -37,6 +37,7 @@ nextflow_pipeline {
             assert tasks.any { it.name =~ /compensate_attenuation/ }
             assert tasks.any { it.name =~ /crop_interface/ }
             assert tasks.any { it.name =~ /normalize/ }
+            assert tasks.any { it.name =~ /plan_common_space/ }
             assert tasks.any { it.name =~ /bring_to_common_space/ }
             assert tasks.any { it.name =~ /register_pairwise/ }
             assert tasks.any { it.name =~ /stack/ }

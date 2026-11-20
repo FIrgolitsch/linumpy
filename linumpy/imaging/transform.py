@@ -57,7 +57,7 @@ def match_shape(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndar
     return padded_images[0], padded_images[1]
 
 
-def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: int, dy: int) -> np.ndarray:
+def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: float, dy: float, n_threads: int | None = None) -> np.ndarray:
     """Apply a shift to the image in the xy plane.
 
     Parameters
@@ -65,24 +65,36 @@ def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: int, dy: int) -> 
     img : np.ndarray
         The image to shift.
     reference : np.ndarray
-        The reference image.
-    dx : int
+        The reference image. Only its shape is used.
+    dx : float
         The shift in x.
-    dy : int
+    dy : float
         The shift in y.
+    n_threads : int or None
+        Threads the resampling may use. ``None`` keeps the SimpleITK default.
     """
-    fixed = sitk.GetImageFromArray(reference)
     moving = sitk.GetImageFromArray(img)
 
-    translation = [0.0] * fixed.GetDimension()
+    # Only the shape of the reference is used: the output grid has unit
+    # spacing and its origin at zero, as an image made from the array would.
+    # Copying the reference voxels into an image for that cost as much as
+    # the resampling.
+    shape = np.shape(reference)
+    ndim = len(shape)
+    translation = [0.0] * ndim
     translation[0] = dx
     translation[1] = dy
 
-    transform = sitk.TranslationTransform(fixed.GetDimension())
+    transform = sitk.TranslationTransform(ndim)
     transform.SetParameters(translation)
 
     resampler = sitk.ResampleImageFilter()
-    resampler.SetReferenceImage(fixed)
+    resampler.SetSize([int(n) for n in reversed(shape)])
+    resampler.SetOutputSpacing([1.0] * ndim)
+    resampler.SetOutputOrigin([0.0] * ndim)
+    resampler.SetOutputDirection(np.eye(ndim).ravel().tolist())
+    if n_threads is not None:
+        resampler.SetNumberOfThreads(max(1, int(n_threads)))
     resampler.SetInterpolator(sitk.sitkLinear)
 
     # Use a small positive value instead of zero to avoid black dots at boundaries

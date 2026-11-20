@@ -19,6 +19,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from linumpy.intensity.normalization import _chunk_boundaries
+from linumpy.utils.planes import map_threaded
 
 # ---------------------------------------------------------------------------
 # Tissue mask
@@ -451,21 +452,28 @@ def tissue_mask_between_cut_faces(
         return (inside - outside).astype(np.float32)
 
     out = mask_np.copy()
-    current = _footprint(*section_bounds[0]) if section_bounds else None
-    current_sd = _signed_distance(current) if current is not None else None
-    for k, (start, end) in enumerate(section_bounds):
-        following = _footprint(*section_bounds[k + 1]) if k + 1 < len(section_bounds) else None
-        following_sd = _signed_distance(following) if following is not None else None
-        if current_sd is not None and following is not None and following_sd is not None:
-            depth = end - start
-            for z in range(start, end):
-                candidates = out[z] & ~following
-                if not candidates.any():
-                    continue
-                t = (z - start) / depth
-                blended = (1.0 - t) * current_sd[candidates] + t * following_sd[candidates]
-                out[z][candidates] = blended > -margin_px
-        current, current_sd = following, following_sd
+    # A section only needs its own footprint and the next one, so the
+    # footprints, their distance maps and the sections are worked on side by side.
+    footprints = map_threaded(lambda span: _footprint(*span), section_bounds)
+    distances = map_threaded(lambda footprint: None if footprint is None else _signed_distance(footprint), footprints)
+
+    def _limit_section(k: int) -> None:
+        start, end = section_bounds[k]
+        current_sd = distances[k]
+        following = footprints[k + 1] if k + 1 < len(section_bounds) else None
+        following_sd = distances[k + 1] if k + 1 < len(section_bounds) else None
+        if current_sd is None or following is None or following_sd is None:
+            return
+        depth = end - start
+        for z in range(start, end):
+            candidates = out[z] & ~following
+            if not candidates.any():
+                continue
+            t = (z - start) / depth
+            blended = (1.0 - t) * current_sd[candidates] + t * following_sd[candidates]
+            out[z][candidates] = blended > -margin_px
+
+    map_threaded(_limit_section, range(len(section_bounds)))
 
     if cupy_input:
         import cupy as cp

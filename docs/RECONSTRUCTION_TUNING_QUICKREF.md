@@ -173,7 +173,7 @@ Use `-resume` — Nextflow caches everything upstream automatically.
 | Code change in | Re-run from |
 |---|---|
 | `detect_rehoming` script/library | `detect_rehoming_events` → all downstream |
-| `common_space` / shift alignment code | `bring_to_common_space` → all downstream |
+| `common_space` / shift alignment code | `plan_common_space` → all downstream |
 | Pairwise registration code | `register_pairwise` → all downstream |
 | Stacking code | `stack` → all downstream |
 | Bias correction code | `correct_bias_field` → `align_to_ras` |

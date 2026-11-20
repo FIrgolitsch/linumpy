@@ -22,11 +22,12 @@ applied by the stacking step, before the two corrections above.
 """
 
 import logging
-import warnings
 from typing import Any
 
 import numpy as np
 from scipy import ndimage as ndi
+
+from linumpy.utils.planes import gaussian_filter_planes, map_threaded
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,8 @@ def coarse_log_tissue(vol: np.ndarray, mask: np.ndarray, block: int = 8, chunk: 
         raise ValueError(msg)
     log_level = np.zeros((nz, cy, cx), dtype=np.float32)
     weight = np.zeros((nz, cy, cx), dtype=np.float32)
-    for z0 in range(0, nz, chunk):
+
+    def _reduce_chunk(z0: int) -> None:
         part = np.asarray(vol[z0 : z0 + chunk, : cy * block, : cx * block], dtype=np.float32)
         tissue = np.asarray(mask[z0 : z0 + chunk, : cy * block, : cx * block], dtype=bool) & (part > _MIN_VALUE)
         logs = np.where(tissue, np.log(np.maximum(part, _MIN_VALUE)), 0.0)
@@ -58,6 +60,9 @@ def coarse_log_tissue(vol: np.ndarray, mask: np.ndarray, block: int = 8, chunk: 
         counts = tissue.reshape(n, cy, block, cx, block).sum(axis=(2, 4))
         log_level[z0 : z0 + n] = np.where(counts > 0, sums / np.maximum(counts, 1), 0.0)
         weight[z0 : z0 + n] = counts / float(block * block)
+
+    # The runs of planes are independent and write to their own part of the result.
+    map_threaded(_reduce_chunk, range(0, nz, chunk), cap=8)
     return log_level, weight
 
 
@@ -200,14 +205,26 @@ def depth_band_field(
     """
     if period < 2:
         return np.zeros_like(log_level)
-    sigma = (0.0, float(sigma_cells), float(sigma_cells))
-    smooth_w = ndi.gaussian_filter(weight, sigma)
-    smooth = ndi.gaussian_filter(log_level * weight, sigma) / np.maximum(smooth_w, 1e-3)
+    smooth_w = gaussian_filter_planes(weight, float(sigma_cells))
+    smooth = gaussian_filter_planes(log_level * weight, float(sigma_cells)) / np.maximum(smooth_w, 1e-3)
     kernel = np.full(period, 1.0 / period, dtype=np.float32)
     mean_w = ndi.convolve1d(smooth_w, kernel, axis=0, mode="nearest")
     mean = ndi.convolve1d(smooth * smooth_w, kernel, axis=0, mode="nearest") / np.maximum(mean_w, 1e-3)
     field = np.where((smooth_w > 1e-3) & (mean_w > 1e-3), smooth - mean, 0.0)
     return np.clip(field, -clamp, clamp).astype(np.float32)
+
+
+def _nanmedian_axis0(values: np.ndarray, count: np.ndarray) -> np.ndarray:
+    """Median along axis 0 that ignores NaN, given the number of finite values per column.
+
+    Same values as ``np.nanmedian(values, axis=0)``, NaN where a column has no
+    finite value. ``np.nanmedian`` raises one warning per such column from a
+    Python loop, which on a stack with background is most of its run time.
+    """
+    ordered = np.sort(values, axis=0)  # NaN sorts last
+    low = np.take_along_axis(ordered, np.maximum((count - 1) // 2, 0)[None], axis=0)[0]
+    high = np.take_along_axis(ordered, (count // 2)[None], axis=0)[0]
+    return np.where(count > 0, 0.5 * (low + high), np.nan)
 
 
 def local_depth_field(
@@ -285,10 +302,9 @@ def local_depth_field(
         # At the ends of the stack the window keeps its width and becomes one-sided.
         first = min(max(0, s - half_window), n_slabs - width)
         window = profiles[first : first + width]
-        known = np.isfinite(window).sum(axis=0) >= min_slabs
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            median = np.nanmedian(window, axis=0)
+        count = np.isfinite(window).sum(axis=0)
+        known = count >= min_slabs
+        median = _nanmedian_axis0(window, count)
         cover = ndi.gaussian_filter(known.astype(np.float32), sigma)
         smooth = ndi.gaussian_filter(np.where(known, median, 0.0).astype(np.float32), sigma) / np.maximum(cover, 1e-3)
         profile = np.where(cover > 0.3, smooth, 0.0)[:n]
@@ -378,11 +394,12 @@ def harmonize_slab_intensity(
 
     limit = float(np.log(max_gain))
     plane_shape = (vol.shape[1], vol.shape[2])
-    for z in range(n_planes):
+
+    def _correct_plane(z: int) -> None:
         log_correction = float(plane_gain[z]) + offset
         tissue = np.asarray(mask[z], dtype=bool)
         if not tissue.any():
-            continue
+            return
         if field is not None:
             total = np.clip(upsample_plane(field[z], block, plane_shape) + log_correction, -limit, limit)
             factor = np.exp(-total).astype(np.float32)
@@ -390,4 +407,7 @@ def harmonize_slab_intensity(
         elif log_correction != 0.0:
             factor = np.float32(np.exp(-np.clip(log_correction, -limit, limit)))
             vol[z] = np.where(tissue, vol[z] * factor, vol[z])
+
+    # Every plane gets its own gain, so the planes are corrected side by side.
+    map_threaded(_correct_plane, range(n_planes))
     return info

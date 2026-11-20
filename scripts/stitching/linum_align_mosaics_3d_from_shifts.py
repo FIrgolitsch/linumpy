@@ -14,19 +14,17 @@ from linumpy.config.threads import configure_all_libraries
 
 import argparse
 import re
-from os.path import split as psplit
 from pathlib import Path
 from typing import Any
 
-import dask.array as da
 import numpy as np
 import pandas as pd
 
 from linumpy.cli.args import add_overwrite_arg, assert_output_exists
-from linumpy.imaging.transform import apply_xy_shift
 from linumpy.io import slice_config as slice_config_io
-from linumpy.io.zarr import read_omezarr, save_omezarr
+from linumpy.io.zarr import read_omezarr
 from linumpy.metrics import collect_common_space_metrics
+from linumpy.stack_alignment.common_space import PLAN_FILENAME, shift_mosaic_to_common_space, write_common_space_plan
 from linumpy.stack_alignment.io import build_cumulative_shifts
 
 
@@ -99,6 +97,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "does not estimate them again. Use it to keep the slab placement of an earlier run:\n"
         "the image-based estimate is accepted or dropped on a correlation threshold, and a\n"
         "change upstream can flip that decision and move every slab after it.",
+    )
+
+    p.add_argument(
+        "--plan_only",
+        action="store_true",
+        help="Write where each mosaic sits in the common frame to\n"
+        f"<out_directory>/{PLAN_FILENAME} and do not shift any mosaic.\n"
+        "Apply the rows with linum-apply-common-space-shift, one mosaic at a time.",
     )
 
     add_overwrite_arg(p)
@@ -308,17 +314,15 @@ def _estimate_shift_by_registration(fixed_path: Path, moving_path: Path) -> Any:
     fixed_vol, res = read_omezarr(fixed_path)
     moving_vol, _ = read_omezarr(moving_path)
 
-    fixed_data = np.array(fixed_vol)
-    moving_data = np.array(moving_vol)
-
     def _proj(arr: Any) -> Any:
+        # Only the central planes are read from disk.
         nz = arr.shape[0]
         z0 = max(0, nz // 2 - max(1, nz // 10))
         z1 = min(nz, nz // 2 + max(1, nz // 10))
-        return arr[z0:z1].max(axis=0).astype(np.float32)
+        return np.asarray(arr[z0:z1]).max(axis=0).astype(np.float32)
 
-    fixed_proj = _proj(fixed_data)
-    moving_proj = _proj(moving_data)
+    fixed_proj = _proj(fixed_vol)
+    moving_proj = _proj(moving_vol)
 
     # Pad both to the same (max) shape so that phase_cross_correlation requirements are met
     h = max(fixed_proj.shape[0], moving_proj.shape[0])
@@ -534,42 +538,24 @@ def main() -> None:
 
     print(f"Common space: shape=(width={nx}, height={ny}), origin offset=({x0:.1f}, {y0:.1f}) px")
 
-    # Process each selected slice
-    for slice_id in selected_slice_ids:
-        mosaic_file = mosaic_files[slice_id]
-        img, res = read_omezarr(mosaic_file)
-
-        # Load image data
-        img_data = img[:]
-
-        # Reference array shape is (Z, height, width) = (Z, ny, nx)
-        reference = np.zeros((img_data.shape[0], ny, nx), dtype=img_data.dtype)
-
-        dx, dy = cumsum_shifts[slice_id]
-        # Shift data into the common space:
-        # x0, y0 are the minimum coordinates (possibly negative after centering)
-        # We need to shift by -x0, -y0 to move everything to positive space,
-        # then apply the slice's shift to position it correctly
-        # Final position in output = dx - x0
-        dx_shifted = dx - x0
-        dy_shifted = dy - y0
-
-        # Note: apply_xy_shift uses SimpleITK's TranslationTransform.
-        # For a 3D numpy array (Z, Y, X), SimpleITK reorders to (X, Y, Z).
-        # translation[0] affects X (columns), translation[1] affects Y (rows).
-        # The function signature is apply_xy_shift(img, ref, dx, dy).
-        # To move content to position (dx_shifted, dy_shifted), we pass negative values
-        # because the transform moves the sampling grid, not the content.
-        aligned = apply_xy_shift(img_data, reference, -dx_shifted, -dy_shifted)
-
-        _, filename = psplit(mosaic_file)
-        outfile = Path(args.out_directory) / filename
-        save_omezarr(da.from_array(aligned), outfile, res, chunks=img.chunks)
-
-        print(
-            f"  Processed slice {slice_id:02d}: cumulative_shift=({dx:.1f}, {dy:.1f}) px, "
-            f"applied_shift=({dx_shifted:.1f}, {dy_shifted:.1f}) px"
-        )
+    if args.plan_only:
+        plan_path = Path(args.out_directory) / PLAN_FILENAME
+        write_common_space_plan(plan_path, mosaic_files, selected_slice_ids, cumsum_shifts, (x0, y0), (ny, nx))
+        print(f"Common space plan written to {plan_path}")
+    else:
+        for slice_id in selected_slice_ids:
+            mosaic_file = mosaic_files[slice_id]
+            dx, dy = cumsum_shifts[slice_id]
+            # x0, y0 are the minimum coordinates (possibly negative after
+            # centering), so the position in the common frame is dx - x0.
+            dx_shifted = dx - x0
+            dy_shifted = dy - y0
+            outfile = Path(args.out_directory) / Path(mosaic_file).name
+            shift_mosaic_to_common_space(mosaic_file, outfile, dx_shifted, dy_shifted, (ny, nx))
+            print(
+                f"  Processed slice {slice_id:02d}: cumulative_shift=({dx:.1f}, {dy:.1f}) px, "
+                f"applied_shift=({dx_shifted:.1f}, {dy_shifted:.1f}) px"
+            )
 
     collect_common_space_metrics(
         output_dir=Path(args.out_directory),

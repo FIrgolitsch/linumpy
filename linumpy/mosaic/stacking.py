@@ -4,8 +4,9 @@
 Consolidated from linum_stack_slices_motor.py and linum_stack_motor_only.py.
 """
 
+from linumpy.config.threads import thread_budget
+
 import logging
-import os
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from itertools import pairwise
@@ -14,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from linumpy.intensity.slab_harmonize import coarse_log_tissue, local_depth_field, upsample_plane
+from linumpy.utils.planes import gaussian_filter_planes
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +333,7 @@ def find_z_step_structure(
     min_gain: float = 0.05,
     min_deviation: int = 3,
     min_pixels: int = 5000,
+    workers: int | None = None,
 ) -> tuple[int | None, dict[str, Any]]:
     """Measure how many planes below the fixed slab's top the moving slab starts.
 
@@ -380,6 +383,9 @@ def find_z_step_structure(
         Smallest difference from the expected step that is reported.
     min_pixels : int
         Fewest common tissue pixels, at full resolution, for a correlation.
+    workers : int or None
+        Planes prepared at the same time. ``None`` takes the thread budget of
+        the task, at most 8.
 
     Returns
     -------
@@ -411,17 +417,42 @@ def find_z_step_structure(
     xy_shift, _, _ = phase_cross_correlation(fixed_s, moving_s, upsample_factor=4)
     info["shift"] = (float(xy_shift[0]) * d, float(xy_shift[1]) * d)
 
+    # The search ranges of the moving planes overlap, so every fixed plane is
+    # prepared once, and the planes are prepared on separate threads.
+    planes = [plane for plane in moving_planes if plane < moving.shape[0]]
+    ranges = {
+        plane: [
+            f
+            for f in range(plane + expected_step - search_vox, plane + expected_step + search_vox + 1)
+            if 0 <= f < fixed.shape[0]
+        ]
+        for plane in planes
+    }
+    wanted = sorted({f for candidates in ranges.values() for f in candidates})
+
+    def _fixed_structure(f: int) -> tuple[np.ndarray, np.ndarray]:
+        return _structure_image(fixed[f], tissue_threshold, sigma)
+
+    def _moved_structure(plane: int) -> tuple[np.ndarray, np.ndarray]:
+        return _structure_image(nd_shift(moving[plane], xy_shift, order=1), tissue_threshold, sigma)
+
+    workers = thread_budget(8) if workers is None else max(1, int(workers))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            fixed_structures = dict(zip(wanted, executor.map(_fixed_structure, wanted), strict=True))
+            moved_structures = dict(zip(planes, executor.map(_moved_structure, planes), strict=True))
+    else:
+        fixed_structures = {f: _fixed_structure(f) for f in wanted}
+        moved_structures = {plane: _moved_structure(plane) for plane in planes}
+
     at_edge = False
-    for plane in moving_planes:
-        if plane >= moving.shape[0]:
-            continue
-        moved = nd_shift(moving[plane], xy_shift, order=1)
-        moved_s, moved_mask = _structure_image(moved, tissue_threshold, sigma)
+    for plane in planes:
+        moved_s, moved_mask = moved_structures[plane]
         first = plane + expected_step - search_vox
-        candidates = [f for f in range(first, plane + expected_step + search_vox + 1) if 0 <= f < fixed.shape[0]]
+        candidates = ranges[plane]
         scores = []
         for f in candidates:
-            fixed_plane_s, fixed_mask = _structure_image(fixed[f], tissue_threshold, sigma)
+            fixed_plane_s, fixed_mask = fixed_structures[f]
             scores.append(_masked_ncc(fixed_plane_s, moved_s, fixed_mask & moved_mask, min_pixels // (d * d)))
         if not candidates or not np.isfinite(scores).any():
             continue
@@ -486,8 +517,6 @@ def zero_above_surface(
 
     Returns the slab with those voxels zeroed, and their count.
     """
-    from scipy.ndimage import gaussian_filter
-
     n = min(int(max_planes), vol.shape[0])
     if n < 1:
         return vol, 0
@@ -496,7 +525,7 @@ def zero_above_surface(
     if tissue.size < 1000:
         return vol, 0
     level = relative_level * float(np.median(tissue))
-    smooth = gaussian_filter(top, (0.0, sigma_xy, sigma_xy))
+    smooth = gaussian_filter_planes(top, sigma_xy)
     dim = smooth[:n] < level
     water = np.logical_and.accumulate(dim, axis=0)
     water &= (smooth.max(axis=0) >= level)[None]
@@ -820,13 +849,11 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
     # dim tissue and painted a tissue-bright halo where neither slice has any.
     # A 160 px translation gap is not closed here.
     if np.any(fixed_only) or np.any(moving_only):
-        from scipy.ndimage import gaussian_filter
-
-        sigma = (0.0, 8.0, 8.0)
-        fixed_weight = gaussian_filter(fixed_valid.astype(np.float32), sigma=sigma)
-        moving_weight = gaussian_filter(moving_valid.astype(np.float32), sigma=sigma)
-        fixed_mean = gaussian_filter(np.where(fixed_valid, fixed_region, 0.0).astype(np.float32), sigma=sigma)
-        moving_mean = gaussian_filter(np.where(moving_valid, moving_region, 0.0).astype(np.float32), sigma=sigma)
+        sigma = 8.0
+        fixed_weight = gaussian_filter_planes(fixed_valid.astype(np.float32), sigma)
+        moving_weight = gaussian_filter_planes(moving_valid.astype(np.float32), sigma)
+        fixed_mean = gaussian_filter_planes(np.where(fixed_valid, fixed_region, 0.0).astype(np.float32), sigma)
+        moving_mean = gaussian_filter_planes(np.where(moving_valid, moving_region, 0.0).astype(np.float32), sigma)
         fixed_mean = fixed_mean / np.maximum(fixed_weight, 1e-6)
         moving_mean = moving_mean / np.maximum(moving_weight, 1e-6)
         near_both = (fixed_weight > 0.02) & (moving_weight > 0.02)
@@ -1173,7 +1200,7 @@ def apply_seam_notch(array: Any, tile: int = 128, threshold: float = 0.05, worke
         (y0, min(ny, y0 + tile_y), x0, min(nx, x0 + tile_x)) for y0 in range(0, ny, tile_y) for x0 in range(0, nx, tile_x)
     ]
     if workers is None:
-        workers = min(8, max(1, int(os.environ.get("OMP_NUM_THREADS", "1") or 1)))
+        workers = thread_budget(8)
     if workers > 1 and len(tiles) > 1:
         # Tiles cover whole chunks, so no two of them write the same chunk.
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1244,7 +1271,7 @@ def apply_local_depth_gain(
         return 0.0
 
     if workers is None:
-        workers = min(8, max(1, int(os.environ.get("OMP_NUM_THREADS", "1") or 1)))
+        workers = thread_budget(8)
     for z0 in range(0, nz, z_block):
         if not field[z0 : z0 + z_block].any():
             continue

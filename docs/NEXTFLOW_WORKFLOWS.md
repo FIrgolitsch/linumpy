@@ -588,6 +588,7 @@ output/
 ├── crop_interface/
 ├── normalize/
 ├── detect_rehoming_events/             # Only when detect_rehoming = true
+├── plan_common_space/                  # common_space_plan.csv + alignment metrics
 ├── bring_to_common_space/
 ├── common_space_previews/              # Only when common_space_preview = true
 ├── interpolate_missing_slice/          # Only when interpolate_missing_slices = true
@@ -689,6 +690,14 @@ while the **3D reconstruction** pipeline uses `max_cpus = 16` and
 | `max_cpus` | `null` | `16` | Explicit maximum CPUs to use (takes precedence) |
 | `reserved_cpus` | `2` | `4` | Number of cores to keep free for overhead |
 | `processes` | `1` | `1` | Python processes per Nextflow task |
+
+Each task gets `max_cpus / processes` threads. In the 3D reconstruction
+pipeline that share applies to the steps that run once per slice or per pair.
+A step that runs as a single task has `ext.threads = 'max'` in
+`workflows/reconst_3d/nextflow.config` and takes the whole budget. A subject
+config that defines its own `process.beforeScript` replaces the shared one
+(`workflows/shared/cpu_limits.config`) and has to read `task.ext.threads`
+itself; otherwise the single-task steps fall back to the small share.
 
 ### Usage Examples
 
@@ -1039,8 +1048,8 @@ consumers. They must therefore be value channels:
 
 | Channel             | Consumers                                                              |
 |---------------------|------------------------------------------------------------------------|
-| `shifts_xy`         | `analyze_shifts`, `detect_rehoming`, `bring_to_common_space`, `stack`, `analyze_acquisition_rotation`, `stack_motor_only` |
-| `slice_config_channel` / `current_slice_config` | `detect_rehoming`, `bring_to_common_space`, `finalise_interpolation`, `auto_exclude_slices`, `stack` |
+| `shifts_xy`         | `analyze_shifts`, `detect_rehoming`, `plan_common_space`, `stack`, `analyze_acquisition_rotation`, `stack_motor_only` |
+| `slice_config_channel` / `current_slice_config` | `detect_rehoming`, `plan_common_space`, `finalise_interpolation`, `auto_exclude_slices`, `stack` |
 | `no_transform`      | `stitch_3d_with_refinement` (combined with every slice tuple)           |
 
 To create a value channel from a file path, use `channel.value(file(path))`,
@@ -1116,7 +1125,7 @@ Several stages produce or consume a per-slice configuration CSV
                                          │
               ┌──────────────────────────┼──────────────────────────┐
               ▼                          ▼                          ▼
-      detect_rehoming           bring_to_common_space     finalise_interpolation
+      detect_rehoming             plan_common_space       finalise_interpolation
               │                                                    │
               └────► current_slice_config (re-bound) ◄──────────────┘
                                          │
@@ -1131,7 +1140,7 @@ Several stages produce or consume a per-slice configuration CSV
 ```
 
 Every assignment along that flow is a value channel, so the same config can
-be merged into `bring_to_common_space` and combined into `stack_input`
+be merged into `plan_common_space` and combined into `stack_input`
 without exhaustion.
 
 ### `-resume` hashes script strings, not files behind a path string

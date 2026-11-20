@@ -79,6 +79,21 @@ def get_max_threads() -> int:
     return total_cpus
 
 
+def thread_budget(cap: int | None = None) -> int:
+    """Return the number of threads this task may use, at most ``cap``.
+
+    The budget is ``OMP_NUM_THREADS``, which the workflow sets per task and
+    this module sets on import otherwise. Code that starts its own thread pool
+    sizes it with this, so a task never uses more than it was given.
+    """
+    try:
+        budget = int(os.environ.get("OMP_NUM_THREADS", "") or _available_cpus())
+    except ValueError:
+        budget = _available_cpus()
+    budget = max(1, budget)
+    return budget if cap is None else max(1, min(budget, int(cap)))
+
+
 def configure_thread_limits() -> int:
     """
     Configure thread limits for numerical libraries.

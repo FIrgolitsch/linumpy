@@ -15,11 +15,13 @@ the bottom of one slice with the top of the next.
 """
 
 import linumpy.config.threads  # noqa: F401
-from linumpy.config.threads import configure_all_libraries
+from linumpy.config.threads import configure_all_libraries, thread_budget
 
 import argparse
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -670,9 +672,9 @@ def main() -> None:
                 manual_override_ids.add(sid)
                 n_manual += 1
                 logger.info("  Manual override: slice z%d", sid)
-            for sid, pairwise in manual_pairwise_translations.items():
+            for sid, manual_translation in manual_pairwise_translations.items():
                 if sid in manual_override_ids:
-                    all_pairwise_translations[sid] = pairwise
+                    all_pairwise_translations[sid] = manual_translation
             if n_manual > 0:
                 logger.info("Applied %s manual transform overrides", n_manual)
         else:
@@ -815,17 +817,26 @@ def main() -> None:
     # Cache volume shapes to avoid re-reading during smoothing
     volume_shapes = {first_id: first_vol.shape}
 
-    prev_vol = first_vol
-    prev_id = first_id
     z_match_calls = 0
 
     measured_z_steps: dict = {}
-    for _i, slice_id in enumerate(tqdm(available_ids[1:], desc="Z-matching")):
+
+    def _load_slab(slice_id: int) -> np.ndarray:
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         with span("stack_reads", device="cpu"):
             vol = np.array(vol[:])
-        volume_shapes[slice_id] = vol.shape  # Cache shape
+        return vol
 
+    # A pair of neighbouring slabs is matched on its own, so pairs run side by
+    # side. Only the expected-overlap path does: the correlation search can
+    # run on the GPU and stays one pair at a time.
+    match_workers = thread_budget(4) if (args.use_expected_overlap and not args.z_from_registration) else 1
+    structure_workers = min(8, max(1, thread_budget() // match_workers))
+
+    def _match_pair(prev_id: int, prev_vol: np.ndarray, slice_id: int, vol: np.ndarray) -> dict:
+        """Z overlap of one pair of neighbouring slabs."""
+        # Counted only on the paths that run one pair at a time.
+        nonlocal z_match_calls
         # Check if we have registration-derived Z-indices
         fixed_z = None
         moving_z = None
@@ -893,6 +904,7 @@ def main() -> None:
                     interval_voxels,
                     search_vox=args.z_step_search_vox,
                     tissue_threshold=args.blend_tissue_threshold,
+                    workers=structure_workers,
                 )
                 if step is not None:
                     measured_overlap = prev_vol.shape[0] - step
@@ -1075,28 +1087,42 @@ def main() -> None:
                         slice_id,
                     )
 
-        z_matches.append(
-            {
-                "fixed_id": prev_id,
-                "moving_id": slice_id,
-                "overlap_voxels": overlap,
-                "blend_overlap_voxels": blend_overlap,
-                "moving_z_start": moving_z,  # Z-index in moving volume where to start
-                "correlation": corr,
-                "correlation_fallback_used": correlation_fallback_used,
-                "overlap_z_gain_a": gain_a,
-                "overlap_z_gain_b": gain_b,
-                "overlap_z_gain_xy_frac": gain_xy,
-            }
-        )
+        match = {
+            "fixed_id": prev_id,
+            "moving_id": slice_id,
+            "overlap_voxels": overlap,
+            "blend_overlap_voxels": blend_overlap,
+            "moving_z_start": moving_z,  # Z-index in moving volume where to start
+            "correlation": corr,
+            "correlation_fallback_used": correlation_fallback_used,
+            "overlap_z_gain_a": gain_a,
+            "overlap_z_gain_b": gain_b,
+            "overlap_z_gain_xy_frac": gain_xy,
+        }
+        return match
 
-        # Account for moving_z_start when computing total depth
-        # We add (vol_depth - moving_z - overlap) new voxels
-        moving_z_val = moving_z if moving_z is not None else 0
-        contribution = vol.shape[0] - moving_z_val - overlap
-        total_z += max(0, contribution)
-        prev_vol = vol
-        prev_id = slice_id
+    pair_ids = list(pairwise(available_ids))
+    prev_vol = first_vol
+    progress = tqdm(total=len(pair_ids), desc="Z-matching")
+    with ThreadPoolExecutor(max_workers=match_workers) as match_pool:
+        # One batch holds match_workers + 1 slabs in memory.
+        for batch_start in range(0, len(pair_ids), match_workers):
+            batch = pair_ids[batch_start : batch_start + match_workers]
+            vols = list(match_pool.map(_load_slab, [slice_id for _prev_id, slice_id in batch]))
+            jobs = [
+                (prev_id, fixed_vol, slice_id, vol)
+                for (prev_id, slice_id), fixed_vol, vol in zip(batch, [prev_vol, *vols[:-1]], vols, strict=True)
+            ]
+            results = list(match_pool.map(lambda job: _match_pair(*job), jobs))
+            for (_prev_id, slice_id), vol, match in zip(batch, vols, results, strict=True):
+                volume_shapes[slice_id] = vol.shape  # Cache shape
+                z_matches.append(match)
+                # Each slab adds (depth - moving_z - overlap) planes to the stack.
+                total_z += max(0, vol.shape[0] - (match["moving_z_start"] or 0) - match["overlap_voxels"])
+            prev_vol = vols[-1]
+            del vols, jobs, results
+            progress.update(len(batch))
+    progress.close()
 
     # No find_z_overlap call ran (for example --use_expected_overlap without
     # --z_from_registration), so --use_gpu changed nothing in this stage.
@@ -1235,6 +1261,13 @@ def main() -> None:
     output_shape = (total_z, out_ny, out_nx)
 
     output = AnalysisOmeZarrWriter(output_path, output_shape, chunk_shape=(100, 100, 100), dtype=np.float32)
+    # Neighbouring slabs overlap and a chunk is 100 planes deep, so every chunk
+    # is written several times while the stack is assembled. By default zarr
+    # compares a chunk with the fill value on each write, to leave empty chunks
+    # out, and that took as long as the write itself. The depth gain writes
+    # every chunk once more through ``output.zarray``, which drops the chunks
+    # that are still empty; without that pass the check stays on.
+    assembly = output.zarray.with_config({"write_empty_chunks": True}) if args.local_depth_gain else output.zarray
 
     overlap_as_fixed = {m["fixed_id"]: m["overlap_voxels"] for m in z_matches}
     overlap_z_fits: dict[int, tuple[float, float]] = {}
@@ -1277,7 +1310,7 @@ def main() -> None:
 
     if shifted_first is not None:
         y0, y1, x0, x1 = first_coords
-        output[: first_vol.shape[0], y0:y1, x0:x1] = shifted_first
+        assembly[: first_vol.shape[0], y0:y1, x0:x1] = shifted_first
         logger.info("  First slice: shift=(%.1f, %.1f) px, xy=[%s:%s, %s:%s]", first_dx, first_dy, y0, y1, x0, x1)
 
     z_cursor = first_vol.shape[0]
@@ -1285,14 +1318,10 @@ def main() -> None:
     # steps can cut sections where the slabs really are, not in equal chunks.
     slab_z_starts: list[int] = [0]
 
-    # Stack remaining slices
-    for _i, match in enumerate(tqdm(z_matches, desc="Stacking")):
+    def _prepare_slab(match: dict) -> np.ndarray:
+        """Read a slab and bring it to the state in which it is placed: masked, levelled, rotated."""
         slice_id = match["moving_id"]
-        overlap = match["overlap_voxels"]
-        # blend_overlap may be < overlap when z-blend refinement found a tighter tissue match
-        blend_overlap = min(match.get("blend_overlap_voxels", overlap), overlap)
         moving_z_start = match.get("moving_z_start", 0) or 0
-
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
         with span("stack_reads", device="cpu"):
             vol = np.array(vol[:]).astype(np.float32)
@@ -1366,6 +1395,23 @@ def main() -> None:
                     logger.debug("Applied registration transform to slice %s", slice_id)
         else:
             add("per_plane_resample", 0.0, device="cpu", function="skipped")
+        return vol
+
+    # Preparing a slab does not depend on the stack, so the next slab is
+    # prepared on a second thread while the current one is blended in.
+    prepare_pool = ThreadPoolExecutor(max_workers=1)
+    pending = prepare_pool.submit(_prepare_slab, z_matches[0]) if z_matches else None
+
+    # Stack remaining slices
+    for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
+        slice_id = match["moving_id"]
+        overlap = match["overlap_voxels"]
+        # blend_overlap may be < overlap when z-blend refinement found a tighter tissue match
+        blend_overlap = min(match.get("blend_overlap_voxels", overlap), overlap)
+
+        assert pending is not None
+        vol = pending.result()
+        pending = prepare_pool.submit(_prepare_slab, z_matches[i + 1]) if i + 1 < len(z_matches) else None
 
         # Apply XY shift (from motor positions)
         dx, dy = cumsum_px[slice_id]
@@ -1416,7 +1462,7 @@ def main() -> None:
 
             if overlap_depth > 0:
                 # Get overlap regions from output and shifted
-                existing = np.array(output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
+                existing = np.array(assembly[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1])
                 moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
 
                 # No per-seam gain. It sat on the 0.7 floor for almost every
@@ -1460,18 +1506,18 @@ def main() -> None:
                     )
                 else:
                     blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
-                output[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1] = blended
+                assembly[overlap_z_start:overlap_z_end, dst_y0:dst_y1, dst_x0:dst_x1] = blended
 
                 # New contribution (always shifted[overlap:] to preserve z-spacing)
                 if z_end > z_cursor:
                     new_z = shifted[max(0, overlap) :]
-                    existing_new = np.array(output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
-                    output[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
+                    existing_new = np.array(assembly[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
+                    assembly[z_cursor:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
                         existing_new, new_z, threshold=args.blend_tissue_threshold
                     )
         else:
-            existing = np.array(output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
-            output[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
+            existing = np.array(assembly[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1])
+            assembly[z_start:z_end, dst_y0:dst_y1, dst_x0:dst_x1] = paste_tissue(
                 existing, shifted, threshold=args.blend_tissue_threshold
             )
 
@@ -1479,6 +1525,8 @@ def main() -> None:
         slab_z_starts.append(int(z_start))
 
         logger.debug("  Slice %s: z=[%s:%s], xy=[%s:%s, %s:%s]", slice_id, z_start, z_end, dst_y0, dst_y1, dst_x0, dst_x1)
+
+    prepare_pool.shutdown()
 
     # Build per-slice stacking decisions (also fed into the metrics collector)
     decisions = []

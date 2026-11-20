@@ -349,7 +349,12 @@ Glitches are replaced by the local median of non-outlier neighbours; genuine
 re-homing events (large steps that persist) are preserved. Output:
 `shifts_xy_clean.csv` with a `reliable` column.
 
-#### 4b. Bring to common space — `bring_to_common_space`
+#### 4b. Bring to common space — `plan_common_space`, `bring_to_common_space`
+
+`plan_common_space` runs once: it integrates the shifts, sizes the common
+frame and writes where each slice sits in it (`common_space_plan.csv`).
+`bring_to_common_space` then resamples one slice per task from its row of
+that table, so the slices run side by side.
 
 Pairwise shifts are integrated into cumulative positions and centred on the
 middle slice (<ref_file file="/Users/frans/code/linumpy/linumpy/stack_alignment/io.py" />):

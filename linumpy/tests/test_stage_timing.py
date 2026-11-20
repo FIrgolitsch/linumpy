@@ -722,3 +722,15 @@ def test_flush_refuses_ndarray(tmp_path, monkeypatch):
     with pytest.raises(TypeError):
         stage_timing.flush()
     assert not timing_path.exists()
+
+
+def test_thread_budget_follows_the_task_threads(monkeypatch):
+    from linumpy.config.threads import thread_budget
+
+    monkeypatch.setenv("OMP_NUM_THREADS", "12")
+    assert thread_budget() == 12
+    assert thread_budget(8) == 8
+    monkeypatch.setenv("OMP_NUM_THREADS", "3")
+    assert thread_budget(8) == 3
+    monkeypatch.setenv("OMP_NUM_THREADS", "not a number")
+    assert thread_budget(1) == 1

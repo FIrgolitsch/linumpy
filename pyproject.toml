@@ -94,6 +94,7 @@ docs = [
 "linum-analyze-shifts" = "scripts.analysis.linum_analyze_shifts:main"
 "linum-analyze-stitch-affine" = "scripts.diagnostics.linum_analyze_stitch_affine:main"
 "linum-analyze-tile-dilation" = "scripts.diagnostics.linum_analyze_tile_dilation:main"
+"linum-apply-common-space-shift" = "scripts.stitching.linum_apply_common_space_shift:main"
 "linum-apply-slices-transforms" = "scripts.stitching.linum_apply_slices_transforms:main"
 "linum-assess-slice-quality" = "scripts.analysis.linum_assess_slice_quality:main"
 "linum-auto-exclude-slices" = "scripts.analysis.linum_auto_exclude_slices:main"

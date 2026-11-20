@@ -912,3 +912,24 @@ def test_apply_local_depth_gain_skips_starts_it_cannot_use():
     assert apply_local_depth_gain(volume, starts[:1]) == 0.0
     assert apply_local_depth_gain(volume, [5, *starts[1:]]) == 0.0
     np.testing.assert_array_equal(volume, original)
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_gaussian_filter_planes_matches_the_filter_of_the_whole_volume(workers):
+    from scipy.ndimage import gaussian_filter
+
+    from linumpy.mosaic.stacking import gaussian_filter_planes
+
+    volume = np.random.default_rng(4).random((5, 60, 70), dtype=np.float32)
+    assert np.array_equal(gaussian_filter_planes(volume, 3.0, workers=workers), gaussian_filter(volume, (0.0, 3.0, 3.0)))
+
+
+def test_find_z_step_structure_is_the_same_on_one_thread_and_on_several():
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block()
+    fixed, moving = _slab(block, 0), _slab(block, 26)
+    step_one, info_one = find_z_step_structure(fixed, moving, expected_step=20, search_vox=10, workers=1)
+    step_many, info_many = find_z_step_structure(fixed, moving, expected_step=20, search_vox=10, workers=4)
+    assert step_one == step_many == 26
+    assert info_one == info_many

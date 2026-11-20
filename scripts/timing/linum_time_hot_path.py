@@ -777,7 +777,7 @@ def _stack_and_archive(cfg: dict[str, object], inputs: dict[str, object], root: 
     zip_path = stack_dir / "sub-21.ome.zarr.zip"
     png = stack_dir / "sub-21.png"
     annotated = stack_dir / "sub-21_annotated.png"
-    rows.append(_spec("zip", ["zip", "-r", str(zip_path), str(output)], env, zip_path, "host", {}))
+    rows.append(_spec("zip", ["zip", "-0", "-r", str(zip_path), str(output)], env, zip_path, "host", {}))
     rows.append(_spec("screenshot", ["linum-screenshot-omezarr", str(output), str(png)], env, png, "cpu", {}))
     annotated_argv = [
         "linum-screenshot-omezarr-annotated",

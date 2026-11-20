@@ -268,10 +268,23 @@ workflow {
         .merge(aligned_shifts) { a, b -> tuple(a, b) }
         .merge(current_slice_config) { a, b -> tuple(a[0], a[1], b) }
 
-    bring_to_common_space(common_space_input)
+    // The frame is planned once for all slices (its size, and where each
+    // slice sits in it). Each slice is then shifted in a task of its own, so
+    // the slices run side by side and a resume redoes only the slices whose
+    // input or position changed.
+    plan_common_space(common_space_input)
+    planned_shifts = plan_common_space.out.plan
+        .splitCsv(header: true)
+        .map { row -> tuple(row.filename, row.shift_x_px, row.shift_y_px, row.height, row.width) }
+    shift_input = normalize.out.normalized
+        .map { slice_id, mosaic -> tuple(mosaic.getName(), slice_id, mosaic) }
+        .join(planned_shifts)
+        .map { name, slice_id, mosaic, shift_x, shift_y, height, width ->
+            tuple(slice_id, name, mosaic, shift_x, shift_y, height, width)
+        }
+    bring_to_common_space(shift_input)
 
     slices_common_space = bring_to_common_space.out.aligned
-        .flatten()
         .toSortedList { a, b -> a.getName() <=> b.getName() }
 
     if (params.common_space_preview) {
@@ -963,12 +976,14 @@ process detect_rehoming_events {
     """
 }
 
-process bring_to_common_space {
+// Plan the common XY frame: its size and where each slice sits in it. Reads
+// the slices only for their shape, and for the transitions it has to refine.
+process plan_common_space {
     input:
     tuple path("inputs/*"), path("shifts_xy.csv"), path(slice_config)
 
     output:
-    path "*.ome.zarr", emit: aligned
+    path "common_space_plan.csv", emit: plan
     path "*_metrics.json", optional: true, emit: metrics
 
     script:
@@ -989,17 +1004,39 @@ process bring_to_common_space {
     // Emitted only when set, so other runs keep their cache.
     def overrides_arg = params.common_space_shift_overrides ? " --shift_overrides ${params.common_space_shift_overrides}" : ""
     """
-    linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space \
+    linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space --plan_only \
         ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}${overrides_arg}
     mv common_space/* .
     """
 
     stub:
     """
+    printf 'slice_id,filename,shift_x_px,shift_y_px,height,width\n' > common_space_plan.csv
     for f in inputs/*.ome.zarr; do
         [ -e "\$f" ] || continue
-        mkdir -p "\$(basename \$f)"
+        printf '0,%s,0.0,0.0,1,1\n' "\$(basename \$f)" >> common_space_plan.csv
     done
+    """
+}
+
+// Shift one slice into the planned frame. The output keeps the name of the
+// input, which is staged in a folder of its own for that reason.
+process bring_to_common_space {
+    input:
+    tuple val(slice_id), val(name), path(mosaic, stageAs: "input/*"), val(shift_x), val(shift_y), val(height), val(width)
+
+    output:
+    path "${name}", emit: aligned
+
+    script:
+    """
+    linum-apply-common-space-shift ${mosaic} ${name} \
+        --shift_x_px=${shift_x} --shift_y_px=${shift_y} --shape ${height} ${width}
+    """
+
+    stub:
+    """
+    mkdir -p ${name}
     """
 }
 
@@ -1317,7 +1354,8 @@ process stack {
     # annotated_panel_vmax 1
     # rim_keeps_own_value 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
-    zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
+    # The chunks are zstd-compressed already: store them, deflating gains nothing.
+    zip -0 -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
     linum-screenshot-omezarr-annotated ${subject_name}.ome.zarr ${subject_name}_annotated.png ${annotated_args}
     """
@@ -1400,7 +1438,8 @@ process correct_bias_field {
         ${mask_component_flag}${harmonize_flags} \
         ${Helpers.pyramidArgs(params)}
 
-    zip -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
+    # The chunks are zstd-compressed already: store them, deflating gains nothing.
+    zip -0 -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
 
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
 
@@ -1455,7 +1494,8 @@ process align_to_ras {
         --level ${params.allen_registration_level} \
         ${orientation_arg} ${rotation_arg} ${preview_arg} ${orientation_preview_arg} \
         ${ras_pyramid_opts}
-    zip -r ${subject_name}_ras.ome.zarr.zip ${subject_name}_ras.ome.zarr
+    # The chunks are zstd-compressed already: store them, deflating gains nothing.
+    zip -0 -r ${subject_name}_ras.ome.zarr.zip ${subject_name}_ras.ome.zarr
     """
 
     stub:
