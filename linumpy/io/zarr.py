@@ -570,8 +570,19 @@ class OmeZarrWriter:
     def __setitem__(self, index: Any, data: Any) -> None:
         """Write *data* at *index* into the underlying zarr array."""
         from linumpy.gpu import to_cpu
+        from linumpy.io.chunk_writer import write_volume_chunks
 
-        self.zarray[index] = to_cpu(data)
+        data = to_cpu(data)
+        # A whole volume is encoded on threads; anything else, and any layout
+        # the threaded writer does not handle, goes through zarr.
+        whole = (
+            index is Ellipsis
+            or index == slice(None)
+            or (isinstance(index, tuple) and all(part == slice(None) for part in index))
+        )
+        if whole and isinstance(data, np.ndarray) and write_volume_chunks(self.zarray, data):
+            return
+        self.zarray[index] = data
 
     def __getitem__(self, index: Any) -> Any:
         """Read a slice from the underlying zarr array."""
