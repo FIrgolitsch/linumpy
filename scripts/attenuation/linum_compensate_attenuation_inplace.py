@@ -8,7 +8,9 @@ input.
 
 Pipeline
 --------
-1. Build a tissue mask via :func:`compute_tissue_mask` (Otsu + closing).
+1. Build a tissue mask: a 3D threshold via :func:`compute_tissue_mask`
+   (Otsu + closing), or with ``--tissue_mask column`` the XY footprint of the
+   tissue kept over the whole depth of the slab.
 2. Estimate the local effective attenuation with one of four
    depth-resolved methods (``--method``):
 
@@ -53,6 +55,7 @@ from linumpy.intensity.attenuation import (
     get_attenuation_smith2015,
     get_attenuation_vermeer2013,
     smooth_optical_depth_xy,
+    tissue_column_mask,
     tissue_footprint_mask,
 )
 from linumpy.intensity.bias_field import compute_tissue_mask
@@ -157,6 +160,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "patches with hard edges. Only used with --lateral_sigma. [%(default)s]",
     )
     p.add_argument(
+        "--tissue_mask",
+        choices=["voxel", "column"],
+        default="voxel",
+        help="How the tissue is told from the agarose.\n"
+        "  voxel  : 3D threshold on the slab (Otsu + closing).\n"
+        "  column : a column is tissue over its whole depth or not at all, judged on\n"
+        "           its brightest planes. A 3D threshold keeps only the bright top of a\n"
+        "           slab whose signal falls quickly with depth: the compensation then\n"
+        "           acts inside that part alone, with a gain step along its outline,\n"
+        "           and --calibrate_strength finds no tissue to fit on. [%(default)s]",
+    )
+    p.add_argument(
         "--calibrate_strength",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -207,8 +222,13 @@ def main() -> None:
 
     # Tissue mask (Z, Y, X)
     use_gpu = args.use_gpu and GPU_AVAILABLE
-    mask_zyx = np.asarray(to_cpu(compute_tissue_mask(vol, smoothing_sigma=args.mask_smoothing_sigma, use_gpu=use_gpu)))
-    if use_gpu:
+    if args.tissue_mask == "column":
+        columns = tissue_column_mask(vol, smoothing_sigma=args.mask_smoothing_sigma)
+        mask_zyx = np.broadcast_to(columns[None], vol.shape).copy()
+        print(f"Tissue on {100 * columns.mean():.1f} % of the columns")
+    else:
+        mask_zyx = np.asarray(to_cpu(compute_tissue_mask(vol, smoothing_sigma=args.mask_smoothing_sigma, use_gpu=use_gpu)))
+    if use_gpu and args.tissue_mask == "voxel":
         # The mask leaves several copies of the slab in CuPy's pool.
         import cupy as cp
 

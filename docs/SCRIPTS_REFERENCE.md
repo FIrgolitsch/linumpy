@@ -235,6 +235,7 @@ linum-compensate-attenuation-inplace <input.ome.zarr> <output.ome.zarr> \
 | `--snr_threshold_db` | `6.0` | Per-voxel SNR threshold (dB) for A-line truncation in `li`. Voxels with SNR below this are excluded from the fit. |
 | `--min_bias` | `0.05` | Floor applied to the bias field before division. Caps the maximum gain at `1/min_bias` and prevents noise amplification in deep voxels. |
 | `--mask_smoothing_sigma` | `2.0` | Gaussian sigma (XY voxels) for the Otsu tissue mask. |
+| `--tissue_mask` | `voxel` | `voxel`: 3D threshold on the slab. `column`: a column is tissue over its whole depth or not at all, judged on its brightest planes; use it when slabs fall off quickly with depth and the log says "Too little tissue to calibrate". |
 | `--n_levels` | `0` | Pyramid levels in the output (0 = single resolution). |
 
 ### linum-compute-attenuation

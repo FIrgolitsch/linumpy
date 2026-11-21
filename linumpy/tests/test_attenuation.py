@@ -11,7 +11,7 @@ of the signal is fully contained in the volume.
 
 import numpy as np
 
-from linumpy.intensity.attenuation import get_attenuation_vermeer2013
+from linumpy.intensity.attenuation import get_attenuation_vermeer2013, tissue_column_mask
 
 
 def test_recovers_uniform_attenuation_from_clean_exponential():
@@ -449,3 +449,54 @@ def test_li2020_can_cut_without_subtracting_the_floor():
     # The floor left in the signal flattens the decay towards the cut.
     assert cut_only[4, 4, 80] < subtracted[4, 4, 80]
     np.testing.assert_allclose(cut_only[4, 4, 5:20], 20.0, rtol=0.1)
+
+
+def _two_level_slab(n_planes: int = 40, size: int = 120, decay: float = 0.12) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return a steep slab ``(Z, Y, X)`` with dim and bright tissue in agarose, and both tissue masks."""
+    rng = np.random.default_rng(11)
+    fall = np.exp(-decay * np.arange(n_planes))[:, None, None]
+    vol = np.full((n_planes, size, size), 1.0, dtype=np.float32) * (0.5 + 0.5 * fall)
+    dim = np.zeros((size, size), dtype=bool)
+    bright = np.zeros((size, size), dtype=bool)
+    dim[20:100, 20:60] = True
+    bright[20:100, 60:100] = True
+    vol[:, dim] = (20.0 * fall).repeat(int(dim.sum()), axis=1).reshape(n_planes, -1)
+    vol[:, bright] = (200.0 * fall).repeat(int(bright.sum()), axis=1).reshape(n_planes, -1)
+    vol *= 1.0 + 0.02 * rng.standard_normal(vol.shape).astype(np.float32)
+    return vol.astype(np.float32), dim, bright
+
+
+def _away_from(tissue: np.ndarray, margin: int = 5) -> np.ndarray:
+    """Return the agarose more than *margin* voxels from the tissue (the smoothing blurs the edge)."""
+    from scipy.ndimage import binary_dilation
+
+    return ~binary_dilation(tissue, iterations=margin)
+
+
+def test_tissue_column_mask_keeps_dim_tissue_and_leaves_out_agarose():
+    vol, dim, bright = _two_level_slab()
+
+    columns = tissue_column_mask(vol)
+
+    assert columns[dim].mean() > 0.95
+    assert columns[bright].mean() > 0.95
+    assert not columns[_away_from(dim | bright)].any()
+
+
+def test_tissue_column_mask_does_not_depend_on_the_height_of_the_surface():
+    vol, dim, bright = _two_level_slab()
+    # Half of the tissue starts eight planes lower: water above it.
+    lowered = vol.copy()
+    lowered[8:, 60:100, :] = vol[:-8, 60:100, :]
+    lowered[:8, 60:100, :] = 0.5
+
+    columns = tissue_column_mask(lowered)
+
+    tissue = dim | bright
+    assert columns[tissue].mean() > 0.95
+    assert not columns[_away_from(tissue)].any()
+
+
+def test_tissue_column_mask_of_an_empty_or_flat_slab_is_empty():
+    assert not tissue_column_mask(np.zeros((10, 16, 16), dtype=np.float32)).any()
+    assert not tissue_column_mask(np.ones((10, 16, 16), dtype=np.float32)).any()

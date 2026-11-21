@@ -263,3 +263,74 @@ def test_calibrated_strength_flattens_the_stack_planes(script_runner, tmp_path):
 
     assert ramp(fixed_path) < 0.85
     assert abs(ramp(calibrated_path) - 1.0) < 0.08
+
+
+def _steep_two_level_slab(tmp_path):
+    """Write a slab whose signal falls 11 times over 20 planes, with dim and bright tissue in agarose."""
+    rng = np.random.default_rng(11)
+    n_planes, size = 40, 140
+    fall = np.exp(-0.12 * np.arange(n_planes))[:, None, None]
+    vol = np.ones((n_planes, size, size), dtype=np.float32) * (0.5 + 0.5 * fall)
+    dim = np.zeros((size, size), dtype=bool)
+    bright = np.zeros((size, size), dtype=bool)
+    dim[20:120, 20:70] = True
+    bright[20:120, 70:120] = True
+    vol[:, dim] = np.repeat(20.0 * fall[:, :, 0], int(dim.sum()), axis=1)
+    vol[:, bright] = np.repeat(200.0 * fall[:, :, 0], int(bright.sum()), axis=1)
+    vol *= 1.0 + 0.02 * rng.standard_normal(vol.shape).astype(np.float32)
+    path = tmp_path / "steep.ome.zarr"
+    save_omezarr(da.from_array(vol.astype(np.float32)), path, voxel_size=(0.01, 0.01, 0.01), chunks=vol.shape, n_levels=0)
+    return path, vol, dim, bright
+
+
+def _run_on_steep_slab(script_runner, tmp_path, tissue_mask: str):
+    input_path, vol, dim, bright = _steep_two_level_slab(tmp_path)
+    output_path = tmp_path / f"corrected_{tissue_mask}.ome.zarr"
+    ret = script_runner.run(
+        [
+            "linum-compensate-attenuation-inplace",
+            str(input_path),
+            str(output_path),
+            "--method",
+            "li",
+            "--min_bias",
+            "0.25",
+            "--k",
+            "2",
+            "--lateral_sigma",
+            "5",
+            "--lateral_footprint",
+            "--calibrate_strength",
+            "--tissue_mask",
+            tissue_mask,
+            "--n_levels",
+            "0",
+        ]
+    )
+    assert ret.success, ret.stderr
+    gain = np.asarray(read_omezarr(output_path, level=0)[0]) / vol
+    return ret.stdout, gain, dim, bright
+
+
+def test_voxel_mask_leaves_the_dim_tissue_of_a_steep_slab_without_gain(script_runner, tmp_path):
+    stdout, gain, dim, _ = _run_on_steep_slab(script_runner, tmp_path, "voxel")
+
+    assert "Too little tissue to calibrate" in stdout
+    inner_dim = np.zeros_like(dim)
+    inner_dim[30:110, 25:55] = True
+    assert float(np.median(gain[25][inner_dim])) == pytest.approx(1.0, abs=0.01)
+
+
+def test_column_mask_compensates_all_the_tissue_of_a_steep_slab(script_runner, tmp_path):
+    stdout, gain, dim, bright = _run_on_steep_slab(script_runner, tmp_path, "column")
+
+    assert "Calibrated strength" in stdout
+    assert "Tissue on" in stdout
+    inner_dim = np.zeros_like(dim)
+    inner_dim[30:110, 25:55] = True
+    inner_bright = np.zeros_like(bright)
+    inner_bright[30:110, 80:115] = True
+    assert float(np.median(gain[25][inner_dim])) > 1.5
+    assert float(np.median(gain[25][inner_bright])) > 1.5
+    # No gain outside the tissue.
+    assert float(np.median(gain[25][:10, :])) == pytest.approx(1.0, abs=0.01)

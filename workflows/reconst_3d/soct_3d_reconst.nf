@@ -899,6 +899,8 @@ process compensate_attenuation {
     def lateral_flag = params.compensate_attenuation_lateral_sigma > 0 ? "--lateral_sigma ${params.compensate_attenuation_lateral_sigma} ${footprint_flag}" : ""
     def calibrate_flag = params.compensate_attenuation_calibrate_strength ? "--calibrate_strength --calibrate_planes ${params.compensate_attenuation_calibrate_planes} " : ""
     def attn_gpu_flag = (params.use_gpu && params.compensate_attenuation_use_gpu) ? "--use_gpu " : ""
+    // Emitted only for the column mask, so runs with the default keep their cached tasks.
+    def mask_flag = params.compensate_attenuation_tissue_mask == 'column' ? "--tissue_mask column " : ""
     """
     linum-compensate-attenuation-inplace ${image} "slice_z${slice_id}_attn_corr.ome.zarr" \
         --method ${params.compensate_attenuation_method} \
@@ -909,7 +911,7 @@ process compensate_attenuation {
         --zshift ${params.compensate_attenuation_zshift} \
         --strength ${params.compensate_attenuation_strength} \
         --snr_threshold_db ${params.compensate_attenuation_snr_threshold_db} \
-        ${lateral_flag}${calibrate_flag}${attn_gpu_flag}--n_levels 0
+        ${lateral_flag}${calibrate_flag}${attn_gpu_flag}${mask_flag}--n_levels 0
     """
 
     stub:

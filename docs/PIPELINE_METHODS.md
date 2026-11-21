@@ -322,6 +322,17 @@ planes below the surface that go into the stack
 (`compensate_attenuation_calibrate_planes`). A fixed strength over-corrects the
 slabs imaged with the focus deep below the surface.
 
+The tissue mask is a 3D Otsu threshold on the slab by default
+(`compensate_attenuation_tissue_mask='voxel'`). That marks bright voxels, not
+tissue: where the signal falls quickly with depth only the top planes of the
+brightest tissue pass, the gain is applied inside that part alone (a step
+along its outline) and the calibration finds no column to fit on. With
+`'column'` a column is tissue over its whole depth or not at all. Its score
+is the mean of its ten brightest planes, which does not depend on the height
+of the surface along the column, and the Otsu threshold is taken on the
+logarithm of the score, because a threshold on the score itself cuts between
+dim and bright tissue.
+
 #### 3d. Per-slice intensity normalization — `normalize`
 
 For each slice $k$: clip at $P_{99.9}$, subtract the agarose median background,
@@ -683,6 +694,7 @@ Key defaults from `workflows/reconst_3d/nextflow.config`:
 | `compensate_attenuation_method` | li | 3c |
 | `compensate_attenuation_strength` | 0.3 | 3c |
 | `compensate_attenuation_calibrate_strength` | false | 3c |
+| `compensate_attenuation_tissue_mask` | voxel | 3c |
 | `clip_percentile_upper` | 99.9 | 3d |
 | `detect_rehoming` | true | 4a |
 | `rehoming_return_fraction` | 0.4 | 4a |

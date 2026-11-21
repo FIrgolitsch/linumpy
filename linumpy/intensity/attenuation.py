@@ -11,14 +11,17 @@ import SimpleITK as sitk
 from numpy.ma import MaskedArray
 from scipy.interpolate import interp1d
 from scipy.ndimage import (
+    binary_closing,
     binary_erosion,
     binary_fill_holes,
+    binary_opening,
     gaussian_filter,
     median_filter,
     uniform_filter,
 )
 from scipy.optimize import minimize
-from skimage.filters import threshold_li
+from skimage.filters import threshold_li, threshold_otsu
+from skimage.morphology import disk
 
 from linumpy.cli.args import get_available_cpus
 from linumpy.geometry.crop import mask_under_interface
@@ -512,6 +515,59 @@ def get_attenuation_li2020(
     # not stop attenuating where its signal sinks into the noise, so that value
     # is kept down to the end of the tissue mask, not zeroed at the cut.
     return _finalize_attenuation(attn, mask, fill_holes)
+
+
+def tissue_column_mask(
+    vol: np.ndarray, smoothing_sigma: float = 2.0, n_brightest: int = 10, closing_radius: int = 3
+) -> np.ndarray:
+    """Return the XY footprint ``(Y, X)`` of the tissue in a slab ``(Z, Y, X)``.
+
+    A 3D threshold on a slab marks its bright voxels, not its tissue: where
+    the signal falls quickly with depth only the top planes of the brightest
+    tissue pass. The compensation then acts inside that part alone, which
+    leaves a gain step along its outline, and the strength calibration finds
+    no column that is tissue over its whole depth.
+
+    Here a column is tissue or not as a whole. Its score is the mean of its
+    *n_brightest* planes, which does not depend on where along the column the
+    surface lies, and the threshold is taken on the logarithm of the score:
+    agarose and tissue differ by a factor, and so do dim and bright tissue, so
+    a threshold on the score itself cuts between dim and bright tissue.
+
+    Parameters
+    ----------
+    vol : ndarray
+        Slab in ``(Z, Y, X)`` order, cropped at the tissue interface.
+    smoothing_sigma : float
+        XY Gaussian sigma (voxels) applied to the score.
+    n_brightest : int
+        Number of planes of a column its score is the mean of.
+    closing_radius : int
+        Radius (voxels) of the closing and opening that tidy the footprint.
+
+    Returns
+    -------
+    ndarray
+        Boolean footprint ``(Y, X)``. All ``False`` when the slab is empty or
+        has a single level.
+    """
+    vol = np.asarray(vol)
+    n_brightest = max(1, min(n_brightest, vol.shape[0]))
+    brightest = np.partition(vol, vol.shape[0] - n_brightest, axis=0)[-n_brightest:].mean(axis=0, dtype=np.float32)
+    valid = vol.max(axis=0) > 0
+    if not valid.any():
+        return np.zeros(vol.shape[1:], dtype=bool)
+    score = gaussian_filter(brightest, smoothing_sigma) if smoothing_sigma > 0 else brightest
+    log_score = np.log(np.maximum(score, np.finfo(np.float32).tiny))
+    if np.ptp(log_score[valid]) == 0:
+        return np.zeros(vol.shape[1:], dtype=bool)
+    footprint = (log_score > threshold_otsu(log_score[valid])) & valid
+    if closing_radius > 0:
+        footprint = binary_closing(footprint, disk(closing_radius))
+    footprint = binary_fill_holes(footprint)
+    if closing_radius > 0:
+        footprint = binary_opening(footprint, disk(closing_radius))
+    return footprint
 
 
 def tissue_footprint_mask(mask: np.ndarray) -> np.ndarray:
