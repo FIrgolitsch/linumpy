@@ -208,7 +208,7 @@ nextflow run soct_3d_reconst.nf \
 | `fix_illum_max_iterations` | `500` | Max BaSiC optimizer iterations (higher = better convergence, slower) |
 | `fix_illum_darkfield` | `false` | Also fit a per-tile additive darkfield. Disabled by default: out-of-tile zero padding can make BaSiC fit a darkfield > signal and zero the volume. Enable when residual tile waffle pattern persists after flatfield correction. |
 | `compensate_psf_enabled` | `true` | Run axial PSF / beam-profile correction (after stitching, before interface crop) |
-| `compensate_psf_method` | `'model_free'` | PSF estimator: `'model_free'` (default; agarose-region axial profile, no optics assumptions) or `'model'` (confocal-PSF parametric fit; uses `compensate_psf_zr_initial`) |
+| `compensate_psf_method` | `'model_free'` | PSF estimator: `'model_free'` (default; agarose-region axial profile of each slab, no optics assumptions), `'model'` (confocal-PSF parametric fit; uses `compensate_psf_zr_initial`) or `'pooled'` (one agarose profile for the brain: the profiles of all slabs are aligned on the tissue face and pooled, and every slab is divided by the same value at the same depth below its cut face) |
 | `compensate_psf_zr_initial` | `1060.0` | Initial Rayleigh length (µm) for the parametric PSF fit. Only used when `compensate_psf_method = 'model'`. The default is the empirical value for the 10× Mitutoyo objective. |
 | `crop_interface_out_depth` | `600` | Maximum tissue depth after interface crop (µm) |
 

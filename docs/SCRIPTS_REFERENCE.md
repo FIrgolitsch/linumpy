@@ -263,6 +263,17 @@ linum-compensate-psf-model-free <input.ome.zarr> <output.ome.zarr> \
     --percentile_max <pmax>
 ```
 
+### linum-estimate-beam-profile, linum-pool-beam-profiles, linum-apply-beam-profile
+
+Beam correction with one profile for the brain (`compensate_psf_method='pooled'`). The first script measures the agarose depth profile and the tissue face of a slab, the second pools the profiles of all slabs aligned on their tissue face, the third divides every plane of a slab by the pooled profile at its depth from the tissue face.
+
+```bash
+linum-estimate-beam-profile <slab.ome.zarr> <slab_profile.json> [--percentile_max <p>]
+linum-pool-beam-profiles <pooled.json> <slab_profile.json>... [--min_slabs <n>]
+linum-apply-beam-profile <slab.ome.zarr> <output.ome.zarr> \
+    --pooled_profile <pooled.json> --slab_profile <slab_profile.json>
+```
+
 ### linum-compensate-psf-from-model
 
 Fit a confocal-PSF parametric model (focal depth + Rayleigh length) on a few axial profiles, then divide each A-line by the synthesized 3D PSF.

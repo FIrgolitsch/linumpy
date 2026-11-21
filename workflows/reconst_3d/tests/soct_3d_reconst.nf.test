@@ -51,6 +51,48 @@ nextflow_pipeline {
         }
     }
 
+    test("Should pool one beam profile for the brain when the method is pooled, in stub mode") {
+        options "-stub"
+
+        when {
+            params {
+                input = "${projectDir}/workflows/reconst_3d/tests/data"
+                output = "${outputDir}"
+                resolution = -1
+                fix_curvature_enabled = false
+                fix_illum_enabled = false
+                stitch_global_transform = false
+                detect_rehoming = false
+                analyze_shifts = false
+                stitch_preview = false
+                common_space_preview = false
+                interpolate_missing_slices = false
+                export_manual_align = false
+                refine_manual_transforms = false
+                auto_exclude_enabled = false
+                correct_bias_field = false
+                align_to_ras_enabled = false
+                apply_pairwise_transforms = true
+                compensate_psf_method = 'pooled'
+                compensate_attenuation_tissue_mask = 'column'
+            }
+        }
+
+        then {
+            assert workflow.success
+            def tasks = workflow.trace.tasks()
+            // One estimate and one correction per slab, one pooled profile for the brain
+            assert tasks.count { it.name =~ /estimate_beam_profile/ } == 2
+            assert tasks.count { it.name =~ /pool_beam_profile/ } == 1
+            assert tasks.count { it.name =~ /apply_beam_profile/ } == 2
+            // The per-slab correction is replaced, and the stages after it still run
+            assert !tasks.any { it.name =~ /beam_profile_correction/ }
+            assert tasks.count { it.name =~ /crop_interface/ } == 2
+            assert tasks.count { it.name =~ /compensate_attenuation/ } == 2
+            assert tasks.any { it.name =~ /stack/ }
+        }
+    }
+
     test("Should run illumination correction with linum-basic backend in stub mode") {
         options "-stub"
 

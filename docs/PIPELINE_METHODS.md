@@ -246,7 +246,7 @@ Shifts exceeding `max_blend_refinement_px` (default 10) are clamped.
 
 #### 3a. Beam-profile / PSF correction (`compensate_psf_enabled`)
 
-Two estimators:
+Three estimators:
 
 - **Model-free** (default, `compensate_psf_method='model_free'`): the
   tissue-averaged axial profile $p(z) = \mathrm{median}_{(y,x)\in\mathcal M} I(z,y,x)$
@@ -254,6 +254,24 @@ Two estimators:
   normalised, then divided out
   (<ref_file file="/Users/frans/code/linumpy/scripts/attenuation/linum_compensate_psf_model_free.py" />):
   $$I'(z,y,x) = \frac{I(z,y,x)}{1 + \mathrm{psf}(z)},\qquad \mathrm{psf}(z) = \frac{p(z) - p_\text{bg}}{p_\text{bg}}.$$
+
+- **Pooled** (`compensate_psf_method='pooled'`): the agarose profile of a
+  single slab is not a stable estimate of the beam. The agarose face is not
+  always at the tissue face, and the agarose share of a slab varies, so the
+  same tissue comes out flat in one slab and steep in the next. Here every
+  slab contributes its agarose profile $p_s(z)$ and the plane $f_s$ of its
+  tissue face
+  (<ref_file file="/Users/frans/code/linumpy/linumpy/psf/profile.py" />). With
+  $d = z - f_s$ the depth from the tissue face, the pooled profile is built
+  from its change between successive depths, the median over the slabs that
+  reach both:
+  $$\log P(d+1) - \log P(d) = \mathrm{median}_s\,[\log p_s(d+1) - \log p_s(d)],$$
+  which does not step where slabs with a deep tissue face run out of planes.
+  Every slab is then divided by the same value at the same depth below its
+  cut face:
+  $$I'_s(z,y,x) = \frac{I_s(z,y,x)}{P(z - f_s)/\min_d P(d)}.$$
+  Three processes: `estimate_beam_profile` (per slab), `pool_beam_profile`
+  (once), `apply_beam_profile` (per slab).
 
 - **Confocal model** (`compensate_psf_method='model'`): a confocal Lorentzian
   PSF $\mathrm{PSF}(z; z_f, z_R, A) = A/[(z-z_f)^2/z_R^2 + 1]$ is fit to agarose

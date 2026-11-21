@@ -222,7 +222,19 @@ workflow {
     }
 
     // Stage 3: Corrections
-    if (params.compensate_psf_enabled) {
+    if (params.compensate_psf_enabled && params.compensate_psf_method == 'pooled') {
+        // One beam profile for the brain: measured on every slab, pooled, then
+        // applied to every slab at its depth from the tissue face.
+        estimate_beam_profile(stitched_slices)
+        pool_beam_profile(estimate_beam_profile.out.profile.map { _slice_id, profile -> profile }.collect())
+        apply_beam_profile(
+            stitched_slices
+                .join(estimate_beam_profile.out.profile)
+                .combine(pool_beam_profile.out.pooled)
+        )
+        psf_corrected = apply_beam_profile.out.corrected
+    }
+    else if (params.compensate_psf_enabled) {
         beam_profile_correction(stitched_slices)
         psf_corrected = beam_profile_correction.out.corrected
     }
@@ -855,6 +867,75 @@ process beam_profile_correction {
         linum-compensate-psf-model-free ${slice_3d} "slice_z${slice_id}_axial_corr.ome.zarr" \
             --percentile_max ${params.clip_percentile_upper} --n_levels 0
         """
+
+    stub:
+    """
+    mkdir -p slice_z${slice_id}_axial_corr.ome.zarr
+    """
+}
+
+// Pooled beam correction, step 1 of 3: the agarose depth profile and the
+// tissue face of one slab.
+process estimate_beam_profile {
+    input:
+    tuple val(slice_id), path(slice_3d)
+
+    output:
+    tuple val(slice_id), path("slice_z${slice_id}_beam_profile.json"), emit: profile
+
+    script:
+    """
+    linum-estimate-beam-profile ${slice_3d} "slice_z${slice_id}_beam_profile.json" \
+        --percentile_max ${params.clip_percentile_upper}
+    """
+
+    stub:
+    """
+    touch slice_z${slice_id}_beam_profile.json
+    """
+}
+
+// Step 2 of 3: one profile for the brain, by depth from the tissue face.
+process pool_beam_profile {
+    publishDir "${params.output}/beam_profile_correction", mode: 'copy'
+
+    input:
+    path ("profiles/*")
+
+    output:
+    path ("pooled_beam_profile.json"), emit: pooled
+
+    script:
+    """
+    linum-pool-beam-profiles pooled_beam_profile.json profiles/*.json
+    """
+
+    stub:
+    """
+    touch pooled_beam_profile.json
+    """
+}
+
+// Step 3 of 3: divide every plane of a slab by the pooled profile at its
+// depth from the tissue face. Output and metrics are named as those of
+// beam_profile_correction, which this replaces.
+process apply_beam_profile {
+    publishDir "${params.output}/beam_profile_correction", mode: 'copy', pattern: "*_metrics.json"
+
+    input:
+    tuple val(slice_id), path(slice_3d), path(slab_profile), path(pooled_profile)
+
+    output:
+    tuple val(slice_id), path("slice_z${slice_id}_axial_corr.ome.zarr"), emit: corrected
+    path ("*_metrics.json"), optional: true, emit: metrics
+
+    script:
+    """
+    linum-apply-beam-profile ${slice_3d} "slice_z${slice_id}_axial_corr.ome.zarr" \
+        --pooled_profile ${pooled_profile} \
+        --slab_profile ${slab_profile} \
+        --n_levels 0
+    """
 
     stub:
     """

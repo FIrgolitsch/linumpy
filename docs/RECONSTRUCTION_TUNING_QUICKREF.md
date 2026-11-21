@@ -52,6 +52,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Thin dark line at joints where the cut face is tilted or uneven | `stack_mask_above_surface_planes=12` |
 | Bright hard-edged patches in white matter deep in a slab | `compensate_attenuation_lateral_footprint=true` with `compensate_attenuation_lateral_sigma>0` |
 | A hard-edged region inside the tissue that is brighter than the tissue around it over the whole depth of a slab; the attenuation log says "Too little tissue to calibrate" | `compensate_attenuation_tissue_mask='column'` |
+| Some slabs fall off quickly with depth and others are flat (seen in the side views of single slabs) | `compensate_psf_method='pooled'` |
 | Bias correction over-flattening tissue | Lower `bias_strength` (1.0 → 0.7) |
 | Atlas overlay rotated 90° / flipped | `ras_orientation_preview=true`, then tune `ras_input_orientation` and `ras_initial_rotation` |
 
