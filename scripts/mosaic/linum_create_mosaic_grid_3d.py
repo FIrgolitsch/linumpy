@@ -93,6 +93,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--galvo_threshold", type=float, default=0.6, help="Galvo detection confidence threshold. [%(default)s]"
     )
     options_g.add_argument(
+        "--galvo_shift",
+        type=int,
+        default=None,
+        help="Galvo shift of this slice in a-lines. Given, it is applied as it is\n"
+        "and the detection is skipped (0 applies no fix).",
+    )
+    options_g.add_argument(
         "--sharding_factor",
         type=int,
         default=1,
@@ -385,7 +392,10 @@ def main() -> None:
     print(f"Resolution: z = {resolution[0]} , x = {resolution[1]} , y = {resolution[2]} ")
 
     galvo_shift = 0
-    if fix_galvo_shift and data_type == "OCT" and n_extra > 0:
+    if fix_galvo_shift and data_type == "OCT" and n_extra > 0 and args.galvo_shift is not None:
+        galvo_shift = max(0, int(args.galvo_shift))
+        print(f"Galvo shift given: shift={galvo_shift} - detection skipped")
+    elif fix_galvo_shift and data_type == "OCT" and n_extra > 0:
         from linumpy.geometry.galvo import detect_galvo_for_slice
 
         print(f"Running galvo detection on {len(tiles)} tiles with threshold={galvo_threshold}")

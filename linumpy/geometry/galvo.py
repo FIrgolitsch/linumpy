@@ -105,11 +105,22 @@ def detect_galvo_for_slice(
     tiles: list,
     n_extra: int,
     threshold: float = 0.6,
-    n_samples: int = 5,
+    n_samples: int = 40,
     axial_resolution: float | None = None,
     min_intensity: float = 20.0,
+    tile_confidence: float = 0.6,
 ) -> tuple:
-    """Detect galvo shift for a slice by sampling multiple tiles.
+    """Detect the galvo shift of a slice from a vote over its tiles.
+
+    The galvo return sits at the same a-lines in every tile of a slice. Each
+    sampled tile that is bright enough gives a shift and a confidence; the
+    shift of the slice is the one most tiles agree on, and the confidence is
+    the share of the sampled tiles that show it. A slice with the shift has
+    about nine tiles in ten agreeing, a slice without it almost none.
+
+    Five tiles, the best one weighted by how many of the other four agreed,
+    missed slices: with one tile at the edge of the tissue and one false hit
+    among the five, a shift present in 250 of 280 tiles scored 0.5.
 
     Parameters
     ----------
@@ -118,13 +129,15 @@ def detect_galvo_for_slice(
     n_extra : int
         Number of extra A-lines (galvo return pixels) from acquisition metadata.
     threshold : float
-        Confidence threshold for applying fix (default: 0.6).
+        Share of the sampled tiles that has to agree for the fix (default: 0.6).
     n_samples : int
-        Maximum number of tiles to sample (default: 5).
+        Maximum number of tiles to sample, spread over the slice (default: 40).
     axial_resolution : float, optional
         Axial resolution for OCT loading.
     min_intensity : float
         Minimum mean intensity for a tile to be considered valid.
+    tile_confidence : float
+        Confidence from which the detection of a single tile counts as a vote.
 
     Returns
     -------
@@ -132,53 +145,44 @@ def detect_galvo_for_slice(
         (shift, confidence) where shift is 0 if confidence < threshold.
     """
     from linumpy.microscope.oct import OCT
+    from linumpy.utils.planes import map_threaded
 
     if not tiles or n_extra <= 0:
         return 0, 0.0
 
     n_tiles = len(tiles)
-
     center_start = int(n_tiles * 0.2)
     center_end = int(n_tiles * 0.8)
     sample_indices = np.linspace(center_start, max(center_end - 1, center_start), min(n_samples, n_tiles), dtype=int)
     sample_indices = list(dict.fromkeys(sample_indices))
 
-    detections = []
-    for idx in sample_indices:
-        if len(detections) >= n_samples:
-            break
-
+    def _detect(idx: int) -> tuple[int, float] | None:
         oct_obj = OCT(tiles[idx], axial_resolution) if axial_resolution else OCT(tiles[idx])
         vol = oct_obj.load_image(crop=False, fix_galvo_shift=False, fix_camera_shift=False)
         # load_image returns (Z, Y, X) = (depth, b-scan, a-line); the detector
         # looks for the galvo return along the a-lines and wants (a-line, b-scan).
         aip = vol.mean(axis=0).T
-
         if np.mean(aip) < min_intensity:
-            continue
-
+            return None
         shift, conf = detect_galvo_shift(aip, n_pixel_return=n_extra)
-        detections.append((shift, conf))
+        return int(shift), float(conf)
 
+    detections = [d for d in map_threaded(_detect, sample_indices, cap=8) if d is not None]
     if not detections:
         return 0, 0.0
 
-    shifts = np.array([d[0] for d in detections])
-    confidences = np.array([d[1] for d in detections])
+    votes = np.array([shift for shift, conf in detections if conf >= tile_confidence and shift > 0], dtype=int)
+    if votes.size == 0:
+        return 0, 0.0
+    shift_tolerance = max(n_extra // 4, 5)
+    agreeing = np.array([int(np.sum(np.abs(votes - v) <= shift_tolerance)) for v in votes])
+    winner = votes[np.abs(votes - votes[int(np.argmax(agreeing))]) <= shift_tolerance]
+    best_shift = int(np.median(winner))
+    confidence = float(winner.size / len(detections))
 
-    best_idx = np.argmax(confidences)
-    best_shift = shifts[best_idx]
-    best_confidence = confidences[best_idx]
-
-    if len(shifts) > 1:
-        shift_tolerance = max(n_extra // 4, 5)
-        n_consistent = np.sum(np.abs(shifts - best_shift) <= shift_tolerance)
-        consistency_factor = (n_consistent / len(shifts)) ** 0.5
-        best_confidence *= consistency_factor
-
-    if best_confidence >= threshold:
-        return int(best_shift), float(best_confidence)
-    return 0, float(best_confidence)
+    if confidence >= threshold:
+        return best_shift, confidence
+    return 0, confidence
 
 
 def _compute_dark_band_confidence(aip: np.ndarray, boundary_pos: int, boundary_end: int) -> float:

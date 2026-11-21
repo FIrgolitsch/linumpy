@@ -42,3 +42,41 @@ def test_galvo_return_inside_the_tiles_is_found_along_the_a_lines(tmp_path):
     shift, confidence = detect_galvo_for_slice(tiles, n_extra, threshold=0.6)
     assert shift == expected_shift
     assert confidence >= 0.6
+
+
+def test_galvo_shift_of_the_slice_is_the_one_most_tiles_show(tmp_path):
+    """A shift in most tiles is found although some tiles show none or another one."""
+    nx, ny, nz, n_extra, band_start = 120, 48, 4, 20, 60
+    rng = np.random.default_rng(1)
+    tiles = []
+    for i in range(20):
+        raw = (100.0 + rng.normal(0.0, 2.0, size=(nz, nx + n_extra, ny))).astype(np.float32)
+        if i % 5 == 0:
+            pass  # a tile without a visible band (edge of the tissue)
+        elif i == 7:
+            raw[:, 20 : 20 + n_extra, :] = 0.0  # a false hit somewhere else
+        else:
+            raw[:, band_start : band_start + n_extra, :] = 0.0
+        tiles.append(_write_tile(tmp_path, f"tile_x{i:02d}_y00_z00", raw, nx, ny, n_extra))
+
+    reference = (100.0 + rng.normal(0.0, 2.0, size=(nz, nx + n_extra, ny))).astype(np.float32)
+    reference[:, band_start : band_start + n_extra, :] = 0.0
+    expected_shift, _ = detect_galvo_shift(reference.mean(axis=0), n_pixel_return=n_extra)
+
+    shift, confidence = detect_galvo_for_slice(tiles, n_extra, threshold=0.6)
+    assert abs(shift - expected_shift) <= 1
+    assert 0.6 <= confidence < 1.0
+
+
+def test_no_galvo_shift_when_only_a_few_tiles_show_one(tmp_path):
+    nx, ny, nz, n_extra = 120, 48, 4, 20
+    rng = np.random.default_rng(2)
+    tiles = []
+    for i in range(20):
+        raw = (100.0 + rng.normal(0.0, 2.0, size=(nz, nx + n_extra, ny))).astype(np.float32)
+        if i in (6, 9):
+            raw[:, 60 : 60 + n_extra, :] = 0.0
+        tiles.append(_write_tile(tmp_path, f"tile_x{i:02d}_y00_z00", raw, nx, ny, n_extra))
+    shift, confidence = detect_galvo_for_slice(tiles, n_extra, threshold=0.6)
+    assert shift == 0
+    assert confidence < 0.6

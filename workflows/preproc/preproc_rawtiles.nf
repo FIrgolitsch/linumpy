@@ -72,8 +72,16 @@ process create_mosaic_grid {
     // parameter is unset, so the command of a grid without levels is unchanged.
     def pyramid_res: String = [params.pyramid_resolutions].flatten().findAll { r -> r != null && r.toString().trim() }.join(' ')
     def pyramid_opts: String = pyramid_res ? " --pyramid_resolutions ${pyramid_res}" : ""
+    // Galvo shift set by hand for single slices ("40:282,12:148"). Empty for
+    // every other slice, so their command, and their cached grid, is unchanged.
+    def galvo_overrides = (params.galvo_shift_overrides ?: '').toString().split(',').collect { entry -> entry.trim() }.findAll { entry -> entry.contains(':') }.collectEntries { entry ->
+        def parts = entry.split(':')
+        [(parts[0].trim().toInteger()): parts[1].trim().toInteger()]
+    }
+    def forced_shift = slice_id.toString().isInteger() ? galvo_overrides[slice_id.toString().toInteger()] : null
+    def galvo_shift_opt: String = forced_shift != null ? " --galvo_shift ${forced_shift}" : ""
     """
-    linum-create-mosaic-grid-3d mosaic_grid_3d_z${slice_id}.ome.zarr --from_tiles_list ${tiles} --resolution ${params.resolution} --n_processes ${params.processes} --axial_resolution ${params.axial_resolution} --sharding_factor ${params.sharding_factor} ${options} ${gpu_opts}${pyramid_opts}
+    linum-create-mosaic-grid-3d mosaic_grid_3d_z${slice_id}.ome.zarr --from_tiles_list ${tiles} --resolution ${params.resolution} --n_processes ${params.processes} --axial_resolution ${params.axial_resolution} --sharding_factor ${params.sharding_factor} ${options} ${gpu_opts}${pyramid_opts}${galvo_shift_opt}
     """
 
     stub:
