@@ -27,6 +27,7 @@ from tqdm.auto import tqdm
 from linumpy.imaging import orientation as orientation_lib
 from linumpy.imaging.orientation import (
     apply_orientation_transform,
+    compute_centered_grid_and_transform,
     compute_centered_reference_and_transform,
     parse_orientation_code,
     reorder_resolution,
@@ -34,6 +35,8 @@ from linumpy.imaging.orientation import (
 )
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr
 from linumpy.reference import allen
+from linumpy.utils.planes import copy_threaded
+from linumpy.utils.progress import report
 
 matplotlib.use("Agg")  # Non-interactive backend
 configure_all_libraries()
@@ -376,6 +379,7 @@ def apply_transform_to_zarr(
     if chunks is None:
         chunks = (128,) * len(vol_zarr.shape)
 
+    report("align_to_ras", "loading the full-resolution volume")
     vol = np.asarray(vol_zarr[:])
     original_dtype = vol.dtype
     update_pbar()
@@ -391,7 +395,7 @@ def apply_transform_to_zarr(
         # two ~36 GB allocations on top of the still-live source.
         # Materialise the contiguous buffer here and immediately drop the
         # original so the SITK conversion only adds one full-volume copy.
-        vol = np.ascontiguousarray(vol)
+        vol = copy_threaded(vol)
 
     # Estimate the background fill on the numpy array BEFORE allocating the
     # (potentially large) SimpleITK float32 copy.  Subsample to keep the
@@ -406,19 +410,31 @@ def apply_transform_to_zarr(
     del vol  # free original volume before resampling
     update_pbar()
 
-    # Compute reference image and modified transform that centers the output
-    reference, centered_transform = compute_centered_reference_and_transform(vol_sitk, transform)
+    # Output grid and modified transform that centers the output. The grid is
+    # given by its size and spacing: an empty reference image of that size
+    # would be allocated in full only to carry them.
+    out_size, out_spacing, centered_transform = compute_centered_grid_and_transform(vol_sitk, transform)
 
     resampler = sitk.ResampleImageFilter()
-    resampler.SetReferenceImage(reference)
+    resampler.SetSize(out_size)
+    resampler.SetOutputSpacing(out_spacing)
+    resampler.SetOutputOrigin((0.0, 0.0, 0.0))
+    resampler.SetOutputDirection((1, 0, 0, 0, 1, 0, 0, 0, 1))
     resampler.SetInterpolator(sitk.sitkLinear)
     resampler.SetDefaultPixelValue(bg_value)
     resampler.SetTransform(centered_transform)
 
+    report("align_to_ras", "resampling at full resolution")
     transformed_sitk = resampler.Execute(vol_sitk)
     del vol_sitk  # free input before allocating output array
-    transformed = sitk.GetArrayFromImage(transformed_sitk)
-    del transformed_sitk  # free SimpleITK image after extracting numpy array
+    if original_dtype == np.float32:
+        # The image is written as it is: a view of its buffer avoids copying
+        # the whole volume out on one core (and holding it twice). The image
+        # has to stay alive until the volume is on disk.
+        transformed = sitk.GetArrayViewFromImage(transformed_sitk)
+    else:
+        transformed = sitk.GetArrayFromImage(transformed_sitk)
+        del transformed_sitk  # free SimpleITK image after extracting numpy array
     update_pbar()
 
     # GetArrayFromImage already yields numpy (Z, Y, X) matching our convention.
@@ -438,6 +454,7 @@ def apply_transform_to_zarr(
         transformed = transformed.astype(original_dtype, copy=False)
 
     # Write output
+    report("align_to_ras", "writing the volume and its pyramid")
     writer = AnalysisOmeZarrWriter(
         output_path,
         shape=transformed.shape,
@@ -921,6 +938,7 @@ def main() -> None:
 
     # Register to Allen atlas
     pbar.set_postfix_str("registering...")
+    report("align_to_ras", "registering to the Allen template")
     transform, stop_condition, error = allen.register_3d_rigid_to_allen(
         moving_image=vol,
         moving_spacing=resolution,
@@ -970,6 +988,7 @@ def main() -> None:
     # Generate preview
     if args.preview:
         pbar.set_postfix_str("generating preview...")
+        report("align_to_ras", "drawing the preview")
         create_alignment_preview(
             input_path,
             output_path if not args.store_transform_only else None,

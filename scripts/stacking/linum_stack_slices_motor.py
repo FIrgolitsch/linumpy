@@ -15,7 +15,7 @@ the bottom of one slice with the top of the next.
 """
 
 import linumpy.config.threads  # noqa: F401
-from linumpy.config.threads import configure_all_libraries, thread_budget
+from linumpy.config.threads import available_memory_bytes, configure_all_libraries, thread_budget
 
 import argparse
 import logging
@@ -71,6 +71,7 @@ from linumpy.stack_alignment.motor_stack import (
     zero_if_over,
 )
 from linumpy.stack_alignment.units import center_shifts, convert_shifts_to_pixels
+from linumpy.utils.progress import Counter, report
 from linumpy.utils.stage_timing import add, span
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -343,6 +344,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Upper clamp on overlap z-gain (same cap as the scalar median scale). [%(default)s]",
+    )
+    p.add_argument(
+        "--assemble_in_memory",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Assemble the stack in memory and write it once at the end, instead of\n"
+        "updating it on disk slab by slab. Faster, and the same result.\n"
+        "Default: in memory when the volume takes at most a quarter of the free memory.",
     )
     p.add_argument(
         "--local_depth_gain",
@@ -1104,6 +1113,7 @@ def main() -> None:
     pair_ids = list(pairwise(available_ids))
     prev_vol = first_vol
     progress = tqdm(total=len(pair_ids), desc="Z-matching")
+    matched = Counter("stack", "pairs matched in Z", len(pair_ids))
     with ThreadPoolExecutor(max_workers=match_workers) as match_pool:
         # One batch holds match_workers + 1 slabs in memory.
         for batch_start in range(0, len(pair_ids), match_workers):
@@ -1122,6 +1132,7 @@ def main() -> None:
             prev_vol = vols[-1]
             del vols, jobs, results
             progress.update(len(batch))
+            matched.update(len(batch))
     progress.close()
 
     # No find_z_overlap call ran (for example --use_expected_overlap without
@@ -1261,13 +1272,27 @@ def main() -> None:
     output_shape = (total_z, out_ny, out_nx)
 
     output = AnalysisOmeZarrWriter(output_path, output_shape, chunk_shape=(100, 100, 100), dtype=np.float32)
-    # Neighbouring slabs overlap and a chunk is 100 planes deep, so every chunk
-    # is written several times while the stack is assembled. By default zarr
-    # compares a chunk with the fill value on each write, to leave empty chunks
-    # out, and that took as long as the write itself. The depth gain writes
-    # every chunk once more through ``output.zarray``, which drops the chunks
-    # that are still empty; without that pass the check stays on.
-    assembly = output.zarray.with_config({"write_empty_chunks": True}) if args.local_depth_gain else output.zarray
+    # The stack is assembled in memory when it fits: slabs overlap, so on disk
+    # every chunk is read and rewritten several times, by one thread, and the
+    # depth gain reads the volume twice more. In memory the volume is written
+    # once at the end, its chunks encoded on threads.
+    volume_bytes = 4 * int(np.prod(output_shape))
+    in_memory = args.assemble_in_memory
+    if in_memory is None:
+        in_memory = volume_bytes <= 0.25 * available_memory_bytes()
+    volume: np.ndarray | None = None
+    if in_memory:
+        logger.info("Assembling in memory (%.1f GB)", volume_bytes / 2**30)
+        volume = np.zeros(output_shape, dtype=np.float32)
+        assembly = volume
+    else:
+        # By default zarr compares a chunk with the fill value on each write,
+        # to leave empty chunks out, and that took as long as the write
+        # itself. The depth gain writes every chunk once more through
+        # ``output.zarray``, which drops the chunks that are still empty;
+        # without that pass the check stays on.
+        logger.info("Assembling on disk (%.1f GB do not fit in a quarter of the free memory)", volume_bytes / 2**30)
+        assembly = output.zarray.with_config({"write_empty_chunks": True}) if args.local_depth_gain else output.zarray
 
     overlap_as_fixed = {m["fixed_id"]: m["overlap_voxels"] for m in z_matches}
     overlap_z_fits: dict[int, tuple[float, float]] = {}
@@ -1402,8 +1427,11 @@ def main() -> None:
     prepare_pool = ThreadPoolExecutor(max_workers=1)
     pending = prepare_pool.submit(_prepare_slab, z_matches[0]) if z_matches else None
 
+    stacked = Counter("stack", "slabs stacked", len(z_matches))
+
     # Stack remaining slices
     for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
+        stacked.update()
         slice_id = match["moving_id"]
         overlap = match["overlap_voxels"]
         # blend_overlap may be < overlap when z-blend refinement found a tighter tissue match
@@ -1568,8 +1596,9 @@ def main() -> None:
 
     # Remove the depth trend inside each slab. Does not move tissue.
     if args.local_depth_gain:
+        report("stack", "removing the depth trend inside the slabs")
         depth_rms = apply_local_depth_gain(
-            output.zarray,
+            volume if volume is not None else output.zarray,
             slab_z_starts,
             threshold=args.blend_tissue_threshold,
             half_window=args.local_depth_gain_slabs,
@@ -1577,13 +1606,22 @@ def main() -> None:
         logger.info("Removed the depth trend inside the slabs (rms %.1f %%)", 100.0 * depth_rms)
 
     if args.notch_slice_seams:
-        period = apply_seam_notch(output.zarray)
+        period = apply_seam_notch(volume if volume is not None else output.zarray)
         logger.info("Notched slice seams (period %.1f voxels)", period)
+
+    if volume is not None:
+        report("stack", "writing the volume")
+        output[:] = volume
 
     # Finalize with pyramid
     logger.info("Generating pyramid levels...")
+    report("stack", "building the pyramid")
     output.finalize(
-        first_res, target_resolutions_um=args.pyramid_resolutions, make_isotropic=args.make_isotropic, use_gpu=args.use_gpu
+        first_res,
+        target_resolutions_um=args.pyramid_resolutions,
+        make_isotropic=args.make_isotropic,
+        use_gpu=args.use_gpu,
+        source=volume,
     )
 
     write_slab_z_starts(output_path, slab_z_starts, int(output_shape[0]))

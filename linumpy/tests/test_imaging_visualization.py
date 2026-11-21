@@ -151,3 +151,24 @@ def test_save_annotated_views_auto_detect_slices(tmp_path):
         (tmp_path / f"slice_z{i:02d}.ome.zarr").mkdir()
     save_annotated_views(vol, str(out), zarr_path=str(zarr_path))
     assert out.exists()
+
+
+def test_axis_occupancy_and_crop_bounds_match_a_direct_computation():
+    from linumpy.imaging.visualization import _axis_occupancy, _tissue_crop_bounds
+
+    rng = np.random.default_rng(15)
+    vol = np.zeros((150, 40, 50), dtype=np.float32)
+    vol[20:130, 8:30, 12:44] = rng.random((110, 22, 32), dtype=np.float32) - 0.2  # some voxels below zero
+    any_z, any_y, any_x, positive_y, positive_x = _axis_occupancy(vol, workers=3)
+    assert np.array_equal(any_z, np.any(vol, axis=(1, 2)))
+    assert np.array_equal(any_y, np.any(vol, axis=(0, 2)))
+    assert np.array_equal(any_x, np.any(vol, axis=(0, 1)))
+    assert np.array_equal(positive_y, np.sum(vol > 0, axis=(0, 2)))
+    assert np.array_equal(positive_x, np.sum(vol > 0, axis=(0, 1)))
+
+    z_bounds, y_bounds, x_bounds, x_slice, y_slice = _tissue_crop_bounds((any_z, any_y, any_x, positive_y, positive_x), 25, 3)
+    assert (z_bounds, y_bounds, x_bounds) == ((17, 133), (7, 31), (11, 45))
+    assert (x_slice, y_slice) == (18, 0)
+    # The counts of the box are the counts of the volume: nothing above zero lies outside it.
+    box = vol[z_bounds[0] : z_bounds[1], y_bounds[0] : y_bounds[1], x_bounds[0] : x_bounds[1]]
+    assert np.array_equal(positive_y[y_bounds[0] : y_bounds[1]], np.sum(box > 0, axis=(0, 2)))

@@ -56,8 +56,11 @@ def find_best_z(fixed_vol: np.ndarray, moving_slice: np.ndarray, expected_z: int
     best_z = expected_z
     best_corr = -np.inf
 
+    # The planes of the search range are read in one go: read one at a time
+    # from a chunked store, every plane decodes the same chunks again.
+    planes = np.asarray(fixed_vol[z_min : z_max + 1])
     for z in range(z_min, z_max + 1):
-        fixed_slice = np.array(fixed_vol[z])
+        fixed_slice = planes[z - z_min]
         fixed_roi = fixed_slice[roi].astype(np.float32)
         valid_fix = fixed_roi > 0
         if valid_fix.any():

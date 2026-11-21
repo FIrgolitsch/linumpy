@@ -1355,7 +1355,9 @@ process stack {
     # rim_keeps_own_value 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     # The chunks are zstd-compressed already: store them, deflating gains nothing.
-    zip -0 -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
+    echo "[stack] zipping the volume"
+    zip -0 -q -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
+    echo "[stack] drawing the overview pictures"
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
     linum-screenshot-omezarr-annotated ${subject_name}.ome.zarr ${subject_name}_annotated.png ${annotated_args}
     """
@@ -1439,8 +1441,10 @@ process correct_bias_field {
         ${Helpers.pyramidArgs(params)}
 
     # The chunks are zstd-compressed already: store them, deflating gains nothing.
-    zip -0 -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
+    echo "[correct_bias_field] zipping the volume"
+    zip -0 -q -r ${subject_name}.ome.zarr.zip ${subject_name}.ome.zarr
 
+    echo "[correct_bias_field] drawing the overview pictures"
     linum-screenshot-omezarr ${subject_name}.ome.zarr ${subject_name}.png
 
     linum-screenshot-omezarr-annotated ${subject_name}.ome.zarr ${subject_name}_annotated.png ${annotated_args}
@@ -1495,7 +1499,8 @@ process align_to_ras {
         ${orientation_arg} ${rotation_arg} ${preview_arg} ${orientation_preview_arg} \
         ${ras_pyramid_opts}
     # The chunks are zstd-compressed already: store them, deflating gains nothing.
-    zip -0 -r ${subject_name}_ras.ome.zarr.zip ${subject_name}_ras.ome.zarr
+    echo "[align_to_ras] zipping the volume"
+    zip -0 -q -r ${subject_name}_ras.ome.zarr.zip ${subject_name}_ras.ome.zarr
     """
 
     stub:

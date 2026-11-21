@@ -56,3 +56,24 @@ def gaussian_filter_planes(volume: np.ndarray, sigma: float, workers: int | None
 
     map_threaded(_filter_plane, range(n_planes), workers=workers)
     return out
+
+
+def copy_threaded(source: np.ndarray, workers: int | None = None) -> np.ndarray:
+    """Return a C-contiguous copy of ``source``, runs along the first axis copied on separate threads.
+
+    Same result as ``np.ascontiguousarray``. A transposed or flipped view of a
+    volume of tens of gigabytes takes most of a minute to copy on one core.
+    """
+    source = np.asarray(source)
+    if source.ndim == 0 or source.flags.c_contiguous:
+        return np.ascontiguousarray(source)
+    out = np.empty(source.shape, dtype=source.dtype)
+    n = source.shape[0]
+    workers = thread_budget(32) if workers is None else max(1, int(workers))
+    step = max(1, -(-n // max(1, min(workers, n) * 4)))
+
+    def _copy(start: int) -> None:
+        out[start : start + step] = source[start : start + step]
+
+    map_threaded(_copy, range(0, n, step), workers=workers, cap=32)
+    return out

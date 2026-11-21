@@ -239,11 +239,11 @@ def store_transform_in_metadata(zarr_path: Path, transform: sitk.Transform) -> N
         json.dump(metadata, handle, indent=2)
 
 
-def compute_centered_reference_and_transform(
+def compute_centered_grid_and_transform(
     moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: tuple[float, float, float] | None = None
-) -> tuple[sitk.Image, sitk.Transform]:
+) -> tuple[list[int], tuple[float, ...], sitk.Transform]:
     """
-    Compute a centered reference image and the composite transform for resampling.
+    Compute the output grid that holds the transformed image, and the composite transform for resampling.
 
     Parameters
     ----------
@@ -256,9 +256,11 @@ def compute_centered_reference_and_transform(
 
     Returns
     -------
-    tuple[sitk.Image, sitk.Transform]
-        Reference image with origin at 0 and the composite transform that maps
-        output coordinates back into the moving image.
+    tuple[list[int], tuple[float, ...], sitk.Transform]
+        Size and spacing of the output grid (origin at 0, identity direction)
+        and the composite transform that maps output coordinates back into
+        the moving image. No image is allocated: for a whole brain the grid
+        is tens of gigabytes.
     """
     if output_spacing is None:
         output_spacing = moving_sitk.GetSpacing()
@@ -289,16 +291,44 @@ def compute_centered_reference_and_transform(
     extent = points_max - points_min
     new_size = np.ceil(extent / spacing).astype(int)
 
-    reference = sitk.Image([int(axis_size) for axis_size in new_size], moving_sitk.GetPixelIDValue())
-    reference.SetSpacing(tuple(spacing))
-    reference.SetOrigin((0.0, 0.0, 0.0))
-    reference.SetDirection((1, 0, 0, 0, 1, 0, 0, 0, 1))
-
     shift_transform = sitk.TranslationTransform(3)
     shift_transform.SetOffset(tuple(points_min))
 
     composite = sitk.CompositeTransform(3)
     composite.AddTransform(transform)
     composite.AddTransform(shift_transform)
+
+    return [int(axis_size) for axis_size in new_size], tuple(float(v) for v in spacing), composite
+
+
+def compute_centered_reference_and_transform(
+    moving_sitk: sitk.Image, transform: sitk.Transform, output_spacing: tuple[float, float, float] | None = None
+) -> tuple[sitk.Image, sitk.Transform]:
+    """
+    Compute a centered reference image and the composite transform for resampling.
+
+    Parameters
+    ----------
+    moving_sitk : sitk.Image
+        The input moving image.
+    transform : sitk.Transform
+        Transform to apply (moving -> fixed/RAS space).
+    output_spacing : tuple of float, optional
+        Output voxel spacing. If None, uses the moving image spacing.
+
+    Returns
+    -------
+    tuple[sitk.Image, sitk.Transform]
+        Reference image with origin at 0 and the composite transform that maps
+        output coordinates back into the moving image. The image is allocated
+        in full; :func:`compute_centered_grid_and_transform` gives the same
+        grid without it.
+    """
+    new_size, spacing, composite = compute_centered_grid_and_transform(moving_sitk, transform, output_spacing)
+
+    reference = sitk.Image(new_size, moving_sitk.GetPixelIDValue())
+    reference.SetSpacing(spacing)
+    reference.SetOrigin((0.0, 0.0, 0.0))
+    reference.SetDirection((1, 0, 0, 0, 1, 0, 0, 0, 1))
 
     return reference, composite

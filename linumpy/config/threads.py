@@ -33,6 +33,7 @@ To ensure proper limiting, scripts should call configure_all_libraries() after i
 import contextlib
 import os
 import sys
+from pathlib import Path
 
 # Track if we've already configured
 _thread_config_applied = False
@@ -92,6 +93,24 @@ def thread_budget(cap: int | None = None) -> int:
         budget = _available_cpus()
     budget = max(1, budget)
     return budget if cap is None else max(1, min(budget, int(cap)))
+
+
+def available_memory_bytes() -> int:
+    """Return the memory a task can still take, in bytes (0 when it cannot be told).
+
+    ``MemAvailable`` of ``/proc/meminfo`` where there is one: free memory plus
+    what the page cache gives back. Elsewhere, the free physical pages.
+    """
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    try:
+        return int(os.sysconf("SC_AVPHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))
+    except ValueError, OSError, AttributeError:
+        return 0
 
 
 def configure_thread_limits() -> int:

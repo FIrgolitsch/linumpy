@@ -699,6 +699,13 @@ config that defines its own `process.beforeScript` replaces the shared one
 (`workflows/shared/cpu_limits.config`) and has to read `task.ext.threads`
 itself; otherwise the single-task steps fall back to the small share.
 
+The three long single-task steps of the 3D reconstruction (`stack`,
+`correct_bias_field`, `align_to_ras`) have `debug = true`: Nextflow prints
+what they write to standard output while they run, and they write one line
+per stage (`[stack] slabs stacked 20/65 (61 s)`). Every run also writes
+`<output>/pipeline_info/trace.txt`, with the duration, the CPU use (`%cpu`,
+100 per core) and the peak memory of each task.
+
 ### Usage Examples
 
 #### Reserve Cores for Overhead (Recommended)

@@ -43,6 +43,7 @@ from linumpy.intensity.normalization import _chunk_boundaries, apply_histogram_m
 from linumpy.intensity.slab_harmonize import harmonize_slab_intensity
 from linumpy.io.zarr import AnalysisOmeZarrWriter, read_omezarr_array
 from linumpy.mosaic.stacking import read_slab_bounds
+from linumpy.utils.progress import report
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +377,7 @@ def main() -> None:
     else:
         use_gpu_chunks = False
 
+    report("correct_bias_field", "loading the stack")
     vol, res = read_omezarr_array(args.in_image, level=0, use_gpu=False)
     vol = vol.astype(np.float32, copy=False)
     logger.info("Loaded volume %s from %s (gpu=%s)", vol.shape, args.in_image, False)
@@ -386,6 +388,7 @@ def main() -> None:
         logger.info("Using the stack's recorded slab boundaries (%d sections)", len(slab_bounds))
 
     # Tissue mask (per serial section)
+    report("correct_bias_field", "tissue mask")
     mask = compute_tissue_mask(
         vol,
         smoothing_sigma=args.mask_smoothing_sigma,
@@ -440,6 +443,7 @@ def main() -> None:
     # Slab gains, depth bands and the common intensity scale. All three are
     # gains that are smooth in XY, so the image inside a plane keeps its detail.
     if args.slab_gain or args.band_sigma_px > 0 or args.target_tissue_level > 0:
+        report("correct_bias_field", "slab gains and depth bands")
         mask = _to_host(mask)
         bounds = slab_bounds if slab_bounds is not None else _chunk_boundaries(vol.shape[0], args.n_serial_slices)
         info = harmonize_slab_intensity(
@@ -652,6 +656,7 @@ def main() -> None:
     del mask
 
     # Save output
+    report("correct_bias_field", "writing the volume and its pyramid")
     _save(corrected, args.out_image, res, args)
     logger.info("Saved corrected volume to %s", args.out_image)
     del corrected

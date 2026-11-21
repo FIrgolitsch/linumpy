@@ -101,3 +101,42 @@ def test_store_transform_in_metadata_writes_affine_block(tmp_path: Path):
     affine = metadata["multiscales"][0]["datasets"][0]["coordinateTransformations"][0]
     matrix = np.array(affine["affine"]).reshape(4, 4)
     np.testing.assert_allclose(matrix[:3, 3], [2.5, 1.5, 0.5], atol=1e-12)
+
+
+def test_resampling_onto_the_grid_matches_resampling_onto_the_reference_image():
+    import numpy as np
+    import SimpleITK as sitk
+
+    from linumpy.imaging.orientation import compute_centered_grid_and_transform
+
+    volume = np.random.default_rng(16).random((12, 20, 16), dtype=np.float32)
+    moving = sitk.GetImageFromArray(volume)
+    moving.SetSpacing((0.02, 0.01, 0.03))
+    transform = sitk.Euler3DTransform()
+    transform.SetCenter(moving.TransformContinuousIndexToPhysicalPoint([8, 10, 6]))
+    transform.SetRotation(0.1, -0.2, 0.3)
+    transform.SetTranslation((0.01, -0.02, 0.03))
+
+    reference, composite = compute_centered_reference_and_transform(moving, transform)
+    by_reference = sitk.ResampleImageFilter()
+    by_reference.SetReferenceImage(reference)
+    by_reference.SetInterpolator(sitk.sitkLinear)
+    by_reference.SetDefaultPixelValue(0.25)
+    by_reference.SetTransform(composite)
+    expected = by_reference.Execute(moving)
+
+    size, spacing, composite_grid = compute_centered_grid_and_transform(moving, transform)
+    by_grid = sitk.ResampleImageFilter()
+    by_grid.SetSize(size)
+    by_grid.SetOutputSpacing(spacing)
+    by_grid.SetOutputOrigin((0.0, 0.0, 0.0))
+    by_grid.SetOutputDirection((1, 0, 0, 0, 1, 0, 0, 0, 1))
+    by_grid.SetInterpolator(sitk.sitkLinear)
+    by_grid.SetDefaultPixelValue(0.25)
+    by_grid.SetTransform(composite_grid)
+    result = by_grid.Execute(moving)
+
+    assert result.GetSize() == expected.GetSize()
+    assert result.GetSpacing() == expected.GetSpacing()
+    assert result.GetPixelID() == expected.GetPixelID()
+    assert np.array_equal(sitk.GetArrayViewFromImage(result), sitk.GetArrayViewFromImage(expected))

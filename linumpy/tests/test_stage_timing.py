@@ -734,3 +734,11 @@ def test_thread_budget_follows_the_task_threads(monkeypatch):
     assert thread_budget(8) == 3
     monkeypatch.setenv("OMP_NUM_THREADS", "not a number")
     assert thread_budget(1) == 1
+
+
+def test_available_memory_is_a_plausible_number_of_bytes():
+    from linumpy.config.threads import available_memory_bytes
+
+    available = available_memory_bytes()
+    assert isinstance(available, int)
+    assert available == 0 or available > 64 * 1024**2

@@ -297,18 +297,66 @@ def _panel_labels_from_orientation(orientation: str) -> tuple | None:
     )
 
 
-def _crop_to_tissue_bbox(
-    image: np.ndarray,
+def _axis_occupancy(
+    image: Any, workers: int | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Where a ZYX volume has data, per axis, from one pass over it.
+
+    The volume is usually a zarr array of tens of gigabytes. It is read once,
+    in runs of planes on separate threads, and only per-axis vectors are kept.
+
+    Returns
+    -------
+    tuple
+        ``(any_z, any_y, any_x, positive_y, positive_x)``: for every index
+        along Z, Y and X whether any voxel there is non-zero, and for every
+        index along Y and X how many voxels there are above zero.
+    """
+    from linumpy.utils.planes import map_threaded
+
+    nz, ny, nx = (int(v) for v in image.shape)
+    chunks = getattr(image, "chunks", None)
+    run = int(chunks[0]) if chunks else 64
+
+    def _scan(z0: int) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        block = np.asarray(image[z0 : z0 + run])
+        nonzero = block != 0
+        positive = block > 0
+        return (
+            z0,
+            nonzero.any(axis=(1, 2)),
+            nonzero.any(axis=(0, 2)),
+            nonzero.any(axis=(0, 1)),
+            positive.sum(axis=(0, 2), dtype=np.int64),
+            positive.sum(axis=(0, 1), dtype=np.int64),
+        )
+
+    any_z = np.zeros(nz, dtype=bool)
+    any_y = np.zeros(ny, dtype=bool)
+    any_x = np.zeros(nx, dtype=bool)
+    positive_y = np.zeros(ny, dtype=np.int64)
+    positive_x = np.zeros(nx, dtype=np.int64)
+    for z0, run_z, run_y, run_x, run_pos_y, run_pos_x in map_threaded(_scan, range(0, nz, run), workers=workers, cap=16):
+        any_z[z0 : z0 + run_z.shape[0]] = run_z
+        any_y |= run_y
+        any_x |= run_x
+        positive_y += run_pos_y
+        positive_x += run_pos_x
+    return any_z, any_y, any_x, positive_y, positive_x
+
+
+def _tissue_crop_bounds(
+    occupancy: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     x_slice: int | None,
     y_slice: int | None,
     margin_frac: float = 0.02,
-) -> tuple[np.ndarray, int | None, int | None]:
-    """Crop a 3D volume to its non-zero bounding box with a small margin.
+) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], int | None, int | None]:
+    """Non-zero bounding box of a volume with a small margin, and the slice indices inside it.
 
     Parameters
     ----------
-    image : ndarray
-        3D volume (Z, Y, X).
+    occupancy : tuple
+        Result of :func:`_axis_occupancy`.
     x_slice, y_slice : int or None
         Current slice indices; adjusted to the cropped coordinate system.
     margin_frac : float
@@ -316,18 +364,15 @@ def _crop_to_tissue_bbox(
 
     Returns
     -------
-    cropped : ndarray
-        Cropped volume.
+    z_bounds, y_bounds, x_bounds : tuple of int
+        ``(start, stop)`` of the box along each axis.
     x_slice_new, y_slice_new : int or None
         Adjusted slice indices, clamped to valid range.
     """
-    nz, ny, nx = image.shape
-    # Project to find non-zero extent along each axis
-    any_yz = np.any(image, axis=(1, 2))  # shape (Z,)
-    any_zx = np.any(image, axis=(0, 2))  # shape (Y,)
-    any_zy = np.any(image, axis=(0, 1))  # shape (X,)
+    any_z, any_y, any_x = occupancy[0], occupancy[1], occupancy[2]
 
-    def _bounds(mask: np.ndarray, size: int, margin: int) -> tuple[int, int]:
+    def _bounds(mask: np.ndarray, margin: int) -> tuple[int, int]:
+        size = int(mask.shape[0])
         indices = np.nonzero(mask)[0]
         if len(indices) == 0:
             return 0, size
@@ -335,21 +380,15 @@ def _crop_to_tissue_bbox(
         hi = min(size, int(indices[-1]) + 1 + margin)
         return lo, hi
 
-    mz = max(1, int(nz * margin_frac))
-    my = max(1, int(ny * margin_frac))
-    mx = max(1, int(nx * margin_frac))
-
-    z0, z1 = _bounds(any_yz, nz, mz)
-    y0, y1 = _bounds(any_zx, ny, my)
-    x0, x1 = _bounds(any_zy, nx, mx)
-
-    cropped = image[z0:z1, y0:y1, x0:x1]
+    z0, z1 = _bounds(any_z, max(1, int(any_z.shape[0] * margin_frac)))
+    y0, y1 = _bounds(any_y, max(1, int(any_y.shape[0] * margin_frac)))
+    x0, x1 = _bounds(any_x, max(1, int(any_x.shape[0] * margin_frac)))
 
     # Adjust slice indices into cropped coordinate system
     new_x = None if x_slice is None else max(0, min(x_slice - y0, y1 - y0 - 1))
     new_y = None if y_slice is None else max(0, min(y_slice - x0, x1 - x0 - 1))
 
-    return cropped, new_x, new_y
+    return (z0, z1), (y0, y1), (x0, x1), new_x, new_y
 
 
 def save_annotated_views(
@@ -409,11 +448,17 @@ def save_annotated_views(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # Optionally crop to the tissue bounding box before rendering.
-    if crop_to_tissue:
-        image, x_slice, y_slice = _crop_to_tissue_bbox(image, x_slice, y_slice)
+    # The volume is scanned once for where it has data. Only the two planes
+    # that are drawn are read after that; the volume itself is never held.
+    z0, y0, x0 = 0, 0, 0
+    z1, y1, x1 = (int(v) for v in image.shape[:3])
+    occupancy = _axis_occupancy(image) if (crop_to_tissue or x_slice is None or y_slice is None) else None
 
-    n_z_voxels, n_rows, n_cols = image.shape[0], image.shape[1], image.shape[2]
+    # Optionally crop to the tissue bounding box before rendering.
+    if crop_to_tissue and occupancy is not None:
+        (z0, z1), (y0, y1), (x0, x1), x_slice, y_slice = _tissue_crop_bounds(occupancy, x_slice, y_slice)
+
+    n_z_voxels, n_rows, n_cols = z1 - z0, y1 - y0, x1 - x0
 
     if n_input_slices is None and zarr_path is not None:
         n_input_slices = estimate_n_slices_from_zarr(zarr_path)
@@ -426,9 +471,11 @@ def save_annotated_views(
 
     # The box center can sit on the edge of the brain and open a false gap.
     # Cut through the tissue instead.
-    if x_slice is None or y_slice is None:
-        mass_y = np.sum(np.asarray(image) > 0, axis=(0, 2))
-        mass_x = np.sum(np.asarray(image) > 0, axis=(0, 1))
+    if (x_slice is None or y_slice is None) and occupancy is not None:
+        # Every voxel above zero lies inside the box, so the counts of the
+        # whole volume are the counts of the box.
+        mass_y = occupancy[3][y0:y1]
+        mass_x = occupancy[4][x0:x1]
         if x_slice is None:
             total = float(np.sum(mass_y))
             x_slice = int(np.sum(np.arange(n_rows) * mass_y) / total) if total > 0 else n_rows // 2
@@ -450,12 +497,13 @@ def save_annotated_views(
         xlabel1, ylabel1 = "Y", "Z"
         xlabel2, ylabel2 = "X", "Z"
 
-    image_zy = np.array(image[:, x_slice, :])
-    image_zx = np.array(image[:, :, y_slice])
+    assert x_slice is not None and y_slice is not None
+    image_zy = np.array(image[z0:z1, y0 + x_slice, x0:x1])
+    image_zx = np.array(image[z0:z1, y0:y1, x0 + y_slice])
 
     _debug_log_panels(
         "save_annotated_views: panel decisions",
-        vol_shape=list(image.shape),
+        vol_shape=[n_z_voxels, n_rows, n_cols],
         orientation=str(orientation),
         x_slice=int(x_slice),
         y_slice=int(y_slice),

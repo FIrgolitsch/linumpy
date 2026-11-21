@@ -933,3 +933,14 @@ def test_find_z_step_structure_is_the_same_on_one_thread_and_on_several():
     step_many, info_many = find_z_step_structure(fixed, moving, expected_step=20, search_vox=10, workers=4)
     assert step_one == step_many == 26
     assert info_one == info_many
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_copy_threaded_matches_ascontiguousarray(workers):
+    from linumpy.utils.planes import copy_threaded
+
+    volume = np.random.default_rng(14).random((7, 9, 11), dtype=np.float32)
+    view = volume.transpose(2, 0, 1)[::-1, :, ::-1]
+    copy = copy_threaded(view, workers=workers)
+    assert copy.flags.c_contiguous
+    assert np.array_equal(copy, np.ascontiguousarray(view))
