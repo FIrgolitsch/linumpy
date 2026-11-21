@@ -256,3 +256,101 @@ def test_pyramid_resolution_not_coarser_than_the_grid_is_skipped(script_runner, 
     )
     assert ret.success
     assert read_omezarr_resolutions(grid) == [[0.01, 0.01, 0.01]]
+
+
+def test_sparse_grid_over_several_shards(script_runner, tmp_path):
+    """Tiles land in their own cell and shard; cells without a tile stay empty.
+
+    A 3 x 3 grid with two tiles per shard side has four shards, the last ones
+    partly outside the grid. Three tiles are missing, among them the first of
+    a shard and all of another shard.
+    """
+    import numpy as np
+
+    from linumpy.io.test_data import write_synthetic_oct_tile
+
+    nx, ny, nz = 12, 8, 4
+    missing = {(0, 0), (1, 2), (2, 2)}
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    tiles = {}
+    zz, yy, xx = np.meshgrid(np.arange(nz), np.arange(ny), np.arange(nx), indexing="ij")
+    for mx in range(3):
+        for my in range(3):
+            if (mx, my) in missing:
+                continue
+            vol_zyx = ((3 * mx + my + 1) * 1e5 + zz * 1e4 + yy * 100 + xx).astype(np.float32)
+            made = write_synthetic_oct_tile(tmp_path / f"src_{mx}_{my}", nx=nx, ny=ny, nz=nz, vol_zyx=vol_zyx)
+            # Field of view in whole microns, as the microscope writes it.
+            info = (made / "info.txt").read_text()
+            info = info.replace(f"width: {float(nx)}", f"width: {nx}").replace(f"height: {float(ny)}", f"height: {ny}")
+            (made / "info.txt").write_text(info)
+            tile_dir = raw / f"tile_x{mx:02d}_y{my:02d}_z00"
+            made.rename(tile_dir)
+            tiles[mx, my] = (tile_dir, vol_zyx)
+
+    output = tmp_path / "grid.ome.zarr"
+    ret = script_runner.run(
+        [
+            "linum-create-mosaic-grid-3d",
+            output,
+            "--from_tiles_list",
+            *[str(tile_dir) for tile_dir, _ in tiles.values()],
+            "-r",
+            -1,
+            "--no-preprocess",
+            "--no-fix_galvo_shift",
+            "--sharding_factor",
+            2,
+            "--no-use_gpu",
+            "--n_processes",
+            1,
+        ]
+    )
+    assert ret.success, ret.stderr
+
+    mosaic = cast(zarr.Array, zarr.open_group(output, mode="r")["0"])
+    assert mosaic.shape == (nz, 3 * nx, 3 * ny)
+    assert mosaic.shards == (nz, 2 * nx, 2 * ny)
+    for mx in range(3):
+        for my in range(3):
+            stored = np.asarray(mosaic[:, mx * nx : (mx + 1) * nx, my * ny : (my + 1) * ny])
+            if (mx, my) in missing:
+                assert not stored.any()
+            else:
+                np.testing.assert_array_equal(stored, tiles[mx, my][1].transpose(0, 2, 1))
+    # Shard (1, 1) holds the cell (2, 2) only, which has no tile: no file for it.
+    shard_files = sorted(str(f.relative_to(output / "0" / "c")) for f in (output / "0" / "c").rglob("*") if f.is_file())
+    assert shard_files == ["0/0/0", "0/0/1", "0/1/0"]
+
+
+def test_shard_written_through_zarr_matches_the_direct_writer(tmp_path):
+    """The path for layouts the direct writer declines stores the same tiles."""
+    import importlib.util
+
+    import numpy as np
+
+    from linumpy.io.chunk_writer import write_shard_chunks
+
+    spec = importlib.util.spec_from_file_location(
+        "create_grid", Path(__file__).resolve().parents[2] / "mosaic" / "linum_create_mosaic_grid_3d.py"
+    )
+    assert spec is not None and spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    rng = np.random.default_rng(2)
+    chunk, shard = (4, 6, 5), (4, 12, 10)
+    tiles = {(0, 0, 1): rng.random(chunk).astype(np.float32), (0, 1, 0): rng.random(chunk).astype(np.float32)}
+    direct = zarr.create_array(tmp_path / "direct.zarr", shape=(4, 24, 20), chunks=chunk, shards=shard, dtype="float32")
+    through_zarr = zarr.create_array(tmp_path / "zarr.zarr", shape=(4, 24, 20), chunks=chunk, shards=shard, dtype="float32")
+
+    assert write_shard_chunks(direct, (0, 1, 1), tiles)
+    script._write_shard_through_zarr(through_zarr, (0, 1, 1), tiles)
+
+    np.testing.assert_array_equal(direct[:], through_zarr[:])
+    np.testing.assert_array_equal(direct[:, 12:18, 15:20], tiles[(0, 0, 1)])
+    # An array without shards goes through zarr as a whole.
+    plain = zarr.create_array(tmp_path / "plain.zarr", shape=(4, 24, 20), chunks=chunk, dtype="float32")
+    script._write_shard([(plain, (0, 3, 3), {(0, 0, 0): tiles[(0, 0, 1)]})])
+    np.testing.assert_array_equal(plain[:, 18:24, 15:20], tiles[(0, 0, 1)])

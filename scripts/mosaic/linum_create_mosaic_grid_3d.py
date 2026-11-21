@@ -30,6 +30,7 @@ from linumpy.cli.args import add_processes_arg, parse_processes_arg
 from linumpy.geometry.resampling import resampled_tile_shape
 from linumpy.gpu import GPU_AVAILABLE, print_gpu_info
 from linumpy.gpu.interpolation import resize
+from linumpy.io.chunk_writer import write_shard_chunks
 from linumpy.io.thorlabs import PreprocessingConfig, ThorOCT
 from linumpy.io.zarr import OmeZarrWriter
 from linumpy.microscope.oct import OCT
@@ -37,6 +38,9 @@ from linumpy.mosaic import discovery as reconstruction
 
 # Global flag for GPU usage (set in main, consulted by process functions)
 _USE_GPU = True
+
+# Tiles of a shard read from disk at the same time.
+_LOAD_THREADS = 8
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -181,7 +185,10 @@ def load_single_tile(params: dict) -> tuple:
     else:
         raise ValueError(f"Unknown data type: {data_type}")
 
-    return (params, vol)
+    # The loaders hand out views of the file in its own axis order. Laying
+    # the tile out in grid order here, on the loading thread, keeps that copy
+    # off the main thread: the GPU and the compressor both take it as it is.
+    return (params, np.ascontiguousarray(vol))
 
 
 def _load_shard_data(proc_params: dict) -> list:
@@ -196,7 +203,7 @@ def _load_shard_data(proc_params: dict) -> list:
     tiles_params = proc_params["params"]
     n_tiles = len(tiles_params)
     if n_tiles > 1:
-        with ThreadPoolExecutor(max_workers=min(4, n_tiles)) as executor:
+        with ThreadPoolExecutor(max_workers=min(_LOAD_THREADS, n_tiles)) as executor:
             return list(executor.map(load_single_tile, tiles_params))
     return [load_single_tile(tiles_params[0])]
 
@@ -210,91 +217,88 @@ def _resize_tile(vol: Any, tile_size: tuple, use_gpu: bool) -> Any:
     return resize(vol, tile_size, order=1, anti_aliasing=True, use_gpu=use_gpu)
 
 
-def _resize_and_write_shard(proc_params: dict, loaded_tiles: list) -> None:
-    """Resize pre-loaded tiles and write the shard to zarr (compute/write stage).
+def _prepare_shard(proc_params: dict, loaded_tiles: list) -> list:
+    """Resize the loaded tiles of a shard and return them per array (compute stage).
 
-    Separated from disk I/O so that _run_pipelined can overlap loading the
-    next shard with GPU work on the current one.
-
-    Every further pyramid level gets the same tiles, each resampled from the
-    tile stored at level 0, in a shard of its own that covers the same tiles.
+    Returns one ``(array, shard_position, tiles)`` per pyramid level, level 0
+    first, where ``tiles`` maps the position of a tile inside the shard to its
+    data. Every further level gets the same tiles, each resampled from the
+    tile stored at level 0.
     """
-    mosaic = proc_params["mosaic"]
-    shard_shape = proc_params["shard_shape"]
     tiles_params = proc_params["params"]
     use_gpu = proc_params.get("use_gpu", _USE_GPU)
     levels = proc_params.get("levels", [])
+    factor = int(proc_params.get("sharding_factor", 1))
 
-    shard = np.zeros(shard_shape, dtype=mosaic.dtype)
-    level_shards = [np.zeros(level["shard_shape"], dtype=mosaic.dtype) for level in levels]
-
-    # Position of the shard in tiles; the same for every level.
-    tile_x_min = min(p["tile_pos"][0] for p in tiles_params)
-    tile_y_min = min(p["tile_pos"][1] for p in tiles_params)
-
-    vol = None
-    tile_size: list | tuple = []
+    first = tiles_params[0]["tile_pos"]
+    shard_position = (0, int(first[0]) // factor, int(first[1]) // factor)
+    level0: dict = {}
+    level_tiles: list = [{} for _ in levels]
     for params, vol in loaded_tiles:
-        mx, my = params["tile_pos"]
-        tile_size = params["tile_size"]
-
-        tile_size_tuple = tuple(tile_size)
+        mx, my = (int(v) for v in params["tile_pos"])
+        tile_size_tuple = tuple(int(v) for v in params["tile_size"])
         # At native resolution (--resolution -1) the resize is the identity,
         # so the tile is not sent to the GPU and back.
         if tuple(vol.shape) != tile_size_tuple:
             vol = _resize_tile(vol, tile_size_tuple, use_gpu)
+        position = (0, mx - shard_position[1] * factor, my - shard_position[2] * factor)
+        level0[position] = vol
+        for level, tiles in zip(levels, level_tiles, strict=True):
+            tiles[position] = _resize_tile(vol, level["tile_size"], use_gpu)
 
-        rmin = (mx - tile_x_min) * vol.shape[1]
-        cmin = (my - tile_y_min) * vol.shape[2]
-        rmax = rmin + vol.shape[1]
-        cmax = cmin + vol.shape[2]
+    prepared = [(proc_params["mosaic"].zarray, shard_position, level0)]
+    prepared += [(level["array"], shard_position, tiles) for level, tiles in zip(levels, level_tiles, strict=True)]
+    return prepared
 
-        shard[0 : tile_size[0], rmin:rmax, cmin:cmax] = vol
 
-        for level, level_shard in zip(levels, level_shards, strict=True):
-            level_tile = level["tile_size"]
-            rmin = (mx - tile_x_min) * level_tile[1]
-            cmin = (my - tile_y_min) * level_tile[2]
-            level_shard[:, rmin : rmin + level_tile[1], cmin : cmin + level_tile[2]] = _resize_tile(vol, level_tile, use_gpu)
+def _write_shard_through_zarr(array: Any, shard_position: tuple, tiles: dict) -> None:
+    """Write the tiles of a shard with one zarr assignment per tile.
 
-    assert vol is not None
-    mx_min = tile_x_min * vol.shape[1]
-    my_min = tile_y_min * vol.shape[2]
-    output_extent_x = min(shard_shape[1], mosaic.shape[1] - mx_min)
-    output_extent_y = min(shard_shape[2], mosaic.shape[2] - my_min)
-    mosaic[0 : tile_size[0], mx_min : mx_min + output_extent_x, my_min : my_min + output_extent_y] = shard[
-        :, :output_extent_x, :output_extent_y
-    ]
+    For a grid whose layout :func:`write_shard_chunks` does not handle. Zarr
+    compresses the chunks one after the other on a single core.
+    """
+    chunk = tuple(int(c) for c in array.chunks)
+    shard = tuple(int(c) for c in (array.shards or array.chunks))
+    for position, tile in tiles.items():
+        start = [s * n + p * c for s, n, p, c in zip(shard_position, shard, position, chunk, strict=True)]
+        array[tuple(slice(a, a + c) for a, c in zip(start, chunk, strict=True))] = tile
 
-    for level, level_shard in zip(levels, level_shards, strict=True):
-        array = level["array"]
-        level_tile = level["tile_size"]
-        x_min = tile_x_min * level_tile[1]
-        y_min = tile_y_min * level_tile[2]
-        extent_x = min(level_shard.shape[1], array.shape[1] - x_min)
-        extent_y = min(level_shard.shape[2], array.shape[2] - y_min)
-        array[:, x_min : x_min + extent_x, y_min : y_min + extent_y] = level_shard[:, :extent_x, :extent_y]
+
+def _write_shard(prepared: list, workers: int | None = None) -> None:
+    """Write the prepared tiles of a shard, every pyramid level in its own shard (write stage).
+
+    A tile is one inner chunk of the shard, so the tiles are compressed side
+    by side on worker threads and the shard file is written in one go.
+    """
+    for array, shard_position, tiles in prepared:
+        if not write_shard_chunks(array, shard_position, tiles, workers=workers):
+            _write_shard_through_zarr(array, shard_position, tiles)
+
+
+def _resize_and_write_shard(proc_params: dict, loaded_tiles: list) -> None:
+    """Resize pre-loaded tiles and write the shard to zarr (compute and write stages)."""
+    _write_shard(_prepare_shard(proc_params, loaded_tiles))
 
 
 def _run_pipelined(params: list) -> None:
-    """Process shards with a prefetch pipeline.
+    """Process shards with a three-stage pipeline.
 
-    A single background thread fetches the next shard's tiles from disk
-    while the main thread runs GPU resize and zarr write for the current
-    shard.  This hides most of the per-tile disk I/O latency behind GPU
-    compute and largely eliminates the three-way sequential stall of
+    One background thread fetches the tiles of the next shard from disk and
+    another compresses and writes the previous shard, while the main thread
+    resizes the tiles of the current one on the GPU. The stages of
+    successive shards overlap instead of following each other:
 
-        disk read → GPU → zarr write → disk read → GPU → zarr write …
+        disk(i+1) ║ GPU(i) ║ compress+write(i-1)
 
-    replacing it with the overlapped pattern
-
-        disk(i+1) ║ GPU+write(i)
+    One shard is in each stage at most, so three shards are in memory at the
+    peak.
     """
     if not params:
         return
 
-    with ThreadPoolExecutor(max_workers=1) as prefetch_executor:
+    with ThreadPoolExecutor(max_workers=1) as prefetch_executor, ThreadPoolExecutor(max_workers=1) as write_executor:
         pending_load = prefetch_executor.submit(_load_shard_data, params[0])
+        pending_write = None
 
         for i, p in enumerate(tqdm(params)):
             loaded_tiles = pending_load.result()
@@ -302,7 +306,15 @@ def _run_pipelined(params: list) -> None:
             if i + 1 < len(params):
                 pending_load = prefetch_executor.submit(_load_shard_data, params[i + 1])
 
-            _resize_and_write_shard(p, loaded_tiles)
+            prepared = _prepare_shard(p, loaded_tiles)
+            del loaded_tiles
+            if pending_write is not None:
+                pending_write.result()
+            pending_write = write_executor.submit(_write_shard, prepared)
+            del prepared
+
+        if pending_write is not None:
+            pending_write.result()
 
 
 def process_tile(proc_params: dict) -> None:
@@ -460,7 +472,7 @@ def main() -> None:
             params_grid[shard_pos[0], shard_pos[1]] = {
                 "params": [],
                 "mosaic": writer,
-                "shard_shape": shards if shards is not None else tile_size,
+                "sharding_factor": args.sharding_factor,
                 "use_gpu": _USE_GPU,
                 "levels": levels,
             }
