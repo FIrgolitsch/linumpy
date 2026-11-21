@@ -135,3 +135,53 @@ def test_execution_writes_metadata(script_runner, tmp_path):
     metadata = json.loads(metadata_path.read_text())
     assert metadata["n_slices"] == 2
     assert metadata["slice_ids"] == [0, 1]
+
+
+def _ramp_slice(path, n_planes: int, offset: float) -> None:
+    import dask.array as da
+
+    from linumpy.io.zarr import save_omezarr
+
+    volume = (np.arange(n_planes, dtype=np.float32) + offset)[:, None, None] * np.ones((1, 16, 16), dtype=np.float32)
+    save_omezarr(da.from_array(volume), path, (0.01, 0.01, 0.01), n_levels=0)
+
+
+def test_pair_images_start_at_the_registered_planes(script_runner, tmp_path):
+    slices_dir = tmp_path / "slices"
+    slices_dir.mkdir()
+    _ramp_slice(slices_dir / "slice_z00.ome.zarr", 50, 0.0)
+    _ramp_slice(slices_dir / "slice_z01.ome.zarr", 40, 100.0)
+    _ramp_slice(slices_dir / "slice_z02.ome.zarr", 40, 200.0)
+
+    transforms_dir = tmp_path / "transforms"
+    (transforms_dir / "slice_z01").mkdir(parents=True)
+    (transforms_dir / "slice_z01" / "offsets.txt").write_text("24\n4\n")
+    # No offsets for the second pair: its images fall back to the edges.
+    (transforms_dir / "slice_z02").mkdir()
+
+    output_dir = tmp_path / "output"
+    ret = script_runner.run(
+        [
+            "linum-export-manual-align",
+            str(slices_dir),
+            str(transforms_dir),
+            str(output_dir),
+            "--level",
+            "0",
+            "--xy_overlap_px",
+            "10",
+            "--workers",
+            "2",
+        ]
+    )
+    assert ret.success, ret.stderr
+
+    aips = output_dir / "aips"
+    np.testing.assert_allclose(np.load(aips / "pair_z00_z01_fixed.npz")["aip"], 28.5)  # planes 24-33
+    np.testing.assert_allclose(np.load(aips / "pair_z00_z01_moving.npz")["aip"], 108.5)  # planes 4-13
+    np.testing.assert_allclose(np.load(aips / "pair_z01_z02_fixed.npz")["aip"], 134.5)  # last 10 planes
+    np.testing.assert_allclose(np.load(aips / "pair_z01_z02_moving.npz")["aip"], 204.5)  # first 10 planes
+    # Per-slice files and the cross-sections of both pairs are still written.
+    assert sorted(f.name for f in aips.glob("slice_z*.npz")) == ["slice_z00.npz", "slice_z01.npz", "slice_z02.npz"]
+    assert len(list((output_dir / "aips_xz").glob("pair_*.npz"))) == 4
+    assert len(list((output_dir / "aips_yz").glob("pair_*.npz"))) == 4

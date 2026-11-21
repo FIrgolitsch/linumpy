@@ -5,9 +5,10 @@ Reads common-space slices (OME-Zarr) and pairwise registration outputs,
 then produces a self-contained directory with the following layout::
 
     manual_align_package/
-      aips/           XY AIPs: per-slice fallback (mean over Z) + per-pair edge
-                      projections (pair_z{fid}_z{mid}_{role}.npz) restricted to
-                      the overlap-edge depth slab of each volume    -- XY alignment
+      aips/           XY AIPs: per-slice fallback (mean over Z) + per-pair
+                      projections (pair_z{fid}_z{mid}_{role}.npz) of the same
+                      depth slab in both volumes, starting at the planes the
+                      pairwise registration matched             -- XY alignment
       aips_xz/        XZ cross-sections                  -- Z-overlap review
       aips_yz/        YZ cross-sections                  -- Z-overlap review
       transforms/     .tfm + offsets.txt + metrics JSON
@@ -117,9 +118,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=20,
         metavar="PX",
         help=(
-            "Number of Z voxels (at the working pyramid level) to project at the"
-            " boundary of each slice for the XY overlap AIPs."
-            " Fixed: last PX voxels; Moving: first PX voxels. [%(default)s]"
+            "Number of Z voxels (at the working pyramid level) to project for the"
+            " XY overlap AIPs, starting in each volume at the plane the pairwise"
+            " registration matched (offsets.txt). Fewer when a volume ends sooner."
+            " Without offsets.txt: last PX voxels of the fixed volume, first PX of"
+            " the moving one. [%(default)s]"
         ),
     )
     return p
@@ -177,64 +180,56 @@ def main(argv: Any = None) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Pass 1: XY AIPs (per slice) + per-slice XZ/YZ fallback files.
-    # Each slice is independent -- process in parallel.
+    # Per slice: XY AIP + per-slice XZ/YZ fallback files.
+    # Per pair: XY AIPs of the shared depth slab, and XZ/YZ files in which
+    # both slices share the same column.
+    # Slices and pairs are independent of each other, so they share one
+    # worker pool: starting the workers costs more than the work of a task.
     # ------------------------------------------------------------------
-    logger.info("Computing XY AIPs and per-slice XZ/YZ fallbacks at pyramid level %s using %s workers...", level, workers)
     slice_tasks = [
         (sid, str(spath), level, str(aips_dir), str(aips_xz_dir), str(aips_yz_dir)) for sid, spath in slice_paths.items()
     ]
-    with ProcessPoolExecutor(max_workers=min(workers, len(slice_tasks))) as pool:
-        futures = {pool.submit(_slice_task, t): t[0] for t in slice_tasks}
-        with tqdm(total=len(futures), desc="AIPs") as bar:
-            for fut in as_completed(futures):
-                sid = futures[fut]
-                try:
-                    fut.result()
-                except Exception as exc:
-                    logger.error("z%d failed: %s", sid, exc)
-                bar.update(1)
-
-    # ------------------------------------------------------------------
-    # Pass 2: Paired XZ/YZ files -- both slices share the same column,
-    # chosen from the combined signal at their mutual overlap depth.
-    # Each pair is independent -- process in parallel.
-    # ------------------------------------------------------------------
     sorted_ids = sorted(slice_paths.keys())
     pairs = [(sorted_ids[i - 1], sorted_ids[i]) for i in range(1, len(sorted_ids)) if sorted_ids[i] in transform_paths]
 
-    if pairs:
-        logger.info("Generating paired XZ/YZ cross-sections for %s pairs using %s workers...", len(pairs), workers)
-        pair_tasks = []
-        for fid, mid in pairs:
-            tpath = transform_paths[mid]
-            fixed_z, moving_z = _read_overlap_z_offsets(tpath / "offsets.txt")
-            pair_tasks.append(
-                (
-                    fid,
-                    mid,
-                    str(slice_paths[fid]),
-                    str(slice_paths[mid]),
-                    fixed_z,
-                    moving_z,
-                    level,
-                    overlap_px,
-                    str(aips_dir),
-                    str(aips_xz_dir),
-                    str(aips_yz_dir),
-                )
+    pair_tasks = []
+    for fid, mid in pairs:
+        offsets = _read_overlap_z_offsets(transform_paths[mid] / "offsets.txt", default=None)
+        fixed_z, moving_z = offsets if offsets is not None else (0, 0)
+        pair_tasks.append(
+            (
+                fid,
+                mid,
+                str(slice_paths[fid]),
+                str(slice_paths[mid]),
+                fixed_z,
+                moving_z,
+                level,
+                overlap_px,
+                str(aips_dir),
+                str(aips_xz_dir),
+                str(aips_yz_dir),
+                offsets is not None,
             )
+        )
 
-        with ProcessPoolExecutor(max_workers=min(workers, len(pair_tasks))) as pool:
-            futures = {pool.submit(_pair_task, t): (t[0], t[1]) for t in pair_tasks}
-            with tqdm(total=len(futures), desc="paired XZ/YZ") as bar:
-                for fut in as_completed(futures):
-                    fid, mid = futures[fut]
-                    try:
-                        fut.result()
-                    except Exception as exc:
-                        logger.error("pair z%d/z%d failed: %s", fid, mid, exc)
-                    bar.update(1)
+    logger.info(
+        "Computing AIPs and cross-sections for %s slices and %s pairs at pyramid level %s using %s workers...",
+        len(slice_tasks),
+        len(pair_tasks),
+        level,
+        workers,
+    )
+    with ProcessPoolExecutor(max_workers=min(workers, len(slice_tasks) + len(pair_tasks))) as pool:
+        futures: dict[Any, str] = {pool.submit(_slice_task, t): f"z{t[0]:02d}" for t in slice_tasks}
+        futures.update({pool.submit(_pair_task, t): f"pair z{t[0]:02d}/z{t[1]:02d}" for t in pair_tasks})
+        with tqdm(total=len(futures), desc="AIPs") as bar:
+            for fut in as_completed(futures):
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("%s failed: %s", futures[fut], exc)
+                bar.update(1)
 
     # Export transforms
     logger.info("Copying pairwise transforms...")

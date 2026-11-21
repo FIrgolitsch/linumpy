@@ -537,19 +537,23 @@ def _save_xy_aips_for_pair(
     fid: int,
     mid: int,
     aips_dir: Path,
+    fixed_z: int | None = None,
+    moving_z: int | None = None,
 ) -> None:
-    """Save paired XY AIPs covering the overlap zone at the edges of each volume.
+    """Save paired XY AIPs of the tissue the two volumes share.
 
-    ``overlap_px`` is the number of Z voxels (at the working pyramid level) to
-    average at each boundary:
+    With *fixed_z* and *moving_z* (the matched planes of the pairwise
+    registration, at the working pyramid level) both projections start at
+    those planes and average the same number of planes: up to *overlap_px*,
+    fewer when either volume ends sooner. The two images then show the same
+    tissue at the depth where the stack joins the volumes, which is also where
+    the signal of the fixed volume is still usable.
 
-    - **Fixed slice**: last *overlap_px* voxels of Z -- the bottom of the fixed
-      volume, which physically overlaps with the top of the moving volume.
-    - **Moving slice**: first *overlap_px* voxels of Z -- the top of the moving
-      volume, which physically overlaps with the bottom of the fixed volume.
-
-    Both projections cover the same tissue depth, giving matching structure in
-    the XY overlay without relying on registration-derived Z offsets.
+    Without the matched planes the projections fall back to the edges of the
+    volumes: the last *overlap_px* planes of the fixed volume and the first
+    *overlap_px* planes of the moving one. Those are not the same depth when
+    the volumes overlap by more than *overlap_px*, and the bottom of the fixed
+    volume is its weakest part.
 
     Output filenames follow the same convention as paired XZ/YZ files:
     ``pair_z{fid:02d}_z{mid:02d}_fixed.npz`` and
@@ -562,11 +566,17 @@ def _save_xy_aips_for_pair(
 
     nz_f = fixed_arr.shape[0]
     nz_m = moving_arr.shape[0]
-    slab_f = min(overlap_px, nz_f)
-    slab_m = min(overlap_px, nz_m)
-
-    fixed_slab = fixed_arr[nz_f - slab_f :]
-    moving_slab = moving_arr[:slab_m]
+    if fixed_z is not None and moving_z is not None:
+        fz = max(0, min(fixed_z, nz_f - 1))
+        mz = max(0, min(moving_z, nz_m - 1))
+        n_planes = max(1, min(overlap_px, nz_f - fz, nz_m - mz))
+        fixed_slab = fixed_arr[fz : fz + n_planes]
+        moving_slab = moving_arr[mz : mz + n_planes]
+    else:
+        slab_f = min(overlap_px, nz_f)
+        slab_m = min(overlap_px, nz_m)
+        fixed_slab = fixed_arr[nz_f - slab_f :]
+        moving_slab = moving_arr[:slab_m]
 
     fixed_aip = fixed_slab.mean(axis=0).astype(np.float32)
     moving_aip = moving_slab.mean(axis=0).astype(np.float32)
@@ -698,17 +708,24 @@ def _discover_transforms(transforms_dir: Path) -> dict[int, Path]:
     return dict(sorted(transforms.items()))
 
 
-def _read_overlap_z_offsets(offsets_file: Path) -> tuple[int, int]:
-    """Load (fixed_z, moving_z) from pairwise ``offsets.txt``, or (0, 0) if missing/invalid."""
+def _read_overlap_z_offsets(offsets_file: Path, default: tuple[int, int] | None = (0, 0)) -> tuple[int, int] | None:
+    """Load (fixed_z, moving_z) from pairwise ``offsets.txt``, or *default* if missing/invalid."""
     if not offsets_file.exists():
-        return 0, 0
+        return default
     try:
         arr_off = np.loadtxt(str(offsets_file), dtype=int)
         if arr_off.size >= 2:
             return int(arr_off[0]), int(arr_off[1])
     except OSError, ValueError:
         pass
-    return 0, 0
+    return default
+
+
+def _plane_at_level(plane: int, level0_z: float, level_z: float) -> int:
+    """Convert a full-resolution plane index to the plane at a coarser pyramid level."""
+    if level_z <= 0 or level0_z <= 0:
+        return plane
+    return round(plane * level0_z / level_z)
 
 
 def _slice_task(args: tuple) -> int:
@@ -736,6 +753,7 @@ def _pair_task(args: tuple) -> tuple[int, int]:
         aips_dir,
         aips_xz_dir,
         aips_yz_dir,
+        has_offsets,
     ) = args
     fixed_vol, fixed_scale = read_omezarr(fpath_str, level=level)
     moving_vol, moving_scale = read_omezarr(mpath_str, level=level)
@@ -743,6 +761,10 @@ def _pair_task(args: tuple) -> tuple[int, int]:
     moving_arr = np.asarray(moving_vol)
     fixed_scale_arr = np.array(fixed_scale, dtype=float)
     moving_scale_arr = np.array(moving_scale, dtype=float)
+    if level > 0:
+        # The registration writes its planes at full resolution.
+        fixed_z = _plane_at_level(fixed_z, float(read_omezarr(fpath_str, level=0)[1][0]), float(fixed_scale_arr[0]))
+        moving_z = _plane_at_level(moving_z, float(read_omezarr(mpath_str, level=0)[1][0]), float(moving_scale_arr[0]))
     _save_axis_views_for_pair(
         fixed_arr,
         moving_arr,
@@ -764,5 +786,7 @@ def _pair_task(args: tuple) -> tuple[int, int]:
         fid,
         mid,
         Path(aips_dir),
+        fixed_z=fixed_z if has_offsets else None,
+        moving_z=moving_z if has_offsets else None,
     )
     return fid, mid

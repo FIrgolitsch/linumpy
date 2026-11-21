@@ -8,6 +8,7 @@ from linumpy.registration.manual import (
     _discover_slices,
     _discover_transforms,
     _is_interpolated,
+    _plane_at_level,
     _read_overlap_z_offsets,
     _save_aip_npz,
     _save_axis_views,
@@ -110,6 +111,95 @@ def test_save_xy_aips_for_pair_writes_fixed_and_moving(tmp_path):
     assert (tmp_path / "pair_z00_z01_moving.npz").exists()
 
 
+def _depth_ramp(n_planes: int, offset: float = 0.0) -> np.ndarray:
+    """Return a volume whose every plane holds its own index plus *offset*."""
+    return (np.arange(n_planes, dtype=np.float32) + offset)[:, None, None] * np.ones((1, 4, 4), dtype=np.float32)
+
+
+def _pair_aips(tmp_path) -> tuple[np.ndarray, np.ndarray]:
+    fixed = np.load(tmp_path / "pair_z00_z01_fixed.npz")["aip"]
+    moving = np.load(tmp_path / "pair_z00_z01_moving.npz")["aip"]
+    return fixed, moving
+
+
+def test_save_xy_aips_for_pair_without_matched_planes_uses_the_edges(tmp_path):
+    scale = np.ones(3)
+    _save_xy_aips_for_pair(
+        _depth_ramp(50), _depth_ramp(40, 100.0), scale, scale, overlap_px=10, fid=0, mid=1, aips_dir=tmp_path
+    )
+
+    fixed, moving = _pair_aips(tmp_path)
+    np.testing.assert_allclose(fixed, 44.5)  # planes 40-49
+    np.testing.assert_allclose(moving, 104.5)  # planes 0-9
+
+
+def test_save_xy_aips_for_pair_starts_at_the_matched_planes(tmp_path):
+    scale = np.ones(3)
+    _save_xy_aips_for_pair(
+        _depth_ramp(50),
+        _depth_ramp(40, 100.0),
+        scale,
+        scale,
+        overlap_px=10,
+        fid=0,
+        mid=1,
+        aips_dir=tmp_path,
+        fixed_z=24,
+        moving_z=4,
+    )
+
+    fixed, moving = _pair_aips(tmp_path)
+    np.testing.assert_allclose(fixed, 28.5)  # planes 24-33
+    np.testing.assert_allclose(moving, 108.5)  # planes 4-13
+
+
+def test_save_xy_aips_for_pair_averages_the_same_depth_when_a_volume_ends(tmp_path):
+    scale = np.ones(3)
+    # The fixed volume has 4 planes left below the matched one.
+    _save_xy_aips_for_pair(
+        _depth_ramp(50),
+        _depth_ramp(40, 100.0),
+        scale,
+        scale,
+        overlap_px=10,
+        fid=0,
+        mid=1,
+        aips_dir=tmp_path,
+        fixed_z=46,
+        moving_z=4,
+    )
+
+    fixed, moving = _pair_aips(tmp_path)
+    np.testing.assert_allclose(fixed, 47.5)  # planes 46-49
+    np.testing.assert_allclose(moving, 105.5)  # planes 4-7, the same four planes of depth
+
+
+def test_save_xy_aips_for_pair_clamps_a_matched_plane_past_the_end(tmp_path):
+    scale = np.ones(3)
+    _save_xy_aips_for_pair(
+        _depth_ramp(50),
+        _depth_ramp(40, 100.0),
+        scale,
+        scale,
+        overlap_px=10,
+        fid=0,
+        mid=1,
+        aips_dir=tmp_path,
+        fixed_z=80,
+        moving_z=4,
+    )
+
+    fixed, moving = _pair_aips(tmp_path)
+    np.testing.assert_allclose(fixed, 49.0)
+    np.testing.assert_allclose(moving, 104.0)
+
+
+def test_plane_at_level_scales_with_the_voxel_size():
+    assert _plane_at_level(24, 0.01, 0.01) == 24
+    assert _plane_at_level(24, 0.01, 0.02) == 12
+    assert _plane_at_level(25, 0.01, 0.025) == 10
+
+
 def test_save_axis_views_for_pair_writes_xz_yz_files(tmp_path):
     fixed = np.random.rand(6, 8, 8).astype(np.float32)
     moving = np.random.rand(6, 8, 8).astype(np.float32)
@@ -175,6 +265,10 @@ def test_discover_transforms_matches_directories(tmp_path):
 
 def test_read_overlap_z_offsets_missing_file_returns_zeros(tmp_path):
     assert _read_overlap_z_offsets(tmp_path / "missing.txt") == (0, 0)
+
+
+def test_read_overlap_z_offsets_missing_file_returns_the_given_default(tmp_path):
+    assert _read_overlap_z_offsets(tmp_path / "missing.txt", default=None) is None
 
 
 def test_read_overlap_z_offsets_reads_values(tmp_path):
