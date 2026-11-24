@@ -51,6 +51,46 @@ nextflow_pipeline {
         }
     }
 
+    test("Should hand the stitch lattice to the slab placement when the global transform is on, in stub mode") {
+        options "-stub"
+
+        when {
+            params {
+                input = "${projectDir}/workflows/reconst_3d/tests/data"
+                output = "${outputDir}"
+                use_gpu = false
+                resolution = -1
+                fix_curvature_enabled = false
+                fix_illum_enabled = false
+                stitch_global_transform = true
+                common_space_tile_lattice = true
+                detect_rehoming = false
+                analyze_shifts = false
+                stitch_preview = false
+                common_space_preview = false
+                interpolate_missing_slices = false
+                export_manual_align = false
+                refine_manual_transforms = false
+                auto_exclude_enabled = false
+                correct_bias_field = false
+                align_to_ras_enabled = false
+                apply_pairwise_transforms = false
+            }
+        }
+
+        then {
+            assert workflow.success
+            def tasks = workflow.trace.tasks()
+            // The lattice is fitted once and the frame is planned once with it.
+            assert tasks.count { it.name =~ /estimate_global_transform/ } == 1
+            assert tasks.count { it.name =~ /plan_common_space/ } == 1
+            // Every slice is still stitched and placed.
+            assert tasks.count { it.name =~ /stitch_3d_with_refinement/ } == 2
+            assert tasks.count { it.name =~ /bring_to_common_space/ } == 2
+            assert tasks.any { it.name =~ /stack/ }
+        }
+    }
+
     test("Should pool one beam profile for the brain when the method is pooled, in stub mode") {
         options "-stub"
 
