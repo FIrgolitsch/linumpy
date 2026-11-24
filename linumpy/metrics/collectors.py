@@ -257,6 +257,11 @@ def collect_pairwise_registration_metrics(
     metrics.add_params(params)
 
     translation_magnitude = float(np.sqrt(tx**2 + ty**2))
+    # When the script has compared the candidates on the fine structure, the
+    # transform it kept is the placement or something that matches better. Its
+    # size and the centre correlation of the planes then say nothing about
+    # its quality, so they are recorded without a verdict.
+    accepted = chosen_candidate is not None
 
     metrics.add_metric(
         "registration_error",
@@ -271,7 +276,7 @@ def collect_pairwise_registration_metrics(
         translation_magnitude,
         unit="pixels",
         description="Total translation magnitude",
-        threshold_name="translation_magnitude",
+        threshold_name=None if accepted else "translation_magnitude",
     )
     metrics.add_metric(
         "rotation", float(rotation_deg), unit="degrees", description="Rotation angle", threshold_name="rotation_degrees"
@@ -284,7 +289,7 @@ def collect_pairwise_registration_metrics(
         float(max(0.0, z_correlation)),
         unit="",
         description="Z-matching cross-correlation score (0-1; higher = more reliable)",
-        threshold_name="correlation",
+        threshold_name=None if accepted else "correlation",
     )
 
     if structure_match_identity is not None:
@@ -300,6 +305,8 @@ def collect_pairwise_registration_metrics(
             float(structure_match),
             unit="",
             description="Fine-structure correlation of the two planes under the saved transform",
+            # Two slabs that share almost no structure at the joint are worth a look.
+            custom_thresholds={"warning": 0.15, "higher_is_better": True},
         )
     if chosen_candidate is not None:
         metrics.add_info("chosen_candidate", str(chosen_candidate), "Candidate transform that was kept")

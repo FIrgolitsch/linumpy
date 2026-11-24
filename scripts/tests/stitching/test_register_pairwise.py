@@ -79,3 +79,35 @@ def test_a_real_offset_is_corrected(script_runner, tmp_path):
     assert abs(metrics["translation_x"]["value"] - 8.0) < 1.5
     assert abs(metrics["translation_y"]["value"] + 5.0) < 1.5
     assert metrics["structure_match"]["value"] > metrics["structure_match_identity"]["value"] + 0.2
+
+
+def test_a_kept_correction_is_not_flagged_for_its_size(tmp_path):
+    """A shift the structure confirms is not an error because it is large, or the centre correlation low."""
+    from linumpy.metrics import collect_pairwise_registration_metrics
+
+    def collect(name, identity_match=None, match=None, chosen=None):
+        return collect_pairwise_registration_metrics(
+            registration_error=-0.5,
+            tx=60.0,
+            ty=0.0,
+            rotation_deg=0.0,
+            best_z_index=24,
+            expected_z_index=24,
+            output_path=tmp_path / name,
+            z_correlation=0.3,
+            structure_match_identity=identity_match,
+            structure_match=match,
+            chosen_candidate=chosen,
+        ).metrics
+
+    legacy = collect("legacy")
+    assert legacy["translation_magnitude"]["status"] == "error"
+    assert legacy["z_correlation"]["status"] == "error"
+
+    checked = collect("checked", identity_match=0.04, match=0.44, chosen="coarse")
+    assert checked["translation_magnitude"]["status"] == "ok"
+    assert checked["z_correlation"]["status"] == "ok"
+    assert checked["structure_match"]["status"] == "ok"
+
+    faint = collect("faint", identity_match=0.04, match=0.04, chosen="identity")
+    assert faint["structure_match"]["status"] == "warning"
