@@ -915,6 +915,7 @@ process pool_beam_profile {
 
     script:
     """
+    # Pooled plane by plane of the imaging window, each slab below its tissue face.
     linum-pool-beam-profiles pooled_beam_profile.json profiles/*.json
     """
 
@@ -939,6 +940,7 @@ process apply_beam_profile {
 
     script:
     """
+    # One divisor per plane of the imaging window, the same for every slab.
     linum-apply-beam-profile ${slice_3d} "slice_z${slice_id}_axial_corr.ome.zarr" \
         --pooled_profile ${pooled_profile} \
         --slab_profile ${slab_profile} \

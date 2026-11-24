@@ -265,7 +265,7 @@ linum-compensate-psf-model-free <input.ome.zarr> <output.ome.zarr> \
 
 ### linum-estimate-beam-profile, linum-pool-beam-profiles, linum-apply-beam-profile
 
-Beam correction with one profile for the brain (`compensate_psf_method='pooled'`). The first script measures the agarose depth profile and the tissue face of a slab, the second pools the profiles of all slabs aligned on their tissue face, the third divides every plane of a slab by the pooled profile at its depth from the tissue face.
+Beam correction with one profile for the brain (`compensate_psf_method='pooled'`). The first script measures the agarose depth profile and the tissue face of a slab, the second pools the profiles of all slabs plane by plane of the imaging window (each slab counting only below its tissue face), the third divides every plane of a slab by the pooled profile at that plane.
 
 ```bash
 linum-estimate-beam-profile <slab.ome.zarr> <slab_profile.json> [--percentile_max <p>]

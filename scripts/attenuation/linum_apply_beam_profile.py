@@ -2,9 +2,10 @@
 """Divide a slab by the pooled beam profile of its brain.
 
 Every plane is divided by the value of the pooled profile
-(``linum-pool-beam-profiles``) at its depth from the tissue face of the slab
-(``linum-estimate-beam-profile``). Two slabs of a brain are therefore divided
-by the same number at the same depth below their cut face.
+(``linum-pool-beam-profiles``) at that plane of the imaging window. The beam
+focus sits at the same plane of the window in every slab, so two slabs of a
+brain are divided by the same number at the same plane, wherever their tissue
+face is.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -25,7 +26,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("input_zarr", help="Stitched 3D slab (.ome.zarr).")
     p.add_argument("output_zarr", help="Corrected slab (.ome.zarr).")
     p.add_argument("--pooled_profile", required=True, help="Pooled beam profile of the brain (.json).")
-    p.add_argument("--slab_profile", required=True, help="Profile of this slab, for its tissue face (.json).")
+    p.add_argument("--slab_profile", required=True, help="Profile of this slab, for the metrics (.json).")
     p.add_argument("--n_levels", type=int, default=5, help="Number of levels in pyramid representation. [%(default)s]")
     return p
 
@@ -39,13 +40,12 @@ def main() -> None:
 
     pooled = PooledBeamProfile.load(args.pooled_profile)
     slab = SlabBeamProfile.load(args.slab_profile)
-    divisor = pooled.divisor_for_slab(slab.tissue_face, data.shape[0]).astype(np.float32)
+    divisor = pooled.divisor_for_planes(data.shape[0]).astype(np.float32)
     corrected = data / divisor[:, None, None]
 
     save_omezarr(da.from_array(corrected), args.output_zarr, voxel_size=res, chunks=vol.chunks, n_levels=args.n_levels)
     print(
-        f"[beam profile] tissue face at plane {slab.tissue_face}; divisor {divisor.min():.2f} to {divisor.max():.2f}, "
-        f"largest at plane {int(divisor.argmax())}",
+        f"[beam profile] divisor {divisor.min():.2f} to {divisor.max():.2f}, largest at plane {int(divisor.argmax())}",
         flush=True,
     )
 

@@ -10,16 +10,18 @@ from linumpy.io.zarr import read_omezarr, save_omezarr
 from linumpy.psf.profile import PooledBeamProfile, SlabBeamProfile
 
 
-def _beam(depth: np.ndarray) -> np.ndarray:
-    return 1.0 + 4.0 * np.exp(-np.maximum(depth, 0) / 8.0)
+def _beam(plane: np.ndarray) -> np.ndarray:
+    """A focus at plane 26 of the imaging window, the same for every slab."""
+    return 1.0 + 4.0 * np.exp(-(((np.asarray(plane, dtype=float) - 26.0) / 10.0) ** 2))
 
 
 def _write_slab(path, face: int, n_planes: int = 48, size: int = 96) -> np.ndarray:
     """Write a slab with water above *face*, agarose around a block of tissue below it."""
     depth = np.arange(n_planes) - face
     below = depth >= 0
-    agarose = np.where(below, 2.0 * _beam(depth), 0.5)
-    tissue = np.where(below, 30.0 * _beam(depth) * np.exp(-0.04 * np.maximum(depth, 0)), 0.5)
+    plane = np.arange(n_planes)
+    agarose = np.where(below, 2.0 * _beam(plane), 0.5)
+    tissue = np.where(below, 30.0 * _beam(plane) * np.exp(-0.04 * np.maximum(depth, 0)), 0.5)
     vol = np.repeat(agarose[:, None, None], size, axis=1).repeat(size, axis=2).astype(np.float32)
     quarter = size // 4
     vol[:, quarter : 3 * quarter, quarter : 3 * quarter] = tissue[:, None, None]
@@ -66,25 +68,24 @@ def test_estimate_pool_and_apply(script_runner, tmp_path):
         )
         assert ret.success, ret.stderr
         corrected[name] = np.asarray(read_omezarr(out, level=0)[0])
-        slab = SlabBeamProfile.load(tmp_path / f"{name}.json")
-        divisor = pooled.divisor_for_slab(slab.tissue_face, 48)
+        divisor = pooled.divisor_for_planes(48)
         np.testing.assert_allclose(corrected[name], volumes[name] / divisor[:, None, None], rtol=1e-5)
         metrics = json.loads((tmp_path / f"{name}_corrected.ome_metrics.json").read_text())
         assert metrics["step_name"] == "psf_compensation"
 
     # The agarose has no attenuation of its own, so it comes out flat below the
-    # face, and at the same level in every slab whatever the depth of its face.
+    # face, and at the same level in every slab whatever the height of its face.
     levels = []
     for name, face in faces.items():
         agarose = corrected[name][:, 4, 4]
-        below = agarose[face + 4 : face + 24]
+        below = agarose[max(face + 4, 22) : 44]
         assert below.max() / below.min() < 1.15
         levels.append(float(below.mean()))
     assert max(levels) / min(levels) < 1.1
 
 
 def test_pool_leaves_out_a_slab_and_says_so(script_runner, tmp_path):
-    shape = [float(1.0 + 6.0 * np.exp(-abs(d - 2) / 10.0)) for d in range(-8, 32)]
+    shape = [float(1.0 + 6.0 * np.exp(-abs(d - 20) / 10.0)) for d in range(40)]
     for i in range(4):
         SlabBeamProfile(profile=shape, tissue_face=8, agarose_face=8, n_columns=5000, coverage=0.3).save(
             tmp_path / f"slice_z{i:02d}.json"

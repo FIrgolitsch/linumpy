@@ -7,8 +7,12 @@ tissue face, and the agarose share of a slab ranges from most of it to almost
 none. The same tissue then comes out flat in one slab and steep in the next.
 
 Here each slab contributes its agarose profile and the depth of its tissue
-face. The profiles are aligned on the tissue face and pooled, so every slab of
-a brain is divided by the same number at the same depth below its cut face.
+face. The beam belongs to the optics: its focus sits at the same plane of the
+imaging window in every slab, while the sample, and with it the tissue face,
+sits higher or lower from one slab to the next. The profiles are therefore
+pooled plane by plane of the window, each slab counting only below its own
+tissue face, and every slab of a brain is divided by the same number at the
+same plane of the window.
 """
 
 import json
@@ -22,6 +26,10 @@ from skimage.filters import threshold_otsu
 from linumpy.geometry.interface import find_tissue_interface
 
 MIN_AGAROSE_COLUMNS = 500
+# Planes just below the tissue face still hold the edge of the surface.
+SURFACE_MARGIN = 2
+# A slab whose face leaves fewer planes than this below it tells nothing about the beam.
+MIN_PLANES_BELOW_FACE = 5
 
 
 @dataclass
@@ -66,16 +74,16 @@ class SlabBeamProfile:
 
 @dataclass
 class PooledBeamProfile:
-    """Beam profile of a brain, by depth from the tissue face.
+    """Beam profile of a brain, by plane of the imaging window.
 
     Attributes
     ----------
     depth : list of int
-        Depth in planes from the tissue face; negative above it.
+        Plane of the imaging window, from its top.
     divisor : list of float
-        Value every plane at that depth is divided by. Its minimum is 1.
+        Value every slab is divided by at that plane. Its minimum is 1.
     n_slabs : list of int
-        Number of slabs that reach each depth.
+        Number of slabs that have agarose below their tissue face at each plane.
     n_used : int
         Number of slabs pooled.
     n_excluded : int
@@ -98,12 +106,12 @@ class PooledBeamProfile:
         """Read a pooled profile written by :meth:`save`."""
         return cls(**json.loads(Path(path).read_text()))
 
-    def divisor_for_slab(self, tissue_face: int, n_planes: int) -> np.ndarray:
-        """Return the divisor of every plane of a slab whose tissue face is at *tissue_face*.
+    def divisor_for_planes(self, n_planes: int) -> np.ndarray:
+        """Return the divisor of every plane of a slab of *n_planes* planes.
 
-        Planes outside the pooled depth range take the value at its nearest end.
+        Planes outside the pooled range take the value at its nearest end.
         """
-        planes = np.arange(n_planes, dtype=np.float64) - float(tissue_face)
+        planes = np.arange(n_planes, dtype=np.float64)
         return np.interp(planes, np.asarray(self.depth, dtype=np.float64), np.asarray(self.divisor, dtype=np.float64))
 
 
@@ -164,12 +172,13 @@ def pool_beam_profiles(
     min_slabs: int = 3,
     names: Sequence[str] | None = None,
 ) -> PooledBeamProfile:
-    """Pool the agarose profiles of the slabs of a brain, aligned on the tissue face.
+    """Pool the agarose profiles of the slabs of a brain, plane by plane of the imaging window.
 
-    The pooled profile is built from its change between successive depths:
-    the median, over the slabs that reach both depths, of the change of the
-    log profile. Summing those changes gives a profile that does not step
-    where slabs with a deep tissue face run out of planes, which a median of
+    A slab counts only below its tissue face: above it the window holds water.
+    The pooled profile is built from its change between successive planes:
+    the median, over the slabs that have agarose at both planes, of the change
+    of the log profile. Summing those changes gives a profile that does not
+    step where the slabs with a deep tissue face come in, which a median of
     the profiles themselves does.
 
     Parameters
@@ -177,8 +186,8 @@ def pool_beam_profiles(
     slabs : sequence of SlabBeamProfile
         One profile per slab.
     min_slabs : int
-        Fewest slabs that must reach a depth for the change there to count.
-        Outside those depths the profile is held constant.
+        Fewest slabs that must cover a plane for the change there to count.
+        Outside those planes the profile is held constant.
     names : sequence of str, optional
         Name of each slab, used to list the ones left out.
 
@@ -195,24 +204,24 @@ def pool_beam_profiles(
     used: list[SlabBeamProfile] = []
     excluded: list[str] = []
     for name, slab in zip(names, slabs, strict=True):
-        if slab.is_usable:
-            used.append(slab)
-        else:
+        if not slab.is_usable:
             excluded.append(f"{name}: too little agarose")
+        elif slab.tissue_face + SURFACE_MARGIN + MIN_PLANES_BELOW_FACE > len(slab.profile):
+            excluded.append(f"{name}: tissue face at plane {slab.tissue_face}, at the end of the window")
+        else:
+            used.append(slab)
     if len(used) < min_slabs:
         raise ValueError(
             f"Only {len(used)} of {len(slabs)} slabs can be pooled, {min_slabs} are needed: {'; '.join(excluded)}"
         )
 
-    first = min(-slab.tissue_face for slab in used)
-    last = max(len(slab.profile) - 1 - slab.tissue_face for slab in used)
-    depth = np.arange(first, last + 1)
+    depth = np.arange(max(len(slab.profile) for slab in used))
     log_profiles = np.full((len(used), depth.size), np.nan)
     for row, slab in enumerate(used):
         profile = np.asarray(slab.profile, dtype=np.float64)
         floor = profile[profile > 0].min()
-        start = -slab.tissue_face - first
-        log_profiles[row, start : start + profile.size] = np.log(np.maximum(profile, floor))
+        start = max(0, slab.tissue_face + SURFACE_MARGIN)
+        log_profiles[row, start : profile.size] = np.log(np.maximum(profile[start:], floor))
 
     n_slabs = np.sum(~np.isnan(log_profiles), axis=0)
     changes = np.diff(log_profiles, axis=1)

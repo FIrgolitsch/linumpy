@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Pool the agarose depth profiles of the slabs of a brain into one beam profile.
 
-The profiles (from ``linum-estimate-beam-profile``) are aligned on the tissue
-face of their slab. The result gives, for every depth from the tissue face,
-the value ``linum-apply-beam-profile`` divides that plane by, the same for
-every slab of the brain.
+The profiles (from ``linum-estimate-beam-profile``) are pooled plane by plane
+of the imaging window, each slab counting only below its tissue face: the
+beam focus sits at the same plane in every slab, the tissue face does not.
+The result gives, for every plane of the window, the value
+``linum-apply-beam-profile`` divides that plane by, the same for every slab
+of the brain.
 """
 
 # Configure thread limits before numpy/scipy imports
@@ -41,7 +43,7 @@ def main() -> None:
     peak = max(range(len(pooled.divisor)), key=pooled.divisor.__getitem__)
     print(
         f"[beam profile] pooled {pooled.n_used} of {len(slabs)} slabs; divisor peaks at {pooled.divisor[peak]:.2f}, "
-        f"{pooled.depth[peak]:+d} planes from the tissue face",
+        f"at plane {pooled.depth[peak]} of the window",
         flush=True,
     )
     for line in pooled.excluded:
