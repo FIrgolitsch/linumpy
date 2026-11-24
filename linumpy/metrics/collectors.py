@@ -206,6 +206,9 @@ def collect_pairwise_registration_metrics(
     moving_path: Path | None = None,
     params: dict | None = None,
     z_correlation: float = 0.0,
+    structure_match_identity: float | None = None,
+    structure_match: float | None = None,
+    chosen_candidate: str | None = None,
 ) -> PipelineMetrics:
     """
     Collect metrics for pairwise registration step.
@@ -231,6 +234,12 @@ def collect_pairwise_registration_metrics(
     z_correlation : float, optional
         Normalized cross-correlation score from Z-matching (0-1). Higher values
         indicate a reliable Z-match between the two slices.
+    structure_match_identity, structure_match : float, optional
+        Fine-structure correlation of the two planes as placed and under the
+        saved transform. Equal when the transform is the identity.
+    chosen_candidate : str, optional
+        Which candidate transform was kept (``identity`` when none improved
+        the match).
 
     Returns
     -------
@@ -277,6 +286,23 @@ def collect_pairwise_registration_metrics(
         description="Z-matching cross-correlation score (0-1; higher = more reliable)",
         threshold_name="correlation",
     )
+
+    if structure_match_identity is not None:
+        metrics.add_metric(
+            "structure_match_identity",
+            float(structure_match_identity),
+            unit="",
+            description="Fine-structure correlation of the two planes as placed, before any transform",
+        )
+    if structure_match is not None:
+        metrics.add_metric(
+            "structure_match",
+            float(structure_match),
+            unit="",
+            description="Fine-structure correlation of the two planes under the saved transform",
+        )
+    if chosen_candidate is not None:
+        metrics.add_info("chosen_candidate", str(chosen_candidate), "Candidate transform that was kept")
 
     # Composite confidence score (0-1): combines Z-correlation, normalized translation
     # and normalized rotation.  Used downstream by adaptive transform degradation

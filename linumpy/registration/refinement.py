@@ -1,6 +1,6 @@
 """Refinement registration: best-Z search and small rotation/translation correction."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import SimpleITK as sitk
@@ -9,7 +9,13 @@ from scipy.ndimage import shift as nd_shift
 from skimage.registration import phase_cross_correlation
 
 
-def find_best_z(fixed_vol: np.ndarray, moving_slice: np.ndarray, expected_z: int, search_range: int) -> tuple[int, float]:
+def find_best_z(
+    fixed_vol: np.ndarray,
+    moving_slice: np.ndarray,
+    expected_z: int,
+    search_range: int,
+    metric: Callable[[np.ndarray, np.ndarray], float] | None = None,
+) -> tuple[int, float]:
     """Find the Z-index in fixed_vol that best matches moving_slice.
 
     Uses normalized cross-correlation in the center region.
@@ -24,18 +30,34 @@ def find_best_z(fixed_vol: np.ndarray, moving_slice: np.ndarray, expected_z: int
         Expected Z-index in fixed_vol for the match.
     search_range : int
         Search +/-search_range around expected_z.
+    metric : callable, optional
+        ``metric(fixed_plane, moving_slice)``; the plane with the highest
+        value wins and planes where it is not finite are skipped. Without it
+        the planes are compared by the correlation of their centre region,
+        which follows the broad brightness of the tissue more than its
+        structure and so leans toward the brighter, shallower planes.
 
     Returns
     -------
     best_z : int
         Z-index giving the best correlation.
     best_corr : float
-        Correlation score at best_z.
+        Correlation score at best_z. With a *metric* and no plane with a
+        finite score, ``expected_z`` and NaN.
     """
     nz = fixed_vol.shape[0]
     expected_z = max(0, min(nz - 1, expected_z))
     z_min = max(0, expected_z - search_range)
     z_max = min(nz - 1, expected_z + search_range)
+
+    if metric is not None:
+        planes = np.asarray(fixed_vol[z_min : z_max + 1])
+        best_z, best_score = expected_z, float("nan")
+        for z in range(z_min, z_max + 1):
+            score = float(metric(planes[z - z_min], moving_slice))
+            if np.isfinite(score) and (not np.isfinite(best_score) or score > best_score):
+                best_z, best_score = z, score
+        return best_z, best_score
 
     if z_min >= z_max:
         return max(0, min(nz - 1, expected_z)), 0.0
@@ -76,6 +98,28 @@ def find_best_z(fixed_vol: np.ndarray, moving_slice: np.ndarray, expected_z: int
             best_z = z
 
     return max(0, min(nz - 1, best_z)), best_corr
+
+
+def centre_ncc(fixed: np.ndarray, moving: np.ndarray) -> float:
+    """Return the correlation of the centre region of two planes, each stretched to its own range.
+
+    This is the score :func:`find_best_z` uses without a *metric*, for one
+    plane.
+    """
+    h, w = moving.shape
+    margin = min(h, w) // 4
+    roi = (slice(margin, h - margin), slice(margin, w - margin))
+
+    def _standardize(plane: np.ndarray) -> np.ndarray:
+        region = plane[roi].astype(np.float32)
+        valid = region > 0
+        if valid.any():
+            pmin = float(np.percentile(region[valid], 5))
+            pmax = float(np.percentile(region[valid], 95))
+            region = np.clip((region - pmin) / max(pmax - pmin, 1e-8), 0, 1)
+        return (region - region.mean()) / (region.std() + 1e-8)
+
+    return float(np.mean(_standardize(fixed) * _standardize(moving)))
 
 
 def tissue_ncc(fixed: np.ndarray, moving: np.ndarray, threshold: float = 0.01) -> float:
@@ -394,3 +438,88 @@ def gradient_magnitude_alignment(fixed: np.ndarray, moving: np.ndarray) -> tuple
 
     shift, _, _ = phase_cross_correlation(fixed_grad, moving_grad, normalization=None, upsample_factor=4)
     return float(shift[0]), float(shift[1])
+
+
+def apply_rigid_2d(
+    image: np.ndarray,
+    tx: float,
+    ty: float,
+    angle_deg: float = 0.0,
+    center: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """Resample *image* with a rigid transform in the convention of the pairwise transforms.
+
+    The transform maps an output point to the input point it is read from,
+    rotating about *center* ``(x, y)``, by default the middle of the image.
+    Pixels read from outside the image are zero.
+    """
+    moving = sitk.GetImageFromArray(np.ascontiguousarray(image, dtype=np.float32))
+    transform = sitk.Euler2DTransform()
+    if center is None:
+        center = (image.shape[1] / 2.0, image.shape[0] / 2.0)
+    transform.SetCenter([float(center[0]), float(center[1])])
+    transform.SetAngle(float(np.radians(angle_deg)))
+    transform.SetTranslation([float(tx), float(ty)])
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(moving)
+    resampler.SetTransform(transform)
+    resampler.SetInterpolator(sitk.sitkLinear)
+    resampler.SetDefaultPixelValue(0.0)
+    return sitk.GetArrayFromImage(resampler.Execute(moving))
+
+
+def select_rigid_candidate(
+    fixed: np.ndarray,
+    moving: np.ndarray,
+    candidates: Sequence[tuple[str, float, float, float]],
+    threshold: float = 0.01,
+    min_gain: float = 0.02,
+    metric: Callable[[np.ndarray, np.ndarray, float], float] = structure_ncc,
+    min_score: float = -np.inf,
+) -> tuple[str, float, float, float, float, float]:
+    """Choose the rigid transform under which *moving* matches *fixed* best.
+
+    Doing nothing is always a choice, and another candidate replaces it only
+    when it raises *metric* by at least *min_gain* and reaches *min_score*. An
+    optimizer that left a good starting position for a worse one is thereby
+    dropped, whatever its own cost function says. So is a shift that lifts
+    two planes with nothing in common from no match to a faint one.
+
+    Parameters
+    ----------
+    fixed, moving : ndarray
+        The two planes, on the same grid.
+    candidates : sequence of (name, tx, ty, angle_deg)
+        Transforms to try, in the convention of :func:`apply_rigid_2d`.
+    threshold : float
+        Tissue threshold handed to *metric*.
+    min_gain : float
+        Smallest gain over the identity for a candidate to be kept.
+    metric : callable
+        ``metric(fixed, moving, threshold)``; higher is better.
+    min_score : float
+        Lowest value of *metric* a candidate must reach to be kept.
+
+    Returns
+    -------
+    name, tx, ty, angle_deg : str, float, float, float
+        The chosen transform; ``("identity", 0, 0, 0)`` when none qualifies.
+    score : float
+        *metric* under the chosen transform.
+    identity_score : float
+        *metric* without any transform.
+    """
+    fixed = fixed.astype(np.float32)
+    moving = moving.astype(np.float32)
+    identity_score = float(metric(fixed, moving, threshold))
+    best = ("identity", 0.0, 0.0, 0.0, identity_score)
+    floor = max(identity_score + min_gain, min_score) if np.isfinite(identity_score) else min_score
+    for name, tx, ty, angle_deg in candidates:
+        if tx == 0.0 and ty == 0.0 and angle_deg == 0.0:
+            continue
+        score = float(metric(fixed, apply_rigid_2d(moving, tx, ty, angle_deg), threshold))
+        if not np.isfinite(score) or score < floor:
+            continue
+        if best[0] == "identity" or score > best[4]:
+            best = (name, float(tx), float(ty), float(angle_deg), score)
+    return best[0], best[1], best[2], best[3], best[4], identity_score

@@ -743,6 +743,14 @@ linum-estimate-slices-transforms-gui <slices_dir>
 
 Perform pairwise registration between consecutive slices to compute small rotation and Z-overlap corrections. This is the primary registration script used by the motor-based reconstruction pipeline. It **does not** compute large XY translations (those are handled by motor positions from `shifts_xy.csv`).
 
+How a pair is handled:
+
+1. **Matching plane.** Both slabs start at their cut face, so the plane `--moving_z_index` of the moving slab is expected one slice thickness plus that index below the top of the fixed slab, whatever the depth of the fixed slab. The plane within `--search_range_mm` of it with the highest fine-structure correlation is taken. An XY offset is looked for first, on the mean of the planes of the search window, so that the planes are compared at that offset.
+2. **Candidates.** The placement as it is (identity), the best translation found by phase correlation of the tissue outline and texture, and the result of the bounded optimizer started from the better of those. A result of the optimizer that leaves the bounds is dropped.
+3. **Acceptance.** The candidate with the highest fine-structure correlation is kept, and only if it beats the placement by `--min_structure_gain` and reaches `--min_structure_match`. Otherwise the transform is the identity. A transform can therefore not make the match worse than the stage placement.
+
+The metrics hold `structure_match_identity` (the planes as placed), `structure_match` (under the saved transform) and `chosen_candidate`.
+
 Two outputs are produced per pair:
 - `transform.tfm`: SimpleITK transform (rotation + sub-pixel translation)
 - `offsets.txt`: Z-index correspondence between fixed and moving slices
@@ -757,6 +765,8 @@ linum-register-pairwise <fixed.ome.zarr> <moving.ome.zarr> <output_dir> \
     [--max_rotation_deg 5.0] \
     [--max_translation_px 20.0] \
     [--initial_alignment {none,com,gradient,both}] \
+    [--min_structure_gain 0.02] \
+    [--min_structure_match 0.15] \
     [--out_transform transform.tfm] \
     [--out_offsets offsets.txt] \
     [--screenshot <path>]
@@ -770,7 +780,9 @@ linum-register-pairwise <fixed.ome.zarr> <moving.ome.zarr> <output_dir> \
 | `--enable_rotation` | on | Enable rotation in the transform (use `--no-enable_rotation` to disable) |
 | `--max_rotation_deg` | `5.0` | Maximum rotation to consider (degrees) |
 | `--max_translation_px` | `20.0` | Maximum translation per axis (pixels) |
-| `--initial_alignment` | `both` | Pre-registration alignment: `none`, `com`, `gradient`, or `both` |
+| `--initial_alignment` | `both` | `none` starts the optimizer from the placement. Any other value also tries the best translation found by phase correlation |
+| `--min_structure_gain` | `0.02` | Smallest gain in fine-structure correlation over the placement for a correction to be kept |
+| `--min_structure_match` | `0.15` | Lowest fine-structure correlation a correction must reach to be kept |
 | `--out_transform` | `transform.tfm` | Output SimpleITK transform path |
 | `--out_offsets` | `offsets.txt` | Output Z-index correspondence path |
 | `--screenshot` | — | Save a PNG of the registration result |

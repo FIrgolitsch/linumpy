@@ -290,7 +290,7 @@ Computes small corrections (rotation, sub-pixel translation) between consecutive
 | `registration_transform` | `'euler'` | Transform type: `euler` (XY + rotation) or `translation` (XY only) |
 | `registration_max_translation` | `200.0` | Optimizer bound on translation (pixels) |
 | `registration_max_rotation` | `5.0` | Optimizer bound on rotation (degrees) |
-| `registration_initial_alignment` | `'both'` | Initial alignment before refinement: `none`, `com`, `gradient`, or `both` |
+| `registration_initial_alignment` | `'both'` | `none` starts the optimizer from the placement; any other value also tries the best translation found by phase correlation |
 | `moving_slice_first_index` | `4` | Pairwise 2-D Euler template plane in the moving volume (not a stacking crop) |
 | `registration_slicing_interval_mm` | `0.200` | Physical slice thickness (mm) |
 | `registration_allowed_drifting_mm` | `0.100` | Z-search range (mm) |

@@ -9,6 +9,10 @@ This script performs two tasks.
 The XY alignment is handled by motor positions (shifts_xy.csv), so this
 script only computes small corrections, not large translations.
 
+The slabs arrive placed by the stage, which is the reference. A correction is
+kept only when it raises the fine-structure correlation of the two planes over
+what the placement alone gives; otherwise the transform is the identity.
+
 Outputs.
 
 * ``transform.tfm`` -- SimpleITK transform file (rotation + small translation).
@@ -26,15 +30,19 @@ from typing import Any
 
 import numpy as np
 import SimpleITK as sitk
+from skimage.filters import threshold_otsu
 
 from linumpy.cli.args import add_overwrite_arg
 from linumpy.io.zarr import read_omezarr
 from linumpy.metrics import collect_pairwise_registration_metrics
 from linumpy.registration.refinement import (
-    centre_of_mass_offset,
+    apply_rigid_2d,
+    centre_ncc,
+    coarse_translation,
     find_best_z,
-    gradient_magnitude_alignment,
     register_refinement,
+    select_rigid_candidate,
+    structure_ncc,
 )
 from linumpy.registration.transforms import create_transform
 
@@ -90,11 +98,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--initial_alignment",
         choices=["none", "com", "gradient", "both"],
         default="both",
-        help="Initial alignment method before refinement:\n"
-        "  none     - no initial alignment\n"
-        "  com      - centre of mass alignment\n"
-        "  gradient - gradient magnitude phase correlation\n"
-        "  both     - try gradient first, fall back to com [%(default)s]",
+        help="Look for a translation too large for the optimizer before refining:\n"
+        "  none                - start the optimizer from the placement\n"
+        "  com, gradient, both - also try the best translation found by phase\n"
+        "                        correlation of the tissue outline and texture [%(default)s]",
+    )
+    ref_group.add_argument(
+        "--min_structure_gain",
+        type=float,
+        default=0.02,
+        help="Smallest gain in fine-structure correlation over the placement for a\ncorrection to be kept [%(default)s]",
+    )
+    ref_group.add_argument(
+        "--min_structure_match",
+        type=float,
+        default=0.15,
+        help="Lowest fine-structure correlation a correction must reach to be kept.\n"
+        "Two planes with little in common give faint matches at arbitrary\n"
+        "shifts; below this the placement is kept [%(default)s]",
     )
 
     # Output
@@ -120,6 +141,14 @@ def normalize(image: Any) -> Any:
 
     norm = (image.astype(np.float32) - pmin) / (pmax - pmin)
     return np.clip(norm, 0, 1)
+
+
+def tissue_threshold(fixed: np.ndarray, moving: np.ndarray) -> float:
+    """Return the Otsu threshold that splits the two planes into background and tissue."""
+    values = np.concatenate([fixed[fixed > 0].ravel()[::8], moving[moving > 0].ravel()[::8]])
+    if values.size < 100 or float(np.ptp(values)) == 0.0:
+        return 0.01
+    return float(threshold_otsu(values))
 
 
 def main() -> None:
@@ -156,8 +185,10 @@ def main() -> None:
     moving_norm = normalize(moving_slice)
 
     # Calculate expected Z position
-    # The moving slice (top of moving volume) should match near the BOTTOM of fixed volume
-    # expected_z is where in fixed_vol we expect to find a match for moving_slice
+    # Both slabs start at their cut face, and the cut face of the moving slab
+    # lies one slice thickness below that of the fixed slab. The plane of the
+    # moving slab is therefore expected one slice thickness plus its own index
+    # from the TOP of the fixed slab, however deep the fixed slab is.
 
     # NOTE: read_omezarr returns resolution in millimeters (OME-NGFF standard)
     res_z_mm = res[0] if len(res) >= 1 else 0.010  # mm (default 10 µm)
@@ -169,10 +200,8 @@ def main() -> None:
     interval_vox = round(args.slicing_interval_mm / res_z_mm)
     search_vox = round(args.search_range_mm / res_z_mm)
 
-    # The overlap region is at the bottom of fixed volume
-    # The match should be near: fixed_vol.shape[0] - interval_vox + moving_z_index
     fixed_nz = fixed_vol.shape[0]
-    expected_z = fixed_nz - interval_vox + args.moving_z_index
+    expected_z = interval_vox + args.moving_z_index
 
     logger.info("Fixed volume: %s slices", fixed_nz)
     logger.info("Interval: %s mm = %s voxels", args.slicing_interval_mm, interval_vox)
@@ -184,10 +213,45 @@ def main() -> None:
 
     logger.info("Searching for match near z=%s in fixed volume (search ±%s)", expected_z, search_vox)
 
-    # Find best Z match
-    best_z, z_correlation = find_best_z(fixed_vol, moving_slice, expected_z, search_vox)
+    # Find best Z match. The planes are compared pixel by pixel, which says
+    # little when the slabs are also offset in XY. So an offset is looked for
+    # first, on the mean of the planes of the search window: structure that
+    # runs through the depth survives that mean. The moving plane is then
+    # compared with each fixed plane at that offset.
+    moving_raw = moving_slice.astype(np.float32)
+    z_min = max(0, expected_z - search_vox)
+    z_max = min(fixed_nz - 1, expected_z + search_vox)
+    pre_tx, pre_ty = 0.0, 0.0
+    if args.initial_alignment != "none":
+        window_mean = np.asarray(fixed_vol[z_min : z_max + 1]).astype(np.float32).mean(axis=0)
+        pre_tx, pre_ty, _ = coarse_translation(
+            window_mean,
+            moving_raw,
+            args.max_translation_px,
+            threshold=tissue_threshold(window_mean, moving_raw),
+            metric=structure_ncc,
+        )
+    moving_for_z = apply_rigid_2d(moving_raw, pre_tx, pre_ty) if (pre_tx != 0.0 or pre_ty != 0.0) else moving_raw
 
-    logger.info("Best Z match: %s (expected: %s, correlation: %.4f)", best_z, expected_z, z_correlation)
+    # The plane is chosen on the fine structure, at half resolution to keep
+    # it quick. The plain correlation of the planes follows the broad
+    # brightness of the tissue and picks the shallowest plane it may.
+    def _structure(fixed_plane: np.ndarray, moving_plane: np.ndarray) -> float:
+        fixed_half = np.asarray(fixed_plane, dtype=np.float32)[::2, ::2]
+        moving_half = moving_plane[::2, ::2]
+        return structure_ncc(fixed_half, moving_half, tissue_threshold(fixed_half, moving_half), sigma=10.0)
+
+    best_z, z_structure = find_best_z(fixed_vol, moving_for_z, expected_z, search_vox, metric=_structure)
+    # Reported as before: the correlation of the centre region at that plane.
+    z_correlation = centre_ncc(np.asarray(fixed_vol[best_z]), moving_for_z)
+
+    logger.info(
+        "Best Z match: %s (expected: %s, structure match: %.4f, correlation: %.4f)",
+        best_z,
+        expected_z,
+        z_structure,
+        z_correlation,
+    )
 
     # Warn if z-match deviates significantly from expected
     z_deviation = abs(best_z - expected_z)
@@ -198,38 +262,69 @@ def main() -> None:
     fixed_slice = np.array(fixed_vol[best_z])
     fixed_norm = normalize(fixed_slice)
 
-    # Compute initial alignment offset
+    # Candidate corrections. The placement itself (identity) is always one.
+    fixed_raw = fixed_slice.astype(np.float32)
+    threshold = tissue_threshold(fixed_raw, moving_raw)
+    candidates: list[tuple[str, float, float, float]] = []
     initial_offset = None
     if args.initial_alignment != "none":
-        if args.initial_alignment in ("gradient", "both"):
-            dy, dx = gradient_magnitude_alignment(fixed_norm, moving_norm)
-            mag = np.sqrt(dy**2 + dx**2)
-            if mag > 1.0:
-                initial_offset = (dy, dx)
-                logger.info("Gradient magnitude initial offset: dy=%.1f, dx=%.1f", dy, dx)
+        if pre_tx != 0.0 or pre_ty != 0.0:
+            candidates.append(("coarse_window", pre_tx, pre_ty, 0.0))
+        coarse_tx, coarse_ty, _ = coarse_translation(
+            fixed_raw, moving_raw, args.max_translation_px, threshold=threshold, metric=structure_ncc
+        )
+        if coarse_tx != 0.0 or coarse_ty != 0.0:
+            candidates.append(("coarse", coarse_tx, coarse_ty, 0.0))
+            logger.info("Coarse translation candidate: tx=%.1f, ty=%.1f", coarse_tx, coarse_ty)
+        if candidates:
+            # Start the optimizer from the better of the two.
+            start, start_tx, start_ty, *_ = select_rigid_candidate(
+                fixed_raw,
+                moving_raw,
+                candidates,
+                threshold=threshold,
+                min_gain=args.min_structure_gain,
+                min_score=args.min_structure_match,
+            )
+            if start != "identity":
+                initial_offset = (start_ty, start_tx)
 
-        if initial_offset is None and args.initial_alignment in ("com", "both"):
-            dy, dx = centre_of_mass_offset(fixed_norm, moving_norm)
-            mag = np.sqrt(dy**2 + dx**2)
-            if mag > 1.0:
-                initial_offset = (dy, dx)
-                logger.info("Centre of mass initial offset: dy=%.1f, dx=%.1f", dy, dx)
-
-        if initial_offset is None:
-            logger.info("No significant initial offset detected, starting from identity")
-
-    # Compute refinement
     logger.info("Computing refinement (rotation=%s)...", args.enable_rotation)
-    tx, ty, angle_deg, metric = register_refinement(
+    diagnostics: dict = {}
+    ref_tx, ref_ty, ref_angle, metric = register_refinement(
         fixed_norm,
         moving_norm,
         enable_rotation=args.enable_rotation,
         max_rotation_deg=args.max_rotation_deg,
         max_translation_px=args.max_translation_px,
+        fixed_mask=fixed_raw > threshold,
+        moving_mask=moving_raw > threshold,
         initial_offset=initial_offset,
+        bound_mode="reject",
+        diagnostics=diagnostics,
     )
+    if diagnostics.get("rejected"):
+        logger.info("Refinement left the bounds and is dropped")
+    else:
+        candidates.append(("refined", ref_tx, ref_ty, ref_angle))
 
-    logger.info("Refinement: tx=%.2fpx, ty=%.2fpx, rot=%.3f°", tx, ty, angle_deg)
+    chosen, tx, ty, angle_deg, structure_match, structure_match_identity = select_rigid_candidate(
+        fixed_raw,
+        moving_raw,
+        candidates,
+        threshold=threshold,
+        min_gain=args.min_structure_gain,
+        min_score=args.min_structure_match,
+    )
+    logger.info(
+        "Kept %s: tx=%.2fpx, ty=%.2fpx, rot=%.3f° (structure match %.3f, placement alone %.3f)",
+        chosen,
+        tx,
+        ty,
+        angle_deg,
+        structure_match,
+        structure_match_identity,
+    )
 
     # Create and save transform
     center = [fixed_slice.shape[1] / 2.0, fixed_slice.shape[0] / 2.0]
@@ -268,6 +363,9 @@ def main() -> None:
         fixed_path=args.in_fixed,
         moving_path=args.in_moving,
         z_correlation=float(z_correlation),
+        structure_match_identity=float(structure_match_identity) if np.isfinite(structure_match_identity) else None,
+        structure_match=float(structure_match) if np.isfinite(structure_match) else None,
+        chosen_candidate=chosen,
         params={
             "slicing_interval_mm": args.slicing_interval_mm,
             "search_range_mm": args.search_range_mm,

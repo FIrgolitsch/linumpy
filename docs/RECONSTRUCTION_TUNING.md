@@ -201,7 +201,7 @@ refinements applied on top during stacking.
 | `registration_transform` | `'euler'` | `'translation'` (XY only) or `'euler'` (XY + rotation). Use `'euler'` for any sample where slices are rotated relative to each other. |
 | `registration_max_translation` | `200.0` | Optimizer bound on translation (px). Keep large; the actual *applied* translation is governed in stacking. Increase only if pairwise metrics report frequent boundary hits. |
 | `registration_max_rotation` | `5.0` | Optimizer bound on rotation (deg). Raise (e.g. to `35.0`) for obliquely-mounted samples where slice-to-slice rotation can be large. |
-| `registration_initial_alignment` | `'both'` | Initialization. `'both'` runs centre-of-mass and gradient inits and picks the better one. |
+| `registration_initial_alignment` | `'both'` | `'none'` starts the optimizer from the placement. Any other value also tries the best translation found by phase correlation of the tissue outline and texture. A correction is kept only when it improves the fine-structure match over the placement. |
 
 **Recipe — pairwise registration looks "stuck":**
 

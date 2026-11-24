@@ -153,3 +153,103 @@ def test_coarse_translation_with_structure_score_recovers_the_shift_under_opposi
     # SimpleITK convention: positive tx moves content left.
     assert (tx, ty) == pytest.approx((-30.0, 18.0), abs=1.5)
     assert score > 0.7
+
+
+def test_apply_rigid_2d_undoes_a_content_shift():
+    from scipy.ndimage import shift as nd_shift
+
+    from linumpy.registration.refinement import apply_rigid_2d
+
+    fixed = _textured_blob()
+    moved = nd_shift(fixed, (-4.0, 10.0), order=1, mode="constant", cval=0.0)
+    # Content moved 10 px right and 4 px up: read it back from there.
+    restored = apply_rigid_2d(moved, tx=10.0, ty=-4.0)
+    assert np.abs(restored - fixed)[20:-20, 20:-20].max() < 0.02
+
+
+def test_select_rigid_candidate_takes_the_shift_that_restores_the_match():
+    from scipy.ndimage import shift as nd_shift
+
+    from linumpy.registration.refinement import select_rigid_candidate
+
+    fixed, moving = _two_sided_brightness()
+    moved = nd_shift(moving, (0.0, 12.0), order=1, mode="constant", cval=0.0)
+    name, tx, ty, rot, score, identity_score = select_rigid_candidate(
+        fixed, moved, [("wrong", -30.0, 5.0, 0.0), ("right", 12.0, 0.0, 0.0)]
+    )
+    assert (name, tx, ty, rot) == ("right", 12.0, 0.0, 0.0)
+    assert score > 0.8
+    assert identity_score < score - 0.3
+
+
+def test_select_rigid_candidate_keeps_the_placement_when_a_candidate_is_worse():
+    from linumpy.registration.refinement import select_rigid_candidate
+
+    fixed, moving = _two_sided_brightness()
+    name, tx, ty, rot, score, identity_score = select_rigid_candidate(fixed, moving, [("runaway", 25.0, 40.0, 3.0)])
+    assert (name, tx, ty, rot) == ("identity", 0.0, 0.0, 0.0)
+    assert score == identity_score
+
+
+def test_select_rigid_candidate_needs_a_clear_gain():
+    from linumpy.registration.refinement import select_rigid_candidate
+
+    fixed, moving = _two_sided_brightness()
+    calls = iter([0.50, 0.51, 0.60])
+
+    def metric(_fixed, _moving, _threshold):
+        return next(calls)
+
+    name, *_rest, score, identity_score = select_rigid_candidate(
+        fixed, moving, [("slightly_better", 1.0, 0.0, 0.0), ("clearly_better", 2.0, 0.0, 0.0)], min_gain=0.05, metric=metric
+    )
+    assert name == "clearly_better"
+    assert (score, identity_score) == (0.60, 0.50)
+
+
+def test_find_best_z_with_a_metric_takes_the_plane_it_scores_highest():
+    from linumpy.registration.refinement import find_best_z
+
+    volume = np.zeros((30, 8, 8), dtype=np.float32)
+    for z in range(30):
+        volume[z] = z
+    best_z, score = find_best_z(
+        volume, np.full((8, 8), 17.0, np.float32), 14, 6, metric=lambda f, m: -abs(float(f[0, 0] - m[0, 0]))
+    )
+    assert (best_z, score) == (17, 0.0)
+
+
+def test_find_best_z_with_a_metric_skips_planes_without_a_score():
+    from linumpy.registration.refinement import find_best_z
+
+    volume = np.zeros((30, 8, 8), dtype=np.float32)
+    best_z, score = find_best_z(volume, np.zeros((8, 8), np.float32), 14, 6, metric=lambda _f, _m: float("nan"))
+    assert best_z == 14
+    assert np.isnan(score)
+
+
+def test_centre_ncc_matches_the_default_z_score():
+    from linumpy.registration.refinement import centre_ncc, find_best_z
+
+    rng = np.random.default_rng(4)
+    volume = rng.random((12, 64, 64)).astype(np.float32) + 0.1
+    moving = volume[7] + 0.05 * rng.random((64, 64)).astype(np.float32)
+    best_z, corr = find_best_z(volume, moving, 6, 4)
+    assert best_z == 7
+    assert centre_ncc(volume[7], moving) == pytest.approx(corr, abs=1e-6)
+
+
+def test_select_rigid_candidate_drops_a_faint_match():
+    from linumpy.registration.refinement import select_rigid_candidate
+
+    fixed, moving = _two_sided_brightness()
+    calls = iter([-0.03, 0.09])
+
+    def metric(_fixed, _moving, _threshold):
+        return next(calls)
+
+    name, *_rest, score, identity_score = select_rigid_candidate(
+        fixed, moving, [("faint", 85.0, 30.0, 0.0)], min_gain=0.02, metric=metric, min_score=0.15
+    )
+    assert name == "identity"
+    assert (score, identity_score) == (-0.03, -0.03)
