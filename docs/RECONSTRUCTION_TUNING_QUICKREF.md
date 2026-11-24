@@ -50,6 +50,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | A break in structures at one joint, the rest of the stack continuous (cut thicker or thinner than the interval, wedge slab) | `stack_z_step_from_structure=true` |
 | Dim planes at the top of slabs on one side, or one slab darker on one side after the sample was re-levelled (tilted cut face) | `crop_interface_flatten_tilt=true` |
 | Thin dark line at joints where the cut face is tilted or uneven | `stack_mask_above_surface_planes=12` |
+| Notched tissue outline and dark dots at every joint | `stack_fill_joint_gap_planes=6` |
 | Bright hard-edged patches in white matter deep in a slab | `compensate_attenuation_lateral_footprint=true` with `compensate_attenuation_lateral_sigma>0` |
 | A hard-edged region inside the tissue that is brighter than the tissue around it over the whole depth of a slab; the attenuation log says "Too little tissue to calibrate" | `compensate_attenuation_tissue_mask='column'` |
 | Some slabs fall off quickly with depth and others are flat (seen in the side views of single slabs) | `compensate_psf_method='pooled'` |

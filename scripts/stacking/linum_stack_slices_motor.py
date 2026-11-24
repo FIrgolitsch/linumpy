@@ -46,6 +46,7 @@ from linumpy.mosaic.stacking import (
     estimate_overlap_z_gain_fit,
     estimate_z_blend_xy_shift,
     expected_z_overlap,
+    fill_joint_gaps,
     find_z_overlap,
     find_z_step_structure,
     flatten_slice_z_profile,
@@ -237,6 +238,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Zero the voxels above each A-line's tissue surface within this many planes\n"
         "of the top of every incoming slab, so water above an uneven cut is not pasted\n"
         "over the slab above. 0 disables. [%(default)s]",
+    )
+    p.add_argument(
+        "--fill_joint_gap_planes",
+        type=int,
+        default=0,
+        help="Fill the empty runs of at most this many planes that a joint leaves along Z\n"
+        "where there is tissue directly above and below, by interpolating between\n"
+        "the two. Near the tissue outline the cut face is lower than the crop and\n"
+        "the deep end of the slab above is empty, which notches the outline at\n"
+        "every joint. 0 disables. [%(default)s]",
     )
     p.add_argument(
         "--z_overlap_min_corr",
@@ -1342,6 +1353,7 @@ def main() -> None:
     # Z index where each stacked slab starts. Recorded in the output so later
     # steps can cut sections where the slabs really are, not in equal chunks.
     slab_z_starts: list[int] = [0]
+    n_joint_gap_voxels = 0
 
     def _prepare_slab(match: dict) -> np.ndarray:
         """Read a slab and bring it to the state in which it is placed: masked, levelled, rotated."""
@@ -1549,12 +1561,28 @@ def main() -> None:
                 existing, shifted, threshold=args.blend_tissue_threshold
             )
 
+        if args.fill_joint_gap_planes > 0 and z_start > 0:
+            # Around the incoming cut face: one tissue plane on each side of the longest run filled.
+            reach = args.fill_joint_gap_planes + 1
+            gap_z0 = max(0, z_start - reach)
+            gap_z1 = min(z_end, z_start + reach)
+            around = np.array(assembly[gap_z0:gap_z1, dst_y0:dst_y1, dst_x0:dst_x1])
+            filled, n_filled = fill_joint_gaps(
+                around, z_start - gap_z0, args.fill_joint_gap_planes, tissue_threshold=args.blend_tissue_threshold
+            )
+            if n_filled:
+                assembly[gap_z0:gap_z1, dst_y0:dst_y1, dst_x0:dst_x1] = filled
+                n_joint_gap_voxels += n_filled
+                logger.debug("  Slice %s: filled %s voxels at the joint", slice_id, n_filled)
+
         z_cursor = z_end
         slab_z_starts.append(int(z_start))
 
         logger.debug("  Slice %s: z=[%s:%s], xy=[%s:%s, %s:%s]", slice_id, z_start, z_end, dst_y0, dst_y1, dst_x0, dst_x1)
 
     prepare_pool.shutdown()
+    if args.fill_joint_gap_planes > 0:
+        logger.info("Filled %s voxels in joint gaps of at most %s planes", n_joint_gap_voxels, args.fill_joint_gap_planes)
 
     # Build per-slice stacking decisions (also fed into the metrics collector)
     decisions = []

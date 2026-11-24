@@ -547,6 +547,14 @@ same A-line, is below half of that A-line's brightest smoothed value in the top
 of the slab; the stack then keeps the slab above there. This is the per-A-line
 water/tissue mask of Lefebvre et al. 2017.
 
+`stack_fill_joint_gap_planes` closes what is then left at a joint. Near the
+tissue outline the cut face of the incoming slab lies a few planes lower than
+the crop, and the deep end of the slab above is too dim to have survived as
+tissue, so neither slab has a value there. Along each A-line a run of
+background that spans the joint, is at most that many planes long and has
+tissue directly above and below is filled by linear interpolation between the
+two. Longer runs and runs open on one side are left empty.
+
 `stack_local_depth_gain` removes the depth trend that is left inside a slab.
 After the beam-profile and attenuation corrections the signal still changes
 with depth below the cut face, and by a different amount in each tissue: white

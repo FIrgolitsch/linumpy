@@ -926,6 +926,64 @@ def paste_tissue(
     return out
 
 
+def fill_joint_gaps(
+    block: np.ndarray,
+    joint: int,
+    max_gap: int,
+    tissue_threshold: float = 0.01,
+) -> tuple[np.ndarray, int]:
+    """Close the short empty runs that a slab joint leaves along Z.
+
+    Near the outline of the tissue the cut face of the incoming slab lies a
+    few planes lower than where the slab is cropped, and the deep end of the
+    slab above is too dim to have survived as tissue. At the joint neither
+    slab has a value there, and the stack shows a notch in the outline or a
+    dark dot inside the tissue.
+
+    Along each A-line, a run of background that spans the joint, is at most
+    *max_gap* planes long and has tissue directly above and directly below
+    is filled by linear interpolation between those two tissue voxels. A run
+    that is longer, or open on one side, is a real gap and is left alone.
+
+    Parameters
+    ----------
+    block : np.ndarray
+        3D array (Z, Y, X) of the stack around the joint.
+    joint : int
+        Index in *block* of the first plane of the incoming slab.
+    max_gap : int
+        Longest run, in planes, that is filled.
+    tissue_threshold : float
+        Intensity at or below this is background.
+
+    Returns
+    -------
+    np.ndarray
+        The block with the runs filled.
+    int
+        Number of voxels filled.
+    """
+    out = np.array(block, dtype=np.float32, copy=True)
+    nz = out.shape[0]
+    if max_gap <= 0 or nz < 3:
+        return out, 0
+    valid = out > float(tissue_threshold)
+    index = np.arange(nz, dtype=np.int32)[:, None, None]
+    above = np.maximum.accumulate(np.where(valid, index, -1), axis=0)
+    below = np.minimum.accumulate(np.where(valid, index, nz)[::-1], axis=0)[::-1]
+    gap = ~valid & (above >= 0) & (below < nz) & (below - above - 1 <= max_gap)
+    # Only the runs that contain the last plane before the joint or the first after it.
+    gap &= (above < joint) & (below > joint - 1)
+    n_filled = int(gap.sum())
+    if n_filled == 0:
+        return out, 0
+    top = np.take_along_axis(out, np.clip(above, 0, nz - 1), axis=0)
+    bottom = np.take_along_axis(out, np.clip(below, 0, nz - 1), axis=0)
+    weight = (index - above) / np.maximum(below - above, 1)
+    out[gap] = ((1.0 - weight) * top + weight * bottom)[gap]
+    return out, n_filled
+
+
 def blend_overlap_xy(existing: np.ndarray, new_data: np.ndarray, method: str = "none") -> np.ndarray:
     """Blend overlapping XY regions for motor-only stacking.
 

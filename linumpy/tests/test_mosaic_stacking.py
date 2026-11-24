@@ -944,3 +944,49 @@ def test_copy_threaded_matches_ascontiguousarray(workers):
     copy = copy_threaded(view, workers=workers)
     assert copy.flags.c_contiguous
     assert np.array_equal(copy, np.ascontiguousarray(view))
+
+
+def test_fill_joint_gaps_closes_a_short_run_across_the_joint():
+    from linumpy.mosaic.stacking import fill_joint_gaps
+
+    block = np.zeros((10, 2, 2), dtype=np.float32)
+    block[:4] = 1.0  # slab above, tissue down to plane 3
+    block[7:] = 4.0  # incoming slab, tissue from plane 7: planes 4 to 6 are empty
+    filled, n = fill_joint_gaps(block, joint=5, max_gap=3)
+    assert n == 3 * 4
+    np.testing.assert_allclose(filled[:, 0, 0], [1, 1, 1, 1, 1.75, 2.5, 3.25, 4, 4, 4])
+
+
+def test_fill_joint_gaps_leaves_a_run_that_is_too_long_or_open():
+    from linumpy.mosaic.stacking import fill_joint_gaps
+
+    block = np.zeros((12, 1, 3), dtype=np.float32)
+    block[:2, 0, 0] = 1.0
+    block[9:, 0, 0] = 1.0  # seven empty planes: longer than allowed
+    block[6:, 0, 1] = 1.0  # nothing above: open at the top
+    block[:5, 0, 2] = 1.0  # nothing below: open at the bottom
+    filled, n = fill_joint_gaps(block, joint=5, max_gap=4)
+    assert n == 0
+    np.testing.assert_array_equal(filled, block)
+
+
+def test_fill_joint_gaps_leaves_a_run_that_does_not_touch_the_joint():
+    from linumpy.mosaic.stacking import fill_joint_gaps
+
+    block = np.ones((12, 1, 2), dtype=np.float32)
+    block[8:10, 0, 0] = 0.0  # a dark structure below the joint
+    block[1:3, 0, 1] = 0.0  # and one above it
+    filled, n = fill_joint_gaps(block, joint=5, max_gap=4)
+    assert n == 0
+    np.testing.assert_array_equal(filled, block)
+
+
+def test_fill_joint_gaps_takes_the_run_that_ends_or_starts_at_the_joint():
+    from linumpy.mosaic.stacking import fill_joint_gaps
+
+    block = np.ones((10, 1, 2), dtype=np.float32)
+    block[5:7, 0, 0] = 0.0  # starts with the first plane of the incoming slab
+    block[3:5, 0, 1] = 0.0  # ends with the last plane before it
+    filled, n = fill_joint_gaps(block, joint=5, max_gap=4)
+    assert n == 4
+    assert (filled > 0).all()
