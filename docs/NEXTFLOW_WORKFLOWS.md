@@ -247,7 +247,7 @@ post-hoc outlier filtering.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `detect_rehoming` | `true` | Correct encoder glitch spikes (round-trip steps) before alignment |
+| `detect_rehoming` | `false` | Remove steps that return on the next slice before alignment. Off: with stage-position shifts those steps are real |
 | `rehoming_return_fraction` | `0.4` | Spike sensitivity: lower = fewer corrections (adjacent step must reverse > (1−this) of current) |
 | `rehoming_max_shift_mm` | `0.5` | Steps below this magnitude are not checked for spikes |
 | `tile_fov_mm` | `null` | Tile field-of-view (mm); set only for legacy shifts files where `xmin_mm` jumped by whole tile columns |

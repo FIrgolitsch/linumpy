@@ -71,7 +71,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 ### Common-space alignment
 | Param | Default | Lever |
 |---|---|---|
-| `detect_rehoming` | `true` | Keep on. |
+| `detect_rehoming` | `false` | Keep off: steps of the mosaic origin are real moves of the slab image. |
 | `rehoming_max_shift_mm` | `0.5` | Lower to catch smaller glitches. |
 | `tile_fov_mm` | `null` | Set only for legacy shift CSVs with FOV-multiple jumps. |
 | `common_space_refine_unreliable` | `false` | Image-based fallback for `reliable=0` shifts. |

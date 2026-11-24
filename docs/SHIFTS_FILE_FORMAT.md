@@ -39,18 +39,26 @@ fixed_id,moving_id,x_shift,y_shift,x_shift_mm,y_shift_mm
 
 ## Shift Direction
 
-The shifts represent the **transformation needed to align the moving slice to the fixed slice**:
+A shift is the displacement of the **origin of the moving slab image relative
+to the fixed one, in image axes**. The 3D pipeline places every slab at the
+running sum of the shifts:
 
 ```
-moving_slice_aligned = moving_slice + (x_shift, y_shift)
+origin[moving] = origin[fixed] + (x_shift, y_shift)
 ```
 
-Or equivalently, the shifts represent the **position difference** between consecutive slices:
+The sample is fixed on the stage, so a piece of tissue has the same stage
+position in every slice, and the slab image starts at the low corner of its
+mosaic. A mosaic is laid out with stage X along the image rows and stage Y
+along the image columns, so:
 
 ```
-x_shift = mosaic_xmin[fixed] - mosaic_xmin[moving]
-y_shift = mosaic_ymin[fixed] - mosaic_ymin[moving]
+x_shift (image columns) = mosaic_ymin[moving] - mosaic_ymin[fixed]
+y_shift (image rows)    = mosaic_xmin[moving] - mosaic_xmin[fixed]
 ```
+
+This holds when the acquisition moves the mosaic and when it adds or drops
+tiles on any side: the low corner is where the image starts in every case.
 
 ---
 
@@ -66,29 +74,11 @@ linum-estimate-xy-shift-from-metadata <tiles_directory> <output_file> [--n_proce
 
 1. Scans tile directory for all slices
 2. Extracts stage positions from tile metadata
-3. Computes mosaic origin (xmin, ymin) for each slice
-4. Calculates pairwise shifts between consecutive slices
-5. Converts to pixels using tile resolution
-6. Writes CSV file
-
-### Source Code Reference
-
-```python
-# From linum-estimate-xy-shift-from-metadata
-
-# Compute the shift between slices in mm
-x_shifts_mm = []
-y_shifts_mm = []
-for i in range(n_slices - 1):
-    dx = xmin_mm[i] - xmin_mm[i + 1]
-    dy = ymin_mm[i] - ymin_mm[i + 1]
-    x_shifts_mm.append(dx)
-    y_shifts_mm.append(dy)
-
-# Convert the shifts in pixel
-x_shift_px = np.array(x_shifts_mm) / tile_resolution[0]
-y_shift_px = np.array(y_shifts_mm) / tile_resolution[1]
-```
+3. Computes the low corner (xmin, ymin) of the mosaic of each slice
+4. Takes the displacement of that corner between consecutive slices and maps
+   it to image axes (`linumpy.stack_alignment.origin.slab_origin_shifts_mm`)
+5. Converts to pixels using the lateral tile resolution
+6. Writes CSV file, with `reliable = 1` for every pair
 
 ---
 
@@ -188,7 +178,15 @@ The shifts file may contain erroneous large values due to:
 
 Uncorrected, these errors cause slices to drift out of the common volume.
 
-### Solution: Re-homing Detection (pipeline default)
+### Solution: Re-homing Detection (off by default)
+
+> A shifts file written by the current `linum-estimate-xy-shift-from-metadata`
+> holds stage positions of the slab origin. A large step that returns on the
+> next slice, or a step of one tile, is then the acquisition moving or
+> resizing the mosaic, and the slab image moves with it. Removing such steps
+> misplaces the slab, so keep `detect_rehoming = false` and `tile_fov_mm`
+> unset for these files. The tool below remains for shifts files of another
+> origin.
 
 Use `linum-detect-rehoming` (run automatically by the 3D reconstruction
 pipeline when `detect_rehoming = true`) to emit a corrected shifts CSV:
@@ -221,7 +219,7 @@ In `nextflow.config`:
 ```groovy
 params {
     // Re-homing detection (upstream of common-space alignment)
-    detect_rehoming         = true
+    detect_rehoming         = false
     rehoming_return_fraction = 0.4
     rehoming_max_shift_mm    = 0.5
     tile_fov_mm              = null  // 0.875 only for legacy shifts files
