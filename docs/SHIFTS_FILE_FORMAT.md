@@ -93,6 +93,30 @@ The `linum-align-mosaics-3d-from-shifts` script uses shifts to bring all slices 
 3. **Determine common shape**: Find bounding box encompassing all aligned slices
 4. **Apply shifts**: Translate each slice by its cumulative shift
 
+### From millimetres to pixels: the tile lattice
+
+A slab image lives in the laser scanning frame. Within a slab the tiles are
+laid out with the displacement model of Lefebvre et al. 2017 (Sec. 2.4): one
+tile step of the stage is a fixed vector in pixels, a few percent shorter
+than the nominal pixel size says and slightly rotated, because the scanned
+field is not exactly its nominal size and the scanning frame is not exactly
+aligned with the stage. `linum-estimate-global-transform` fits that vector
+pair once per brain.
+
+The move of the slab origin between two slices is made by the same stage
+and seen by the same scanner, so with `--tile_lattice` (pipeline parameter
+`common_space_tile_lattice`, on by default) the cumulative shift is converted
+with the fitted lattice instead of dividing by the resolution. Two things
+follow:
+
+- A stage move of *d* mm becomes `T @ (d / tile_step_mm)` pixels, where `T`
+  is the fitted 2 x 2 matrix.
+- The stitcher moves all tiles of a slab so that none has a negative
+  position. With a rotated lattice the first tile then sits at an offset
+  that depends on the size of the tile grid, and that offset is taken off
+  the position of each slab. The grid of a slab is recovered from the shape
+  of its image.
+
 ### Cumulative Shift Calculation
 
 ```python

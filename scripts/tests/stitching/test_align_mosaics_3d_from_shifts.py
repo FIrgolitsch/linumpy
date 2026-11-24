@@ -119,3 +119,61 @@ def test_plan_then_one_mosaic_at_a_time_matches_the_single_run(script_runner, tm
         shifted, res = read_omezarr(out)
         assert list(res) == list(expected_res)
         assert np.array_equal(np.asarray(shifted[:]), np.asarray(expected[:]))
+
+
+def test_plan_with_the_tile_lattice_places_slabs_by_the_fitted_steps(script_runner, tmp_path):
+    """Two slabs of different grids, the second one tile step further along stage X and Y.
+
+    With the lattice the step is 57.9 and 58.66 px instead of 60, the cross
+    terms come in, and the canvas offset of each grid is taken off.
+    """
+    import json
+
+    import numpy as np
+    import pandas as pd
+    import pytest
+
+    from linumpy.mosaic.motor import compute_affine_output_shape
+    from linumpy.stack_alignment.origin import TileLattice
+
+    transform = np.array([[57.9, 1.0], [-1.33, 58.66]])
+    grids = {0: (9, 8), 1: (11, 12)}
+    shapes = {z: compute_affine_output_shape(nx, ny, (4, 75, 75), transform) for z, (nx, ny) in grids.items()}
+    mosaics = tmp_path / "mosaics"
+    _write_mosaics(mosaics, shapes)
+    lattice_file = tmp_path / "global_affine.json"
+    lattice_file.write_text(json.dumps({"transform": transform.tolist(), "tile_shape": [4, 75, 75], "overlap_fraction": 0.2}))
+    shifts = tmp_path / "shifts_xy.csv"
+    # One tile step (0.6 mm) along image X and along image Y.
+    pd.DataFrame(
+        {"fixed_id": [0.0], "moving_id": [1.0], "x_shift": [0.0], "y_shift": [0.0], "x_shift_mm": [0.6], "y_shift_mm": [0.6]}
+    ).to_csv(shifts, index=False)
+
+    out = tmp_path / "plan"
+    ret = script_runner.run(
+        [
+            "linum-align-mosaics-3d-from-shifts",
+            mosaics,
+            shifts,
+            out,
+            "--plan_only",
+            "--tile_lattice",
+            lattice_file,
+            "--no_center_drift",
+        ]
+    )
+    assert ret.success, ret.stderr
+    plan = pd.read_csv(out / "common_space_plan.csv").sort_values("slice_id")
+    placed_x = plan["shift_x_px"].to_numpy(dtype=float)
+    placed_y = plan["shift_y_px"].to_numpy(dtype=float)
+
+    lattice = TileLattice(transform=transform, tile_shape=(75, 75), step_mm=(0.6, 0.6))
+    first = {z: lattice.first_tile_px(*grid) for z, grid in grids.items()}
+    # Origin of each slab before the frame is moved to start at zero.
+    origin = {0: (-first[0][1], -first[0][0]), 1: (58.66 - 1.33 - first[1][1], 57.9 + 1.0 - first[1][0])}
+    step_x = origin[1][0] - origin[0][0]
+    step_y = origin[1][1] - origin[0][1]
+    assert placed_x[1] - placed_x[0] == pytest.approx(step_x)
+    assert placed_y[1] - placed_y[0] == pytest.approx(step_y)
+    # Without the lattice the step would have been 60 px on both axes.
+    assert abs(step_x - 60.0) > 1.0

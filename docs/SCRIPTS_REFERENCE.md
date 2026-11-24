@@ -603,6 +603,7 @@ linum-align-mosaics-3d-from-shifts <mosaics_dir> <shifts.csv> <output_dir> \
 | `--refine_unreliable` | off | For transitions flagged `reliable=0`, use 2-D phase correlation to replace the metadata shift (requires scikit-image) |
 | `--refine_max_discrepancy_px` | `0` | Reject image-based estimates differing from metadata by more than this many pixels (0 = accept all) |
 | `--refine_min_correlation` | `0.0` | Minimum NCC to accept an image-based refinement |
+| `--tile_lattice` | — | JSON written by `linum-estimate-global-transform --diagnostics_json`. The stage shifts are converted to pixels with that displacement model, and the canvas offset of each slab's tile grid is taken off |
 
 ### linum-detect-rehoming
 

@@ -1,6 +1,6 @@
 """CSV loading and cumulative shift computation."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -54,6 +54,7 @@ def build_cumulative_shifts(
     selected_slice_ids: list,
     resolution: Sequence[float],
     center_drift: bool = True,
+    to_pixels: Callable[[float, float], tuple[float, float]] | None = None,
 ) -> dict:
     """Build cumulative pixel shifts for selected slices.
 
@@ -70,6 +71,9 @@ def build_cumulative_shifts(
         Resolution (res_z, res_y, res_x) from read_omezarr; auto-detects mm vs µm.
     center_drift : bool
         If True, center cumulative drift around the middle slice.
+    to_pixels : callable, optional
+        ``to_pixels(dx_mm, dy_mm)`` giving the pixel position for a cumulative
+        position in mm. Without it the position is divided by the resolution.
 
     Returns
     -------
@@ -104,7 +108,10 @@ def build_cumulative_shifts(
     for slice_id in selected_slice_ids:
         if slice_id in cumsum_all:
             dx_mm, dy_mm = cumsum_all[slice_id]
-            cumsum_selected[slice_id] = (dx_mm * mm_to_px_x, dy_mm * mm_to_px_y)
+            if to_pixels is not None:
+                cumsum_selected[slice_id] = to_pixels(dx_mm, dy_mm)
+            else:
+                cumsum_selected[slice_id] = (dx_mm * mm_to_px_x, dy_mm * mm_to_px_y)
         else:
             cumsum_selected[slice_id] = (0.0, 0.0)
 

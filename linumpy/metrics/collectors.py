@@ -683,6 +683,8 @@ def collect_common_space_metrics(
     n_refined_image_based: int,
     n_refined_rejected: int,
     refine_discrepancies_px: list[float] | None = None,
+    tile_lattice: list | None = None,
+    n_grid_unknown: int | None = None,
 ) -> PipelineMetrics:
     """Collect aggregate metrics for the common-space alignment step."""
     output_dir = Path(output_dir)
@@ -694,6 +696,9 @@ def collect_common_space_metrics(
     metrics.add_info("n_unreliable", int(n_unreliable), "Transitions flagged reliable=0 in shifts file")
     metrics.add_info("n_refined_image_based", int(n_refined_image_based), "Unreliable transitions refined via registration")
     metrics.add_info("n_refined_rejected", int(n_refined_rejected), "Image-based refinements rejected (NCC/discrepancy)")
+    if tile_lattice is not None:
+        metrics.add_info("tile_lattice", tile_lattice, "Pixels per tile step used to convert the stage shifts (row, col)")
+        metrics.add_info("n_grid_unknown", int(n_grid_unknown or 0), "Slabs whose shape does not fit the tile lattice")
 
     if refine_discrepancies_px:
         arr = np.asarray(refine_discrepancies_px, dtype=float)

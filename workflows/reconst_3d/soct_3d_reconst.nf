@@ -280,6 +280,14 @@ workflow {
         .merge(aligned_shifts) { a, b -> tuple(a, b) }
         .merge(current_slice_config) { a, b -> tuple(a[0], a[1], b) }
 
+    // The slabs are placed with the displacement model they were stitched
+    // with: the stage and the scanner that set the tiles within a slab also
+    // move the slab origin from one slice to the next.
+    tile_lattice = (params.stitch_global_transform && params.common_space_tile_lattice)
+        ? estimate_global_transform.out.diagnostics
+        : channel.value(file('NO_TILE_LATTICE'))
+    common_space_input = common_space_input.merge(tile_lattice) { a, b -> tuple(a[0], a[1], a[2], b) }
+
     // The frame is planned once for all slices (its size, and where each
     // slice sits in it). Each slice is then shifted in a task of its own, so
     // the slices run side by side and a resume redoes only the slices whose
@@ -1063,7 +1071,7 @@ process detect_rehoming_events {
 // the slices only for their shape, and for the transitions it has to refine.
 process plan_common_space {
     input:
-    tuple path("inputs/*"), path("shifts_xy.csv"), path(slice_config)
+    tuple path("inputs/*"), path("shifts_xy.csv"), path(slice_config), path(tile_lattice)
 
     output:
     path "common_space_plan.csv", emit: plan
@@ -1086,9 +1094,10 @@ process plan_common_space {
 
     // Emitted only when set, so other runs keep their cache.
     def overrides_arg = params.common_space_shift_overrides ? " --shift_overrides ${params.common_space_shift_overrides}" : ""
+    def lattice_arg = tile_lattice.name != 'NO_TILE_LATTICE' ? " --tile_lattice ${tile_lattice}" : ""
     """
     linum-align-mosaics-3d-from-shifts inputs shifts_xy.csv common_space --plan_only \
-        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}${overrides_arg}
+        ${slice_config_arg} ${excluded_args} ${refine_arg} ${discrepancy_arg} ${min_corr_arg}${overrides_arg}${lattice_arg}
     mv common_space/* .
     """
 

@@ -254,6 +254,7 @@ post-hoc outlier filtering.
 | `tile_fov_tolerance` | `0.05` | Fractional tolerance around each tile-FOV multiple |
 | `common_space_excluded_slice_mode` | `'local_median'` | Handling for excluded-slice shifts: `keep`, `local_median`, `median`, `zero` |
 | `common_space_excluded_slice_window` | `2` | Window size for `local_median` replacement |
+| `common_space_tile_lattice` | `true` | Convert the stage shifts to pixels with the displacement model the slabs were stitched with (needs `stitch_global_transform`), instead of the nominal pixel size |
 | `common_space_refine_unreliable` | `false` | Re-estimate `reliable=0` transitions with 2-D phase cross-correlation |
 | `common_space_refine_max_discrepancy_px` | `0` | Reject image-based estimates differing from motor by more than this (0 = accept all) |
 | `common_space_refine_min_correlation` | `0.0` | Minimum NCC to accept an image-based refinement |

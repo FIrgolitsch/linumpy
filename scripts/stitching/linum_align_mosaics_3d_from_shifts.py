@@ -26,6 +26,7 @@ from linumpy.io.zarr import read_omezarr
 from linumpy.metrics import collect_common_space_metrics
 from linumpy.stack_alignment.common_space import PLAN_FILENAME, shift_mosaic_to_common_space, write_common_space_plan
 from linumpy.stack_alignment.io import build_cumulative_shifts
+from linumpy.stack_alignment.origin import TileLattice
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -99,6 +100,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "change upstream can flip that decision and move every slab after it.",
     )
 
+    p.add_argument(
+        "--tile_lattice",
+        default=None,
+        help="Displacement model the slabs were stitched with (the JSON written by\n"
+        "linum-estimate-global-transform --diagnostics_json). The stage shifts are\n"
+        "then converted to pixels with that model instead of the nominal pixel\n"
+        "size: the same stage and scanner move the slab origin between slices\n"
+        "as move the tiles within a slab.",
+    )
     p.add_argument(
         "--plan_only",
         action="store_true",
@@ -531,7 +541,35 @@ def main() -> None:
 
     # Build cumulative shifts for selected slices
     center_drift = not args.no_center_drift
-    cumsum_shifts = build_cumulative_shifts(shifts_df, selected_slice_ids, res, center_drift=center_drift)
+    lattice = TileLattice.load(args.tile_lattice, res) if args.tile_lattice else None
+    cumsum_shifts = build_cumulative_shifts(
+        shifts_df,
+        selected_slice_ids,
+        res,
+        center_drift=center_drift,
+        to_pixels=lattice.displacement_px if lattice is not None else None,
+    )
+    n_grid_unknown = 0
+    if lattice is not None:
+        # The shifts follow the first tile of each slab. The slab image starts
+        # where the stitcher put its canvas, which depends on the tile grid.
+        for slice_id in selected_slice_ids:
+            img, _ = read_omezarr(mosaic_files[slice_id])
+            grid = lattice.grid_shape(img.shape)
+            if grid is None:
+                n_grid_unknown += 1
+                print(
+                    f"  Warning: slice {slice_id:02d} of shape {img.shape[-2:]} does not fit the tile lattice; "
+                    "no canvas offset applied"
+                )
+                continue
+            first_row, first_col = lattice.first_tile_px(*grid)
+            dx, dy = cumsum_shifts[slice_id]
+            cumsum_shifts[slice_id] = (dx - first_col, dy - first_row)
+        print(
+            f"Tile lattice {np.round(lattice.transform, 3).tolist()} px per tile step of "
+            f"{lattice.step_mm[0]:.3f} x {lattice.step_mm[1]:.3f} mm; {n_grid_unknown} slab(s) without a matching grid"
+        )
 
     # Compute common shape
     nx, ny, x0, y0 = compute_common_shape(mosaic_files, selected_slice_ids, cumsum_shifts)
@@ -565,6 +603,8 @@ def main() -> None:
         n_refined_image_based=n_refined_image_based,
         n_refined_rejected=n_refined_rejected,
         refine_discrepancies_px=refine_discrepancies_px,
+        tile_lattice=lattice.transform.tolist() if lattice is not None else None,
+        n_grid_unknown=n_grid_unknown if lattice is not None else None,
     )
 
 
