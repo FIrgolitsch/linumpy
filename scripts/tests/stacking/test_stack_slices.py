@@ -238,3 +238,53 @@ def test_stack_levels_a_local_brightness_difference_at_a_joint(script_runner, tm
     # The other side of the image was the same in all three slabs and stays as it was.
     right = (slice(None), slice(None), slice(block.shape[2] // 2 + 48, None))
     np.testing.assert_allclose(levelled[right], plain[right], rtol=0.02, atol=1e-4)
+
+
+def test_stack_hands_over_below_a_cut_face_that_dips(script_runner, tmp_path):
+    """The cut face of one slab lies up to six planes lower on one side, with a dim ramp under it."""
+    import dask.array as da
+
+    from linumpy.io.zarr import read_omezarr, save_omezarr
+
+    block = _textured_block(110)
+    slices_dir = tmp_path / "slices"
+    slices_dir.mkdir()
+    surface = np.round(np.linspace(0, 6, block.shape[2])).astype(int)
+    for index, top in enumerate((0, 20, 40)):
+        slab = block[top : top + 44].copy()
+        if index == 1:
+            for x in range(slab.shape[2]):
+                slab[: surface[x], :, x] = 0.0
+                for step in range(3):
+                    slab[surface[x] + step, :, x] *= 0.15 + 0.25 * step
+        save_omezarr(da.from_array(slab), slices_dir / f"slice_z{index:02d}.ome.zarr", (0.01, 0.01, 0.01))
+    shifts = tmp_path / "shifts_xy.csv"
+    shifts.write_text("fixed_id,moving_id,x_shift,y_shift,x_shift_mm,y_shift_mm,reliable\n0,1,0,0,0,0,1\n1,2,0,0,0,0,1\n")
+
+    def dark_fraction(name: str, *options: str) -> float:
+        out = tmp_path / name
+        ret = script_runner.run(
+            [
+                "linum-stack-slices-motor",
+                str(slices_dir),
+                str(shifts),
+                str(out),
+                "--use_expected_overlap",
+                "--no_xy_shift",
+                "--blend",
+                "--blend_cut_face_planes",
+                "8",
+                "--no-local_depth_gain",
+                *options,
+            ]
+        )
+        assert ret.success, ret.stderr
+        volume, _ = read_omezarr(out, level=0)
+        volume = np.asarray(volume[:])
+        tissue = block[: volume.shape[0]] > 0.1
+        return float(((volume[tissue] / block[: volume.shape[0]][tissue]) < 0.8).mean())
+
+    plain = dark_fraction("plain.ome.zarr")
+    followed = dark_fraction("followed.ome.zarr", "--surface_handover_planes", "12")
+    assert plain > 0.002
+    assert followed < 0.1 * plain

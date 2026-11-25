@@ -910,11 +910,70 @@ def blend_overlap_z(fixed_region: np.ndarray, moving_region: np.ndarray, tissue_
     return blended
 
 
+def surface_confidence(
+    existing: np.ndarray,
+    incoming: np.ndarray,
+    planes: int,
+    tissue_threshold: float = 0.01,
+    sigma_xy: float = 2.0,
+    low: float = 0.5,
+    high: float = 0.8,
+) -> np.ndarray:
+    """How far the incoming slab has come out of its own surface, per voxel of the overlap.
+
+    A slab is cropped at one depth, but its cut face is not flat: near free
+    edges and over soft tissue the surface lies a few planes lower. There the
+    first planes of the slab are empty and the next ones ramp up from a few
+    percent of the tissue level. The ramp is above the background threshold,
+    so it counts as tissue, and blended into the stack it draws a dark line
+    over the slab above, which shows the same place at full brightness.
+
+    The slab above is the reference: on an A-line the incoming slab is
+    trusted from the first plane where it reaches the brightness of the slab
+    above, and on every plane below it. Before that the weight is zero below
+    ``low`` of that brightness and rises to one at ``high``. The first two
+    planes of a slab are a quarter to a third dimmer than the slab above
+    everywhere; the limits leave most of that to the cross-fade and hold back
+    the A-lines that are well below it. Where the slab above has no tissue
+    the incoming slab is all there is and its weight is one.
+
+    Parameters
+    ----------
+    existing, incoming : np.ndarray
+        The overlap ``(Z, Y, X)`` from the stack and from the incoming slab,
+        plane 0 at the incoming cut face, at a common brightness (see
+        :func:`level_joint`).
+    planes : int
+        Planes from the top of the overlap that are looked at.
+    tissue_threshold : float
+        Intensity at or below this is background.
+    sigma_xy : float
+        XY smoothing in pixels before the two slabs are compared.
+    low, high : float
+        Brightness relative to the slab above at which the weight is 0 and 1.
+
+    Returns
+    -------
+    np.ndarray
+        Weight of the incoming slab, 0 to 1, for the first ``planes`` planes.
+    """
+    n = min(max(1, int(planes)), existing.shape[0], incoming.shape[0])
+    above = gaussian_filter_planes(np.asarray(existing[:n], dtype=np.float32), sigma_xy)
+    below = gaussian_filter_planes(np.asarray(incoming[:n], dtype=np.float32), sigma_xy)
+    known = above > tissue_threshold
+    # A plane on which the slab above is empty says nothing about the planes below it.
+    ratio = np.where(known, below / np.maximum(above, 1e-6), -np.inf)
+    reached = np.maximum.accumulate(ratio, axis=0)
+    weight = np.clip((reached - low) / (high - low), 0.0, 1.0)
+    return np.where(known, weight, 1.0).astype(np.float32)
+
+
 def blend_cut_face(
     existing: np.ndarray,
     incoming: np.ndarray,
     planes: int,
     tissue_threshold: float = 0.01,
+    confidence: np.ndarray | None = None,
 ) -> np.ndarray:
     """Cross-fade the first ``planes`` of an overlap, then keep the incoming slab.
 
@@ -935,6 +994,11 @@ def blend_cut_face(
         Depth of the cross-fade, clamped to the overlap.
     tissue_threshold : float
         Intensity at or below this is background. Default 0.01.
+    confidence : np.ndarray or None
+        Weight of the incoming slab for the first planes of the overlap, from
+        :func:`surface_confidence`. Where both slabs have tissue, the incoming
+        slab enters with this weight on top of the cross-fade, so an A-line is
+        handed over where the incoming slab comes out of its surface.
 
     Returns
     -------
@@ -944,6 +1008,17 @@ def blend_cut_face(
     n = min(max(1, int(planes)), existing.shape[0])
     out = paste_tissue(existing, incoming, threshold=tissue_threshold)
     out[:n] = blend_overlap_z(existing[:n], incoming[:n], tissue_threshold=tissue_threshold)
+    if confidence is not None:
+        m = min(confidence.shape[0], existing.shape[0])
+        above = np.asarray(existing[:m], dtype=np.float32)
+        has_above = above > tissue_threshold
+        both = has_above & (np.asarray(incoming[:m]) > tissue_threshold)
+        weight = confidence[:m]
+        mixed = np.where(both, weight * out[:m] + (1.0 - weight) * above, out[:m])
+        # Where only the slab above has tissue it is kept as it is. The
+        # cross-fade pulls such voxels towards the incoming slab's tissue next
+        # to them, which here is the dim rim of its surface.
+        out[:m] = np.where(has_above & ~both, above, mixed)
     return out
 
 

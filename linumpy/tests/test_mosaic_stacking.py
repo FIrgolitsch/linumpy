@@ -1083,3 +1083,61 @@ def test_level_joint_meets_in_the_middle_and_leaves_the_slab_centres():
     hole = np.zeros((4, 32, 32), dtype=np.float32)
     level_joint(hole[:2], hole[2:], hole.copy(), field, planes)
     assert not hole.any()
+
+
+def _dipping_slab(slab: np.ndarray, dip: int = 6, ramp: int = 3) -> np.ndarray:
+    """The slab with a cut face that lies up to ``dip`` planes lower towards the right.
+
+    Above its surface an A-line is empty, and over the next ``ramp`` planes it
+    comes up from a fraction of the tissue level, as a real cut face does.
+    """
+    out = slab.copy()
+    nx = slab.shape[2]
+    surface = np.round(np.linspace(0, dip, nx)).astype(int)
+    for x in range(nx):
+        out[: surface[x], :, x] = 0.0
+        for step in range(ramp):
+            plane = surface[x] + step
+            if plane < out.shape[0]:
+                out[plane, :, x] *= 0.15 + 0.25 * step
+    return out
+
+
+def test_surface_confidence_follows_a_cut_face_that_dips():
+    from linumpy.mosaic.stacking import surface_confidence
+
+    block = _textured_block(nz=20)
+    incoming = _dipping_slab(block)
+    confidence = surface_confidence(block, incoming, 12)
+    assert confidence.shape == (12, *block.shape[1:])
+    centre = block.shape[1] // 2
+    left, right = 20, block.shape[2] - 20  # surface at plane 1 and at plane 5
+    # In the dim planes the slab above is kept, below them the incoming slab is trusted.
+    assert confidence[1, centre, left] < 0.1
+    assert confidence[5, centre, left] == pytest.approx(1.0)
+    assert confidence[6, centre, right] < 0.1
+    assert confidence[10, centre, right] == pytest.approx(1.0)
+    # Once reached, the weight stays: a dark structure further down is anatomy.
+    darker = incoming.copy()
+    darker[9:] *= 0.3
+    assert surface_confidence(block, darker, 12)[10, centre, left] == pytest.approx(1.0)
+    # Without a slab above there is nothing to wait for.
+    assert surface_confidence(np.zeros_like(block), incoming, 12).min() == pytest.approx(1.0)
+
+
+def test_blend_cut_face_leaves_no_dark_line_under_a_dipping_cut_face():
+    from linumpy.mosaic.stacking import blend_cut_face, surface_confidence
+
+    block = _textured_block(nz=20)
+    incoming = _dipping_slab(block)
+    tissue = block > 0.1
+    plain = blend_cut_face(block, incoming, 8)
+    followed = blend_cut_face(block, incoming, 8, confidence=surface_confidence(block, incoming, 12))
+    # Both slabs show the same tissue, so the blend should give the block back.
+    dark_plain = (plain[tissue] / block[tissue]) < 0.8
+    dark_followed = (followed[tissue] / block[tissue]) < 0.8
+    assert dark_plain.mean() > 0.02
+    assert dark_followed.mean() < 0.1 * dark_plain.mean()
+    assert (followed[tissue] / block[tissue]).min() > 0.6
+    # Below the surface the incoming slab is what is written, as before.
+    np.testing.assert_allclose(followed[12:], plain[12:])

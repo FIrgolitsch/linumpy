@@ -564,7 +564,24 @@ next. The fine cells need the two slabs to be aligned: they are used at joints
 whose depth was measured and whose match found the slabs within 3 pixels of
 each other. At the other joints the ratio is taken in cells of 8 pixels
 smoothed over 4 cells, since a fine field on misaligned slabs would copy the
-structure of one slab into the other.
+structure of one slab into the other. The ratio is measured in planes 6 to 13
+of the overlap where it is deep enough, below the planes in which the incoming
+slab can still be coming out of its surface.
+
+With `stack_surface_handover_planes` an A-line is handed over where the
+incoming slab comes out of its own surface. A slab is cropped at one depth,
+but the cut face is not flat: near free edges and over soft tissue it lies a
+few planes lower. There the first planes of the slab are empty and the next
+ones ramp up from a few percent of the tissue level. That ramp is above the
+background threshold, so it counts as tissue, and blended into the stack it
+draws a thin dark line over the slab above, which shows the same place at full
+brightness. After the two slabs are levelled, both are smoothed over 2 pixels
+in XY and compared plane by plane from the top of the incoming slab. On each
+A-line the incoming slab gets weight zero while it is below 0.5 of the slab
+above, weight one from the first plane where it reaches 0.8, and it keeps
+that weight on every plane below, so a dark structure further down is not
+taken for the surface. The weight multiplies the cross-fade. Where only the
+slab above has tissue it is written unchanged.
 
 `stack_mask_above_surface_planes` handles a cut face that is tilted or uneven.
 A slab is cropped at one depth, the average surface, so on part of it the first

@@ -50,6 +50,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Breaks in structures at joints, or a stack that is too short (the surface found by the interface crop moves from slab to slab, a cut thicker or thinner than the interval, a wedge slab) | `stack_z_step_from_structure=true` |
 | Dim planes at the top of slabs on one side, or one slab darker on one side after the sample was re-levelled (tilted cut face) | `crop_interface_flatten_tilt=true` |
 | Thin dark line at joints where the cut face is tilted or uneven | `stack_mask_above_surface_planes=12` |
+| Thin dark lines at joints that fade out away from a tissue edge, with solid tissue in the slab above (the incoming slab's surface lies lower there and its first planes are dim) | `stack_surface_handover_planes=12` |
 | A band at every joint that changes from place to place, darker under bright structures (what the depth corrections left in each slab) | `stack_joint_level_planes=10` |
 | Notched tissue outline and dark dots at every joint | `stack_fill_joint_gap_planes=6` |
 | Bright hard-edged patches in white matter deep in a slab | `compensate_attenuation_lateral_footprint=true` with `compensate_attenuation_lateral_sigma>0` |

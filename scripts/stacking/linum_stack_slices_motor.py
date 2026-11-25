@@ -60,6 +60,7 @@ from linumpy.mosaic.stacking import (
     rigid_euler_pad,
     scale_slice_to_median,
     slice_tissue_median,
+    surface_confidence,
     write_slab_z_starts,
     zero_above_surface,
 )
@@ -245,6 +246,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "difference; the gain is full at the joint and falls to one over this\n"
         "many planes into each slab. Needs --blend_cut_face_planes. 0 = off.\n"
         "[%(default)s]",
+    )
+    p.add_argument(
+        "--surface_handover_planes",
+        type=int,
+        default=0,
+        help="Hand each A-line over where the incoming slab comes out of its own surface:\n"
+        "within this many planes of its top, the incoming slab enters the blend only\n"
+        "from where it reaches the brightness of the slab above. The cut face is not\n"
+        "flat, and the dim planes above the real surface draw a dark line at the\n"
+        "joint. Needs --blend_cut_face_planes. 0 = off. [%(default)s]",
     )
     p.add_argument(
         "--mask_above_surface_planes",
@@ -1479,6 +1490,7 @@ def main() -> None:
 
     stacked = Counter("stack", "slabs stacked", len(z_matches))
     joint_level_rms: list[float] = []
+    n_surface_voxels = 0
 
     # Stack remaining slices
     for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
@@ -1581,8 +1593,10 @@ def main() -> None:
                 # Same tissue in both slabs here: level what the depth
                 # corrections left between them before they are blended.
                 if args.joint_level_planes > 0 and args.blend_cut_face_planes > 0 and overlap_depth > 2:
-                    # The first two planes of a slab are partly above its surface.
-                    measure = slice(min(2, overlap_depth - 1), min(overlap_depth, face_planes + 2))
+                    # Measured below the planes where the incoming slab can still be
+                    # coming out of its surface, as far as the overlap allows.
+                    measure_from = max(0, min(6, overlap_depth - 6))
+                    measure = slice(measure_from, min(overlap_depth, measure_from + 8))
                     # On the scale of the shadows where the slabs are known to be
                     # aligned, over a few hundred microns where they are not.
                     level_cell, level_sigma = (4, 1.0) if slice_id in aligned_joints else (8, 4.0)
@@ -1608,8 +1622,21 @@ def main() -> None:
 
                 # Blend
                 if args.blend_cut_face_planes > 0:
+                    confidence = None
+                    if args.surface_handover_planes > 0:
+                        confidence = surface_confidence(
+                            existing,
+                            moving_overlap,
+                            args.surface_handover_planes,
+                            tissue_threshold=args.blend_tissue_threshold,
+                        )
+                        n_surface_voxels += int((confidence < 0.5).sum())
                     blended = blend_cut_face(
-                        existing, moving_overlap, face_planes, tissue_threshold=args.blend_tissue_threshold
+                        existing,
+                        moving_overlap,
+                        face_planes,
+                        tissue_threshold=args.blend_tissue_threshold,
+                        confidence=confidence,
                     )
                 else:
                     blended = blend_overlap_z(existing, moving_overlap, tissue_threshold=args.blend_tissue_threshold)
@@ -1648,6 +1675,8 @@ def main() -> None:
         logger.debug("  Slice %s: z=[%s:%s], xy=[%s:%s, %s:%s]", slice_id, z_start, z_end, dst_y0, dst_y1, dst_x0, dst_x1)
 
     prepare_pool.shutdown()
+    if args.surface_handover_planes > 0:
+        logger.info("Kept the slab above on %s voxels where the incoming slab was still above its surface", n_surface_voxels)
     if joint_level_rms:
         logger.info(
             "Levelled %s joints (%s on the fine scale): brightness difference in the overlap, rms over cells, "
