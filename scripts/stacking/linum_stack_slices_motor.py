@@ -51,6 +51,8 @@ from linumpy.mosaic.stacking import (
     find_z_step_structure,
     flatten_slice_z_profile,
     inplane_output_point,
+    joint_level_field,
+    level_joint,
     overlap_z_gain_curve,
     paste_tissue,
     registration_z_overlap,
@@ -231,6 +233,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         help="Half-width of the search of --z_step_from_structure around the slicing\ninterval, in planes. [%(default)s]",
+    )
+    p.add_argument(
+        "--joint_level_planes",
+        type=int,
+        default=0,
+        help="Bring the two slabs at each joint to a common brightness, measured where\n"
+        "they overlap and show the same tissue: in 4-pixel cells at joints whose\n"
+        "depth was measured and that are aligned within 3 pixels, over 8-pixel\n"
+        "cells smoothed over 4 cells elsewhere. Each slab takes half of the\n"
+        "difference; the gain is full at the joint and falls to one over this\n"
+        "many planes into each slab. Needs --blend_cut_face_planes. 0 = off.\n"
+        "[%(default)s]",
     )
     p.add_argument(
         "--mask_above_surface_planes",
@@ -841,6 +855,9 @@ def main() -> None:
     z_match_calls = 0
 
     measured_z_steps: dict = {}
+    # Joints whose two slabs are known to show the same tissue pixel for pixel:
+    # the depth was measured and the match found them within a few pixels in XY.
+    aligned_joints: set = set()
 
     def _load_slab(slice_id: int) -> np.ndarray:
         vol, _ = read_omezarr(slice_files[slice_id], level=0)
@@ -949,6 +966,8 @@ def main() -> None:
                     )
                     corr = float(np.median(step_info["scores"]))
                     measured_z_steps[slice_id] = step
+                    if max(abs(step_info["shift"][0]), abs(step_info["shift"][1])) <= 3.0:
+                        aligned_joints.add(slice_id)
                 else:
                     logger.info(
                         "Slice %s: Z step not measured (%s), interval %s kept, steps %s",
@@ -1459,6 +1478,7 @@ def main() -> None:
     pending = prepare_pool.submit(_prepare_slab, z_matches[0]) if z_matches else None
 
     stacked = Counter("stack", "slabs stacked", len(z_matches))
+    joint_level_rms: list[float] = []
 
     # Stack remaining slices
     for i, match in enumerate(tqdm(z_matches, desc="Stacking")):
@@ -1558,6 +1578,34 @@ def main() -> None:
                             ref_mag,
                         )
 
+                # Same tissue in both slabs here: level what the depth
+                # corrections left between them before they are blended.
+                if args.joint_level_planes > 0 and args.blend_cut_face_planes > 0 and overlap_depth > 2:
+                    # The first two planes of a slab are partly above its surface.
+                    measure = slice(min(2, overlap_depth - 1), min(overlap_depth, face_planes + 2))
+                    # On the scale of the shadows where the slabs are known to be
+                    # aligned, over a few hundred microns where they are not.
+                    level_cell, level_sigma = (4, 1.0) if slice_id in aligned_joints else (8, 4.0)
+                    level_field = joint_level_field(
+                        existing[measure],
+                        moving_overlap[measure],
+                        cell=level_cell,
+                        tissue_threshold=args.blend_tissue_threshold,
+                        sigma_cells=level_sigma,
+                    )
+                    if level_field is not None and level_field.any():
+                        above_z0 = max(0, overlap_z_start - args.joint_level_planes)
+                        above = np.array(assembly[above_z0:overlap_z_start, dst_y0:dst_y1, dst_x0:dst_x1], dtype=np.float32)
+                        existing = np.asarray(existing, dtype=np.float32)
+                        shifted = np.asarray(shifted, dtype=np.float32)
+                        level_joint(
+                            above, existing, shifted[s_blend_start:], level_field, args.joint_level_planes, cell=level_cell
+                        )
+                        if above.shape[0]:
+                            assembly[above_z0:overlap_z_start, dst_y0:dst_y1, dst_x0:dst_x1] = above
+                        moving_overlap = shifted[s_blend_start : s_blend_start + overlap_depth]
+                        joint_level_rms.append(float(np.sqrt(np.mean(level_field[level_field != 0] ** 2))))
+
                 # Blend
                 if args.blend_cut_face_planes > 0:
                     blended = blend_cut_face(
@@ -1600,6 +1648,15 @@ def main() -> None:
         logger.debug("  Slice %s: z=[%s:%s], xy=[%s:%s, %s:%s]", slice_id, z_start, z_end, dst_y0, dst_y1, dst_x0, dst_x1)
 
     prepare_pool.shutdown()
+    if joint_level_rms:
+        logger.info(
+            "Levelled %s joints (%s on the fine scale): brightness difference in the overlap, rms over cells, "
+            "median %.1f %% (largest %.1f %%)",
+            len(joint_level_rms),
+            len(aligned_joints),
+            100.0 * float(np.median(joint_level_rms)),
+            100.0 * float(np.max(joint_level_rms)),
+        )
     if args.fill_joint_gap_planes > 0:
         logger.info("Filled %s voxels in joint gaps of at most %s planes", n_joint_gap_voxels, args.fill_joint_gap_planes)
 

@@ -947,6 +947,122 @@ def blend_cut_face(
     return out
 
 
+def joint_level_field(
+    existing: np.ndarray,
+    incoming: np.ndarray,
+    cell: int = 4,
+    tissue_threshold: float = 0.01,
+    sigma_cells: float = 1.0,
+    min_fraction: float = 0.5,
+    clamp: float = 1.0,
+) -> np.ndarray | None:
+    """Log brightness of the incoming slab relative to the slab above, where they overlap.
+
+    In the overlap the two slabs show the same tissue at the same depth: the
+    slab above deep below its cut face, the incoming slab just under its own.
+    What differs between them there is not anatomy. It is what the depth
+    corrections left in each slab: the falloff with depth, and the shadows
+    under bright structures, which are a few pixels wide. One gain per slab
+    does not remove it and a band is left at the joint.
+
+    The difference is measured in XY cells of ``cell`` pixels as the mean log
+    ratio over the voxels that are tissue in both slabs, and smoothed over
+    ``sigma_cells`` cells, which also carries it into cells that have too few
+    such voxels. The defaults follow the shadows (40 um cells at 10 um
+    pixels) and need the two slabs to be aligned to a few pixels. Where that
+    is not known, measure on a coarser scale (``cell=8, sigma_cells=4``): a
+    fine field on misaligned slabs would copy the structure of one slab into
+    the other.
+
+    Parameters
+    ----------
+    existing, incoming : np.ndarray
+        The same planes ``(Z, Y, X)`` of the overlap from the stack and from
+        the incoming slab.
+    cell : int
+        Edge of the XY cells in pixels.
+    tissue_threshold : float
+        Intensity at or below this is background.
+    sigma_cells : float
+        XY smoothing in cells.
+    min_fraction : float
+        A cell is measured when at least this fraction of its voxels is tissue
+        in both slabs.
+    clamp : float
+        Largest difference returned, in log units.
+
+    Returns
+    -------
+    np.ndarray or None
+        ``(Y // cell, X // cell)`` field: log of incoming over existing. None
+        when the overlap has no cell to measure.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    nz, ny, nx = existing.shape
+    cy, cx = ny // cell, nx // cell
+    if nz < 1 or cy < 1 or cx < 1:
+        return None
+    above = np.asarray(existing[:, : cy * cell, : cx * cell], dtype=np.float32)
+    below = np.asarray(incoming[:, : cy * cell, : cx * cell], dtype=np.float32)
+    both = (above > tissue_threshold) & (below > tissue_threshold)
+    ratio = np.zeros(above.shape, dtype=np.float32)
+    np.log(below, out=ratio, where=both)
+    ratio -= np.log(above, out=np.zeros_like(ratio), where=both)
+    total = ratio.reshape(nz, cy, cell, cx, cell).sum(axis=(0, 2, 4))
+    count = both.reshape(nz, cy, cell, cx, cell).sum(axis=(0, 2, 4))
+    known = count >= min_fraction * nz * cell * cell
+    if not known.any():
+        return None
+    mean = np.where(known, total / np.maximum(count, 1), 0.0).astype(np.float32)
+    cover = gaussian_filter(known.astype(np.float32), sigma_cells)
+    smooth = gaussian_filter(mean, sigma_cells) / np.maximum(cover, 1e-3)
+    return np.clip(np.where(cover > 0.3, smooth, 0.0), -clamp, clamp).astype(np.float32)
+
+
+def level_joint(
+    above: np.ndarray,
+    overlap: np.ndarray,
+    incoming: np.ndarray,
+    field: np.ndarray,
+    planes: int,
+    cell: int = 4,
+) -> None:
+    """Bring the two slabs at a joint to a common brightness, in place.
+
+    Each slab takes half of the difference ``field`` measured in the overlap
+    (:func:`joint_level_field`). The gain is full at the joint and falls to
+    one over ``planes`` planes into each slab, so the middle of every slab
+    keeps its level and no gain is carried from one joint to the next.
+
+    Parameters
+    ----------
+    above : np.ndarray
+        The planes of the stack just above the overlap, last plane nearest to
+        it. At most ``planes`` of them are used.
+    overlap : np.ndarray
+        The planes of the stack in the overlap (the slab above, deep).
+    incoming : np.ndarray
+        The incoming slab, plane 0 at the top of the overlap.
+    field : np.ndarray
+        Coarse log difference, incoming over existing.
+    planes : int
+        Planes over which the gain falls to one on each side.
+    cell : int
+        Edge of the XY cells of ``field`` in pixels.
+    """
+    planes = max(1, int(planes))
+    half = 0.5 * upsample_plane(field, cell, (incoming.shape[1], incoming.shape[2]))
+    # The slab above is raised by half the difference, in full where it overlaps.
+    overlap *= np.exp(half)[None]
+    n = min(planes, above.shape[0])
+    for i in range(n):
+        above[above.shape[0] - 1 - i] *= np.exp(half * (1.0 - (i + 1) / (planes + 1)))
+    # The incoming slab is lowered by the other half, in full at its top.
+    for k in range(min(planes, incoming.shape[0])):
+        incoming[k] *= np.exp(-half * (1.0 - k / planes))
+
+
 def paste_tissue(
     existing: np.ndarray,
     incoming: np.ndarray,

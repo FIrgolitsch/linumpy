@@ -183,3 +183,58 @@ def test_stack_places_each_slab_at_its_measured_depth(script_runner, tmp_path):
     assert stack.shape[0] == 60 + depths[-1]
     for plane in (5, 18, 22, 35, 45, 58, 62, 90):
         assert _plane_correlation(stack[plane], block[plane]) > 0.97, plane
+
+
+def test_stack_levels_a_local_brightness_difference_at_a_joint(script_runner, tmp_path):
+    """One slab is brighter than its neighbours on one side of the image."""
+    import dask.array as da
+
+    from linumpy.io.zarr import read_omezarr, save_omezarr
+
+    block = _textured_block(110)
+    brighter = np.ones(block.shape[1:], dtype=np.float32)
+    brighter[:, : block.shape[2] // 2] = 1.3
+    slices_dir = tmp_path / "slices"
+    slices_dir.mkdir()
+    for index, top in enumerate((0, 20, 40)):
+        slab = block[top : top + 44] * (brighter[None] if index == 1 else 1.0)
+        save_omezarr(da.from_array(slab), slices_dir / f"slice_z{index:02d}.ome.zarr", (0.01, 0.01, 0.01))
+    shifts = tmp_path / "shifts_xy.csv"
+    shifts.write_text("fixed_id,moving_id,x_shift,y_shift,x_shift_mm,y_shift_mm,reliable\n0,1,0,0,0,0,1\n1,2,0,0,0,0,1\n")
+
+    def stack(name: str, *options: str) -> np.ndarray:
+        out = tmp_path / name
+        ret = script_runner.run(
+            [
+                "linum-stack-slices-motor",
+                str(slices_dir),
+                str(shifts),
+                str(out),
+                "--use_expected_overlap",
+                "--no_xy_shift",
+                "--blend",
+                "--blend_cut_face_planes",
+                "8",
+                "--no-local_depth_gain",
+                *options,
+            ]
+        )
+        assert ret.success, ret.stderr
+        volume, _ = read_omezarr(out, level=0)
+        return np.asarray(volume[:])
+
+    def largest_step(volume: np.ndarray) -> float:
+        """Largest change of the bright side from one plane to the next, relative to the block."""
+        half = block.shape[2] // 2
+        inside = block[0, :, :half] > 0
+        ratio = [volume[z, :, :half][inside] / block[z, :, :half][inside] for z in range(84)]
+        level = np.array([np.log(np.median(plane)) for plane in ratio])
+        return float(np.abs(np.diff(level)).max())
+
+    plain = stack("plain.ome.zarr")
+    levelled = stack("levelled.ome.zarr", "--joint_level_planes", "10")
+    assert largest_step(plain) > 0.04
+    assert largest_step(levelled) < 0.5 * largest_step(plain)
+    # The other side of the image was the same in all three slabs and stays as it was.
+    right = (slice(None), slice(None), slice(block.shape[2] // 2 + 48, None))
+    np.testing.assert_allclose(levelled[right], plain[right], rtol=0.02, atol=1e-4)

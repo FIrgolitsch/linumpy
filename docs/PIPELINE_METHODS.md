@@ -549,6 +549,23 @@ gives its planes from the interval on, so the hand-over stays at the interval
 of the slab above: what lies above it is either above the real cut face or is
 covered by the slab above.
 
+With `stack_joint_level_planes` the two slabs at a joint are brought to a
+common brightness before they are blended. In the overlap both slabs show the
+same tissue at the same depth, the slab above deep below its cut face and the
+incoming slab just under its own, so what differs between them there is not
+anatomy: it is what the depth corrections left, the falloff with depth and
+the shadows under bright structures. The log ratio of the two slabs is
+averaged over the voxels that are tissue in both, in the planes of the
+cross-fade without the first two, in XY cells of 4 pixels smoothed over one
+cell. Each slab takes half of it: the gain is full at the joint and falls
+linearly to one over `stack_joint_level_planes` planes into each slab, so the
+middle of a slab keeps its level and nothing is carried from one joint to the
+next. The fine cells need the two slabs to be aligned: they are used at joints
+whose depth was measured and whose match found the slabs within 3 pixels of
+each other. At the other joints the ratio is taken in cells of 8 pixels
+smoothed over 4 cells, since a fine field on misaligned slabs would copy the
+structure of one slab into the other.
+
 `stack_mask_above_surface_planes` handles a cut face that is tilted or uneven.
 A slab is cropped at one depth, the average surface, so on part of it the first
 planes are water. Those voxels are dim but above the background threshold, and

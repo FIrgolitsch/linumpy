@@ -1016,3 +1016,70 @@ def test_fill_joint_gaps_takes_the_run_that_ends_or_starts_at_the_joint():
     filled, n = fill_joint_gaps(block, joint=5, max_gap=4)
     assert n == 4
     assert (filled > 0).all()
+
+
+def _smooth_gain(shape: tuple[int, int]) -> np.ndarray:
+    """A log gain that changes over a third of the image."""
+    yy, xx = np.mgrid[: shape[0], : shape[1]]
+    return (0.25 * np.sin(2 * np.pi * xx / shape[1]) * np.cos(np.pi * yy / shape[0])).astype(np.float32)
+
+
+def test_joint_level_field_measures_a_local_brightness_difference():
+    from linumpy.mosaic.stacking import joint_level_field
+
+    block = _textured_block(nz=8)
+    gain = _smooth_gain(block.shape[1:])
+    field = joint_level_field(block, block * np.exp(gain)[None])
+    assert field is not None
+    assert field.shape == (block.shape[1] // 4, block.shape[2] // 4)
+    coarse = gain.reshape(field.shape[0], 4, field.shape[1], 4).mean(axis=(1, 3))
+    inside = (block[0] > 0).reshape(field.shape[0], 4, field.shape[1], 4).all(axis=(1, 3))
+    error = np.abs(field - coarse)[inside]
+    assert np.median(error) < 0.01
+    assert error.max() < 0.04
+    # On the coarse scale the field is smoother and rounds the peaks of the gain.
+    wide = joint_level_field(block, block * np.exp(gain)[None], cell=8, sigma_cells=4.0)
+    assert wide is not None
+    assert wide.shape == (block.shape[1] // 8, block.shape[2] // 8)
+    assert np.abs(wide).max() < np.abs(field).max()
+    # Anatomy that both slabs show is not a difference.
+    same = joint_level_field(block, block.copy())
+    assert same is not None
+    assert np.abs(same).max() < 1e-6
+
+
+def test_joint_level_field_needs_tissue_in_both_slabs():
+    from linumpy.mosaic.stacking import joint_level_field
+
+    block = _textured_block(nz=6)
+    assert joint_level_field(block, np.zeros_like(block)) is None
+    # A large difference is limited.
+    field = joint_level_field(block, block * 5.0, clamp=0.5)
+    assert field is not None
+    assert field.max() == pytest.approx(0.5)
+
+
+def test_level_joint_meets_in_the_middle_and_leaves_the_slab_centres():
+    from linumpy.mosaic.stacking import joint_level_field, level_joint
+
+    planes = 10
+    difference = 0.3
+    above = np.full((14, 32, 32), 0.2, dtype=np.float32)
+    overlap = np.full((8, 32, 32), 0.2, dtype=np.float32)
+    incoming = np.full((30, 32, 32), 0.2 * np.exp(difference), dtype=np.float32)
+    field = joint_level_field(overlap, incoming[:8])
+    assert field is not None
+    level_joint(above, overlap, incoming, field, planes)
+    # Both slabs meet at the joint.
+    assert overlap.mean() == pytest.approx(incoming[0].mean(), rel=1e-4)
+    assert overlap.mean() == pytest.approx(0.2 * np.exp(difference / 2), rel=1e-4)
+    # The gain falls off on both sides and is gone after ``planes`` planes.
+    assert above[-1].mean() < overlap.mean()
+    assert np.all(np.diff(above.mean(axis=(1, 2))) >= 0)
+    assert np.all(np.diff(incoming.mean(axis=(1, 2))) >= -1e-7)
+    assert above[: 14 - planes].mean() == pytest.approx(0.2)
+    assert incoming[planes:].mean() == pytest.approx(0.2 * np.exp(difference))
+    # Background stays background.
+    hole = np.zeros((4, 32, 32), dtype=np.float32)
+    level_joint(hole[:2], hole[2:], hole.copy(), field, planes)
+    assert not hole.any()
