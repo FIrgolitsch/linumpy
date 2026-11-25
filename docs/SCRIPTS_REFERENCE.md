@@ -152,6 +152,20 @@ When the input already holds a pyramid level at the requested resolution (a
 grid made with `--pyramid_resolutions`), that level is copied and nothing is
 resampled. `--no-use_existing_level` forces a resampling of level 0.
 
+### linum-add-mosaic-grid-level
+
+Add a resampled level to a mosaic grid that was made without one.
+
+```bash
+linum-add-mosaic-grid-level <grid.ome.zarr> -r <resolution>
+```
+
+The grid is changed in place: level 0 is read tile by tile, each tile is
+resized as `linum-create-mosaic-grid-3d --pyramid_resolutions` does it, and the
+result is saved as a further level with the chunk and shard layout of level 0.
+Tiles that hold no data are skipped. A grid that already holds a level at the
+requested resolution is left alone.
+
 ---
 
 ## Preprocessing

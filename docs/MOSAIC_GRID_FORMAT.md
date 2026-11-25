@@ -48,7 +48,9 @@ in the preprocessing workflow, 10 by default). It keeps the tile grid of
 level 0 (one chunk per tile) and is identical to what
 `linum-resample-mosaic-grid` computes from level 0, so that script copies the
 level when its resolution is the one asked for, and the full-resolution grid
-is never read back.
+is never read back. A grid that was made without the level gets it afterwards
+with `linum-add-mosaic-grid-level <grid> -r 10`, which writes the same level
+into the existing grid and leaves level 0 as it is.
 
 #### Traditional Power-of-2 Pyramids (Mosaic Grids)
 
@@ -398,6 +400,7 @@ Check the axes metadata in `.zattrs` to verify dimension order.
 |------|---------|
 | `linum-create-mosaic-grid-3d` | Create mosaic from raw tiles |
 | `linum-resample-mosaic-grid` | Resample to different resolution |
+| `linum-add-mosaic-grid-level` | Add a resampled level to an existing grid |
 | `linum-convert-omezarr-to-nifti` | Convert to NIfTI format |
 | `linum-view-omezarr` | Interactive viewer |
 | `linum-screenshot-omezarr` | Generate preview images |

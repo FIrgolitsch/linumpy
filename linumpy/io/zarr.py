@@ -311,6 +311,83 @@ def read_omezarr(zarr_path: Path, level: int = 0) -> tuple:
     return vol, scale
 
 
+def _multiscales_of(group: zarr.Group) -> dict:
+    """Return the multiscales entry of an OME-Zarr group (NGFF 0.5, or 0.4 at the top level)."""
+    attrs: dict[str, Any] = dict(group.attrs.asdict())
+    holder: dict[str, Any] = attrs.get("ome", attrs)
+    return holder["multiscales"][0]
+
+
+def create_omezarr_level(
+    zarr_path: Path,
+    shape: tuple | Sequence,
+    chunk_shape: tuple | Sequence,
+    shards: tuple | None = None,
+) -> tuple[zarr.Array, str]:
+    """Create the array of one more pyramid level in an existing OME-Zarr.
+
+    The array is laid out like the levels ``OmeZarrWriter.add_level`` makes,
+    with the data type of level 0. It is not listed in the pyramid metadata
+    yet: fill it, then call :func:`register_omezarr_level`. An array of the
+    same name that is not listed, left by a run that did not finish, is
+    replaced.
+
+    :type zarr_path: str or Path
+    :param zarr_path: Path of the OME-Zarr group.
+    :type shape: tuple of n `int`
+    :param shape: Shape of the level.
+    :type chunk_shape: tuple of n `int`
+    :param chunk_shape: Chunk size on disk.
+    :type shards: tuple of `int`
+    :param shards: Dimension of shards. `None` for no sharding.
+    :return array, name: The empty array and its path in the group.
+    """
+    group = zarr.open_group(str(zarr_path), mode="r+")
+    listed = [dataset["path"] for dataset in _multiscales_of(group)["datasets"]]
+    level0 = group[listed[0]]
+    assert isinstance(level0, zarr.Array)
+    name = str(len(listed))
+    leftover = Path(zarr_path) / name
+    if leftover.exists():
+        shutil.rmtree(leftover)
+    array = group.require_array(
+        name,
+        shape=tuple(int(v) for v in shape),
+        exact=True,
+        chunks=tuple(int(v) for v in chunk_shape),
+        shards=shards,
+        dtype=level0.dtype,
+        chunk_key_encoding=CurrentFormat().chunk_key_encoding,
+        dimension_names=[axis["name"] for axis in _multiscales_of(group)["axes"]],
+    )
+    return array, name
+
+
+def register_omezarr_level(zarr_path: Path, name: str, resolution: Sequence[float]) -> None:
+    """List a level made with :func:`create_omezarr_level` in the pyramid metadata.
+
+    :type zarr_path: str or Path
+    :param zarr_path: Path of the OME-Zarr group.
+    :type name: str
+    :param name: Path of the array in the group.
+    :type resolution: list of float
+    :param resolution: Voxel size of the level in the unit of the axes.
+    """
+    group = zarr.open_group(str(zarr_path), mode="r+")
+    attrs: dict[str, Any] = dict(group.attrs.asdict())
+    holder: dict[str, Any] = attrs.get("ome", attrs)
+    multiscales = holder["multiscales"][0]
+    scale = [float(v) for v in resolution]
+    multiscales["datasets"].append({"path": name, "coordinateTransformations": [{"type": "scale", "scale": scale}]})
+    # The levels are no longer a factor 2 apart: describe them as a grid written with its levels.
+    multiscales["metadata"] = {
+        "method": "linumpy.io.zarr.OmeZarrWriter.add_level",
+        "version": version("ome-zarr"),
+        "args": {"max_layer": len(multiscales["datasets"]) - 1},
+    }
+    group.attrs.update(attrs)
+
+
 def read_omezarr_resolutions(zarr_path: Path) -> list[list[float]]:
     """Return the voxel size of every pyramid level of the OME-Zarr at *zarr_path*.
 

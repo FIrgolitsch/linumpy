@@ -124,6 +124,7 @@ docs = [
 "linum-correct-bias-field" = "scripts.illumination.linum_correct_bias_field:main"
 "linum-create-all-mosaic-grids-2d" = "scripts.mosaic.linum_create_all_mosaic_grids_2d:main"
 "linum-create-mosaic-grid-2d" = "scripts.mosaic.linum_create_mosaic_grid_2d:main"
+"linum-add-mosaic-grid-level" = "scripts.mosaic.linum_add_mosaic_grid_level:main"
 "linum-create-mosaic-grid-3d" = "scripts.mosaic.linum_create_mosaic_grid_3d:main"
 "linum-crop-3d-mosaic-below-interface" = "scripts.mosaic.linum_crop_3d_mosaic_below_interface:main"
 "linum-crop-tiles" = "scripts.mosaic.linum_crop_tiles:main"
