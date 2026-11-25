@@ -10,6 +10,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import SimpleITK as sitk
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "stacking" / "linum_stack_slices_motor.py"
@@ -108,3 +109,77 @@ class TestLoadRegistrationTransforms:
         transforms, _pairwise, _sources = mod.load_registration_transforms(tmp_path, [0, 1], skip_error_status=True)
 
         assert transforms[1] is None
+
+
+# ---------------------------------------------------------------------------
+# Depth of the joints, end to end
+# ---------------------------------------------------------------------------
+
+
+def _textured_block(nz: int, shape: tuple[int, int] = (160, 160)) -> np.ndarray:
+    """Tissue whose fine structure changes smoothly with depth, in a round footprint."""
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(7)
+    noise = gaussian_filter(rng.normal(size=(nz, *shape)).astype(np.float32), (4.0, 3.0, 3.0))
+    noise /= noise.std()
+    yy, xx = np.mgrid[: shape[0], : shape[1]]
+    inside = ((yy - shape[0] / 2) ** 2 + (xx - shape[1] / 2) ** 2) < (0.45 * shape[0]) ** 2
+    return np.where(inside[None], 0.3 * (1.0 + 0.4 * noise), 0.0).astype(np.float32)
+
+
+def _plane_correlation(a: np.ndarray, b: np.ndarray) -> float:
+    mask = (a > 0) & (b > 0)
+    return float(np.corrcoef(a[mask], b[mask])[0, 1])
+
+
+def test_stack_places_each_slab_at_its_measured_depth(script_runner, tmp_path):
+    """Slabs that start 17, 23 and 20 planes below the one above, with slabs of unequal depth."""
+    import dask.array as da
+    import zarr
+
+    from linumpy.io.zarr import read_omezarr, save_omezarr
+
+    block = _textured_block(140)
+    tops = [0, 17, 40, 60]
+    depths = [44, 58, 36, 44]
+    slices_dir = tmp_path / "slices"
+    slices_dir.mkdir()
+    for index, (top, depth) in enumerate(zip(tops, depths, strict=True)):
+        decay = np.exp(-0.03 * np.arange(depth, dtype=np.float32))[:, None, None]
+        slab = block[top : top + depth] * decay
+        save_omezarr(da.from_array(slab), slices_dir / f"slice_z{index:02d}.ome.zarr", (0.01, 0.01, 0.01))
+    shifts = tmp_path / "shifts_xy.csv"
+    rows = ["fixed_id,moving_id,x_shift,y_shift,x_shift_mm,y_shift_mm,reliable"]
+    rows += [f"{index},{index + 1},0,0,0,0,1" for index in range(len(tops) - 1)]
+    shifts.write_text("\n".join(rows) + "\n")
+    out = tmp_path / "stack.ome.zarr"
+
+    ret = script_runner.run(
+        [
+            "linum-stack-slices-motor",
+            str(slices_dir),
+            str(shifts),
+            str(out),
+            "--use_expected_overlap",
+            "--no_xy_shift",
+            "--blend",
+            "--blend_cut_face_planes",
+            "8",
+            "--z_step_from_structure",
+            "--z_step_search_vox",
+            "8",
+        ]
+    )
+    assert ret.success, ret.stderr
+
+    # The second slab starts three planes above the interval: those planes are
+    # left out and it is handed over at the interval. The others start at
+    # their own top. No slab is moved because its overlap differs from the others'.
+    attrs = zarr.open_group(str(out), mode="r").attrs
+    assert attrs["slab_z_starts"] == [0, 20, 40, 60]
+    stack, _ = read_omezarr(out, level=0)
+    stack = np.asarray(stack[:])
+    assert stack.shape[0] == 60 + depths[-1]
+    for plane in (5, 18, 22, 35, 45, 58, 62, 90):
+        assert _plane_correlation(stack[plane], block[plane]) > 0.97, plane

@@ -672,27 +672,42 @@ def _slab(block: np.ndarray, top: int, depth: int = 44) -> np.ndarray:
     return block[top : top + depth] * decay
 
 
-@pytest.mark.parametrize("true_step", [26, 16, 23])
-def test_find_z_step_structure_recovers_a_step_that_is_clearly_off(true_step):
+@pytest.mark.parametrize("true_step", [26, 16, 23, 21, 19, 18])
+def test_find_z_step_structure_recovers_the_step(true_step):
     from linumpy.mosaic.stacking import find_z_step_structure
 
     block = _textured_block()
     fixed, moving = _slab(block, 0), _slab(block, true_step)
     step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
     assert step == true_step, info
-    assert max(info["steps"]) - min(info["steps"]) <= 1
+    assert info["slope"] == pytest.approx(1.0, abs=0.1)
+    assert info["residual"] < 0.5
 
 
-@pytest.mark.parametrize("true_step", [20, 21, 18])
-def test_find_z_step_structure_leaves_a_joint_near_the_interval_alone(true_step):
+@pytest.mark.parametrize("scale", [0.8, 1.15])
+def test_find_z_step_structure_reads_the_step_at_the_cut_face(scale):
+    """The same tissue spans a different number of planes deep in the slab above."""
+    from scipy.ndimage import map_coordinates
+
     from linumpy.mosaic.stacking import find_z_step_structure
 
-    block = _textured_block()
-    fixed, moving = _slab(block, 0), _slab(block, true_step)
+    block = _textured_block(nz=120)
+    true_step = 19
+    moving = _slab(block, true_step)
+    # Below the cut face the fixed slab is stretched or compressed along Z:
+    # its plane ``true_step + scale * p`` shows what moving plane ``p`` shows.
+    depth = 44
+    planes = np.arange(depth, dtype=np.float32)
+    source = np.where(planes < true_step, planes, true_step + (planes - true_step) / scale)
+    yy, xx = np.mgrid[: block.shape[1], : block.shape[2]].astype(np.float32)
+    fixed = np.stack([map_coordinates(block, [np.full_like(yy, z), yy, xx], order=1) for z in source])
+    fixed *= np.exp(-0.03 * planes)[:, None, None]
+
     step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
-    assert step is None
-    assert info["reason"] == "within the expected step"
-    assert round(float(np.median(info["steps"]))) == true_step
+    assert step == true_step, info
+    assert info["slope"] == pytest.approx(scale, abs=0.1)
+    # Read at a deeper moving plane the step is off by the stretch.
+    assert abs(float(np.median(info["steps"])) - true_step) > 0.5
 
 
 def test_find_z_step_structure_follows_a_lateral_shift():
@@ -725,12 +740,23 @@ def test_find_z_step_structure_does_not_trust_a_match_at_the_end_of_a_short_slab
 
     block = _textured_block(seed=4)
     fixed, moving = _slab(block, 0, depth=30), _slab(block, 26)
-    # Planes 5 and 8 of the moving slab match fixed planes 31 and 34, which a
-    # 30-plane slab does not have; only plane 2 can be placed, and one plane is
-    # not enough.
+    # Moving plane p matches fixed plane 26 + p. A 30-plane slab has that plane
+    # for p up to 3, and a best match on its last plane is not trusted, so two
+    # planes are placed, which is not enough for a line.
     step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
     assert step is None
-    assert info["steps"] == [26]
+    assert info["reason"] == "too few planes"
+    assert info["planes"] == [1, 2]
+    assert all(abs(found - 26) < 0.5 for found in info["steps"])
+
+
+def test_find_z_step_structure_declines_a_match_at_the_edge_of_the_search():
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block(seed=5)
+    fixed, moving = _slab(block, 0, depth=60), _slab(block, 30)
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert step is None, info
 
 
 def test_zero_above_surface_follows_a_tilted_cut():

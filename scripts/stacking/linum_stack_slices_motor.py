@@ -221,9 +221,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --use_expected_overlap, measure the depth of each joint by matching the\n"
         "outlines of structures between the two slabs and use it when the match is\n"
-        "clear; keep the slicing interval otherwise. Corrects joints where the cut\n"
-        "was not at the nominal depth (tissue standing above the block face, a\n"
-        "thicker cut, a wedge).",
+        "clear; keep the slicing interval otherwise. The top of a slab is not\n"
+        "always one interval below the top of the slab above: the surface found by\n"
+        "the interface crop moves from slab to slab, and cuts differ. A slab that\n"
+        "starts above the interval gives its planes from the interval on.",
     )
     p.add_argument(
         "--z_step_search_vox",
@@ -927,22 +928,34 @@ def main() -> None:
                     workers=structure_workers,
                 )
                 if step is not None:
-                    measured_overlap = prev_vol.shape[0] - step
-                    if measured_overlap != overlap:
-                        logger.info(
-                            "Slice %s: measured Z step %s planes (interval %s), steps %s, scores %s",
-                            slice_id,
-                            step,
-                            interval_voxels,
-                            step_info["steps"],
-                            [round(x, 2) for x in step_info["scores"]],
-                        )
-                    overlap = measured_overlap
+                    # A slab that starts above the interval has planes the slab
+                    # above already covers down to the interval: its surface was
+                    # found too high, or the cut was thin. They are left out, so
+                    # the hand-over stays at the interval and every slab gives
+                    # the same depth range to the stack.
+                    above_interval = max(0, interval_voxels - step)
+                    moving_z = (moving_z or 0) + above_interval
+                    overlap = expected_z_overlap(prev_vol.shape[0], moving_z, step, 1)
+                    logger.info(
+                        "Slice %s: measured Z step %s planes (interval %s, line %.1f + %.2f p, residual %.2f, score %.2f)%s",
+                        slice_id,
+                        step,
+                        interval_voxels,
+                        step_info["step"],
+                        step_info["slope"],
+                        step_info["residual"],
+                        float(np.median(step_info["scores"])),
+                        f", first {above_interval} planes left out" if above_interval else "",
+                    )
                     corr = float(np.median(step_info["scores"]))
                     measured_z_steps[slice_id] = step
                 else:
-                    logger.debug(
-                        "Slice %s: Z step not measured (%s), steps %s", slice_id, step_info["reason"], step_info["steps"]
+                    logger.info(
+                        "Slice %s: Z step not measured (%s), interval %s kept, steps %s",
+                        slice_id,
+                        step_info["reason"],
+                        interval_voxels,
+                        step_info["steps"],
                     )
             if id_step > 1:
                 logger.info(
@@ -1159,20 +1172,26 @@ def main() -> None:
 
     # Enforce Z-consistency: replace outlier overlaps using neighbor interpolation.
     # High-confidence registrations (confidence >= confidence_high) are protected.
+    # Not with --use_expected_overlap. There the overlap is the depth of the
+    # slab above minus the step, and the slabs differ in depth by up to twenty
+    # planes, so an overlap far from the median says nothing about the step.
+    # Replacing it by the neighbours' overlap moved slabs by up to eleven
+    # planes (sub-19 z15, z17, z25; sub-21 z39, z47).
     confidence_per_slice = {sid: tfm_tuple[3] for sid, tfm_tuple in registration_transforms.items() if tfm_tuple is not None}
-    overlaps_before = [m["overlap_voxels"] for m in z_matches]
-    overlaps_arr = np.asarray(overlaps_before, dtype=float)
-    logger.info(
-        "Z-overlap consistency check: median=%.1f, std=%.1f voxels",
-        np.median(overlaps_arr),
-        np.std(overlaps_arr),
-    )
-    z_matches, z_corrections = enforce_z_consistency(
-        z_matches,
-        confidence_per_slice=confidence_per_slice,
-        outlier_threshold_frac=0.30,
-        confidence_protect_threshold=args.confidence_high,
-    )
+    z_corrections: list = []
+    if not args.use_expected_overlap:
+        overlaps_arr = np.asarray([m["overlap_voxels"] for m in z_matches], dtype=float)
+        logger.info(
+            "Z-overlap consistency check: median=%.1f, std=%.1f voxels",
+            np.median(overlaps_arr),
+            np.std(overlaps_arr),
+        )
+        z_matches, z_corrections = enforce_z_consistency(
+            z_matches,
+            confidence_per_slice=confidence_per_slice,
+            outlier_threshold_frac=0.30,
+            confidence_protect_threshold=args.confidence_high,
+        )
     if z_corrections:
         for c in z_corrections:
             logger.warning(
@@ -1310,7 +1329,7 @@ def main() -> None:
     if args.overlap_z_gain:
         for m in z_matches:
             a_val, b_val = m.get("overlap_z_gain_a"), m.get("overlap_z_gain_b")
-            if a_val != "" and b_val != "":
+            if a_val not in ("", None) and b_val not in ("", None):
                 overlap_z_fits[m["fixed_id"]] = (float(a_val), float(b_val))
 
     def _apply_overlap_z_gain_to_slice(vol: np.ndarray, slice_id: int) -> np.ndarray:

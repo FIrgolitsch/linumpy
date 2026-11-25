@@ -518,25 +518,36 @@ Three modes (<ref_file file="/Users/frans/code/linumpy/scripts/stacking/linum_st
   $[o_\text{exp} - \Delta_\text{search},\; o_\text{exp} + \Delta_\text{search}]$
   on a centre ROI (<ref_snippet file="/Users/frans/code/linumpy/linumpy/mosaic/stacking.py" lines="98-175" />).
 
-Outlier overlaps are corrected by local median interpolation.
+With the correlation search, outlier overlaps are corrected by local median
+interpolation. With the expected overlap they are not: the overlap is the
+depth of the slab above minus the step, the slabs differ in depth by up to
+twenty planes, and an overlap far from the median says nothing about the step.
 
 With `stack_z_step_from_structure` the expected overlap is replaced, joint by
-joint, by a measured one. The cut is not always at the slicing interval: tissue
-can stand above the block face after a cut, a cut can be thicker or thinner,
-and after the sample is re-levelled one slab is a wedge. The next slab then
-matches several planes away from the nominal depth. Plain intensity cannot
-find that depth, because the top planes of every slab are the least attenuated
-and look alike (Lefebvre et al. 2017, who correlate the image gradient for this
-reason). Each plane is divided by its own smooth trend, which leaves the
-outlines of structures, and planes 2, 5 and 8 of the moving slab are matched
-against the fixed slab within $\pm$`stack_z_step_search_vox` planes of the
-interval. Only a joint that is clearly off is moved: the measured step has to
-differ from the interval by three planes or more, the three planes have to
-agree within one plane, the correlation has to be at least 0.15 and beat the
-one at the interval by 0.05, and the best depth must not sit at the edge of the
-search. Otherwise the interval is kept. Differences of a plane or two are
-within what the match can tell on slabs imaged far from focus or with a tilted
-cut face; moving those joints did not improve the stack.
+joint, by a measured one. The top of a slab is not always one slicing interval
+below the top of the slab above: the surface found by the interface crop moves
+by several planes from slab to slab, a cut can be thicker or thinner, tissue
+can stand above the block face, and after the sample is re-levelled one slab
+is a wedge. Plain intensity cannot find the depth, because the top planes of
+every slab are the least attenuated and look alike (Lefebvre et al. 2017, who
+correlate the image gradient for this reason). Each plane is divided by its
+own smooth trend, which leaves the outlines of structures, and planes 1 to 10
+of the moving slab are each matched against the fixed slab within
+$\pm$`stack_z_step_search_vox` planes of the interval. The best matches lie on
+a line, moving plane $p$ against fixed plane $s + m\,p$. The slope $m$ is not
+always one (0.8 in sub-19, 1.1 in sub-21): the same tissue does not span the
+same number of planes near the top of a slab and deep in the slab above. The
+step is therefore read at $p = 0$, the cut face of the moving slab, where the
+stack hands over from one slab to the next; read at a deeper plane it is off
+by up to two planes. The line is the median of the pairwise slopes, limited to
+0.7 to 1.3, with the median intercept. The measurement is used when at least
+five planes are placed, their median distance from the line is at most one
+plane, the median correlation is at least 0.08 and exceeds the correlation
+five or more planes away by 0.03, and no best match sits at the edge of the
+search. Otherwise the interval is kept. A slab that starts above the interval
+gives its planes from the interval on, so the hand-over stays at the interval
+of the slab above: what lies above it is either above the real cut face or is
+covered by the slab above.
 
 `stack_mask_above_surface_planes` handles a cut face that is tilted or uneven.
 A slab is cropped at one depth, the average surface, so on part of it the first

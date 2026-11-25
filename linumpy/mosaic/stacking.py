@@ -325,39 +325,45 @@ def find_z_step_structure(
     moving_vol: np.ndarray,
     expected_step: int,
     search_vox: int = 10,
-    moving_planes: Sequence[int] = (2, 5, 8),
+    moving_planes: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
     tissue_threshold: float = 0.01,
     downsample: int = 2,
-    min_score: float = 0.15,
-    max_spread: int = 1,
-    min_gain: float = 0.05,
-    min_deviation: int = 3,
+    min_score: float = 0.08,
+    max_residual: float = 1.0,
+    min_distinct: float = 0.03,
+    min_planes: int = 5,
     min_pixels: int = 5000,
     workers: int | None = None,
 ) -> tuple[int | None, dict[str, Any]]:
     """Measure how many planes below the fixed slab's top the moving slab starts.
 
-    The cut is not always where the slicing interval says. Tissue can stand
-    above the block face after a cut, a cut can be thicker or thinner, and a
-    slab can be a wedge; the next slab then matches several planes away from
-    the nominal depth and the stack shows a break at that joint.
+    The top of a slab is not always one slicing interval below the top of the
+    slab above. The surface found by the interface crop moves by several
+    planes from slab to slab, a cut can be thicker or thinner, tissue can
+    stand above the block face, and a slab can be a wedge. Stacked at the
+    interval, such a joint shows a break.
 
     Plain intensity cannot find the depth: the top planes of every slab look
     alike because they are the least attenuated, so intensity aligns top with
     top (Lefebvre et al. 2017, Neurophotonics 4, 041501, who correlate the
     image gradient for that reason). Here each plane is divided by its own
-    smooth trend, which leaves the outlines of structures, and a few shallow
-    planes of the moving slab are each matched against the fixed slab over
+    smooth trend, which leaves the outlines of structures, and each of the
+    shallow planes of the moving slab is matched against the fixed slab over
     ``expected_step +/- search_vox``.
 
-    Only a joint that is clearly off is reported: the step has to differ from
-    the expected one by ``min_deviation`` planes or more, the planes have to
-    agree with each other (within ``max_spread``), the match has to be real
-    (``min_score``) and clearly better than at the expected depth
-    (``min_gain``), and the best depth must not sit at the edge of the search.
-    Smaller differences are within what the match can tell on slabs imaged far
-    from focus or with a tilted cut face, where moving a joint by a plane or
-    two did not improve the stack; the caller keeps the expected step there.
+    The best matches lie on a line: moving plane ``p`` matches fixed plane
+    ``step + slope * p``. The slope is not always one, because the same tissue
+    does not span the same number of planes near the top of a slab and deep in
+    the slab above (0.8 in sub-19, 1.1 in sub-21). A step read at one moving
+    plane therefore depends on that plane. The step returned is the line at
+    plane 0, the cut face of the moving slab, which is where the stack hands
+    over from one slab to the next.
+
+    The measurement is rejected, and the caller keeps the expected step, when
+    too few planes can be placed, when the planes do not lie on one line
+    (``max_residual``), when the match is weak (``min_score``) or no better
+    than a few planes away (``min_distinct``), or when a best match sits at
+    the edge of the search.
 
     Parameters
     ----------
@@ -374,13 +380,14 @@ def find_z_step_structure(
     downsample : int
         XY step the match runs on.
     min_score : float
-        Lowest median correlation at the best depth that counts as a match.
-    max_spread : int
-        Largest difference between the steps found for the moving planes.
-    min_gain : float
-        How much better than the expected depth the measured one has to score.
-    min_deviation : int
-        Smallest difference from the expected step that is reported.
+        Lowest median correlation of the best matches that counts as a match.
+    max_residual : float
+        Largest median distance, in planes, of the best matches from the line.
+    min_distinct : float
+        How much better the best match has to be than the matches five planes
+        or more away, as a median over the moving planes.
+    min_planes : int
+        Fewest moving planes that have to be placed.
     min_pixels : int
         Fewest common tissue pixels, at full resolution, for a correlation.
     workers : int or None
@@ -392,8 +399,10 @@ def find_z_step_structure(
     int or None
         The measured step, or ``None`` when it cannot be told.
     dict
-        ``steps``, ``scores``, ``expected_scores`` per moving plane, the XY
-        ``shift`` used, and ``reason`` when the measurement was rejected.
+        ``planes`` that were placed, with the ``steps`` (best fixed plane minus
+        moving plane), ``scores`` and ``distinct`` of each; ``slope``,
+        ``step`` (not rounded) and ``residual`` of the line; the XY ``shift``
+        used; and ``reason`` when the measurement was rejected.
     """
     from scipy.ndimage import shift as nd_shift
     from skimage.registration import phase_cross_correlation
@@ -402,7 +411,17 @@ def find_z_step_structure(
     fixed = np.asarray(fixed_vol[:, ::d, ::d], dtype=np.float32)
     moving = np.asarray(moving_vol[:, ::d, ::d], dtype=np.float32)
     sigma = 16.0 / d
-    info: dict[str, Any] = {"steps": [], "scores": [], "expected_scores": [], "shift": (0.0, 0.0), "reason": ""}
+    info: dict[str, Any] = {
+        "planes": [],
+        "steps": [],
+        "scores": [],
+        "distinct": [],
+        "slope": float("nan"),
+        "step": float("nan"),
+        "residual": float("nan"),
+        "shift": (0.0, 0.0),
+        "reason": "",
+    }
     lo = max(0, expected_step - 2)
     hi = min(fixed.shape[0], expected_step + 10)
     if hi - lo < 2 or moving.shape[0] < 3:
@@ -446,48 +465,70 @@ def find_z_step_structure(
         moved_structures = {plane: _moved_structure(plane) for plane in planes}
 
     at_edge = False
+    matched: list[float] = []
     for plane in planes:
         moved_s, moved_mask = moved_structures[plane]
         first = plane + expected_step - search_vox
+        last = plane + expected_step + search_vox
         candidates = ranges[plane]
-        scores = []
-        for f in candidates:
-            fixed_plane_s, fixed_mask = fixed_structures[f]
-            scores.append(_masked_ncc(fixed_plane_s, moved_s, fixed_mask & moved_mask, min_pixels // (d * d)))
+        scores = np.array(
+            [
+                _masked_ncc(fixed_structures[f][0], moved_s, fixed_structures[f][1] & moved_mask, min_pixels // (d * d))
+                for f in candidates
+            ],
+            dtype=np.float64,
+        )
         if not candidates or not np.isfinite(scores).any():
             continue
         best = int(np.nanargmax(scores))
-        last = plane + expected_step + search_vox
         # A best match at the end of a range that the slab's depth cut short says
         # nothing: the true depth may lie beyond the data.
         if (best == len(candidates) - 1 and candidates[-1] < last) or (best == 0 and candidates[0] > first):
             continue
-        nominal = plane + expected_step
-        info["steps"].append(candidates[best] - plane)
-        info["scores"].append(float(scores[best]))
-        info["expected_scores"].append(float(scores[candidates.index(nominal)]) if nominal in candidates else float("nan"))
         at_edge = at_edge or candidates[best] in (first, last)
+        # Position of the peak between planes, from the parabola through its neighbours.
+        offset = 0.0
+        if 0 < best < len(candidates) - 1 and np.isfinite(scores[best - 1]) and np.isfinite(scores[best + 1]):
+            curvature = scores[best - 1] - 2.0 * scores[best] + scores[best + 1]
+            if curvature < 0:
+                offset = float(np.clip(0.5 * (scores[best - 1] - scores[best + 1]) / curvature, -0.5, 0.5))
+        away = scores[np.abs(np.arange(len(candidates)) - best) >= 5]
+        info["planes"].append(plane)
+        info["steps"].append(round(candidates[best] + offset - plane, 2))
+        info["scores"].append(float(scores[best]))
+        info["distinct"].append(float(scores[best] - np.nanmax(away)) if np.isfinite(away).any() else float("nan"))
+        matched.append(candidates[best] + offset)
 
-    steps = info["steps"]
-    if len(steps) < 2:
+    if len(matched) < max(2, min_planes):
         info["reason"] = "too few planes"
         return None, info
-    if max(steps) - min(steps) > max_spread:
+
+    # Median of the pairwise slopes, then the median intercept: one or two
+    # planes that matched elsewhere do not move the line.
+    at = np.asarray(info["planes"], dtype=np.float64)
+    found = np.asarray(matched, dtype=np.float64)
+    upper = np.triu_indices(len(at), k=1)
+    slopes = (found[upper[1]] - found[upper[0]]) / (at[upper[1]] - at[upper[0]])
+    slope = float(np.clip(np.median(slopes), 0.7, 1.3))
+    intercept = float(np.median(found - slope * at))
+    residual = float(np.median(np.abs(found - (intercept + slope * at))))
+    info["slope"], info["step"], info["residual"] = slope, intercept, residual
+
+    if residual > max_residual:
         info["reason"] = "planes disagree"
         return None, info
-    if float(np.median(info["scores"])) < min_score:
+    distinct = np.asarray(info["distinct"], dtype=np.float64)
+    if float(np.median(info["scores"])) < min_score or not (
+        np.isfinite(distinct).any() and float(np.nanmedian(distinct)) >= min_distinct
+    ):
         info["reason"] = "weak match"
         return None, info
     if at_edge:
         info["reason"] = "edge of search"
         return None, info
-    step = round(float(np.median(steps)))
-    if abs(step - expected_step) < min_deviation:
-        info["reason"] = "within the expected step"
-        return None, info
-    gain = float(np.nanmean(np.array(info["scores"]) - np.array(info["expected_scores"])))
-    if not gain >= min_gain:
-        info["reason"] = "no better than expected"
+    step = round(intercept)
+    if step < 1:
+        info["reason"] = "edge of search"
         return None, info
     return step, info
 

@@ -47,7 +47,7 @@ step-by-step workflow (template → `linum-suggest-params` → upstream gates
 | Some slabs brighter or darker than their neighbours | `bias_slab_gain=true`, `bias_zprofile_equalize=false` |
 | Brains on different intensity scales | the same `bias_target_tissue_level` for all |
 | White matter brighter on one side of a joint, grey level the same (sample height changed between slabs) | `compensate_attenuation_calibrate_strength=true` |
-| A break in structures at one joint, the rest of the stack continuous (cut thicker or thinner than the interval, wedge slab) | `stack_z_step_from_structure=true` |
+| Breaks in structures at joints, or a stack that is too short (the surface found by the interface crop moves from slab to slab, a cut thicker or thinner than the interval, a wedge slab) | `stack_z_step_from_structure=true` |
 | Dim planes at the top of slabs on one side, or one slab darker on one side after the sample was re-levelled (tilted cut face) | `crop_interface_flatten_tilt=true` |
 | Thin dark line at joints where the cut face is tilted or uneven | `stack_mask_above_surface_planes=12` |
 | Notched tissue outline and dark dots at every joint | `stack_fill_joint_gap_planes=6` |
