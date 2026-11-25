@@ -568,9 +568,13 @@ next. The fine cells need the two slabs to be aligned: they are used at joints
 whose depth was measured and whose match found the slabs within 3 pixels of
 each other. At the other joints the ratio is taken in cells of 8 pixels
 smoothed over 4 cells, since a fine field on misaligned slabs would copy the
-structure of one slab into the other. The ratio is measured in planes 6 to 13
-of the overlap where it is deep enough, below the planes in which the incoming
-slab can still be coming out of its surface.
+structure of one slab into the other. The ratio is measured in the first ten
+planes of the overlap, which are the planes of the hand-over, on the voxels of
+the incoming slab that lie below its own surface: an A-line counts from the
+first plane on which it reaches 0.7 of its own mean over planes 6 to 13.
+Deeper in the overlap the slab above has run out of signal in white matter
+(at the background level 280 um below its cut face in the cerebellum), and a
+ratio measured there says little about the planes that are handed over.
 
 With `stack_surface_handover_planes` an A-line is handed over where the
 incoming slab comes out of its own surface. A slab is cropped at one depth,

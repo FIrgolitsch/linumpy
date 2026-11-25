@@ -39,6 +39,7 @@ from linumpy.mosaic.stacking import (
     apply_seam_notch,
     apply_transform_to_volume,
     apply_xy_shift,
+    below_own_surface,
     blend_cut_face,
     blend_overlap_z,
     crop_moving_volume,
@@ -1593,10 +1594,11 @@ def main() -> None:
                 # Same tissue in both slabs here: level what the depth
                 # corrections left between them before they are blended.
                 if args.joint_level_planes > 0 and args.blend_cut_face_planes > 0 and overlap_depth > 2:
-                    # Measured below the planes where the incoming slab can still be
-                    # coming out of its surface, as far as the overlap allows.
-                    measure_from = max(0, min(6, overlap_depth - 6))
-                    measure = slice(measure_from, min(overlap_depth, measure_from + 8))
+                    # Measured in the planes of the hand-over, on the voxels of the
+                    # incoming slab that are below its own surface. Deeper in the
+                    # overlap the slab above has run out of signal in white matter.
+                    measure = slice(0, min(overlap_depth, 10))
+                    ready = below_own_surface(moving_overlap, measure.stop)
                     # On the scale of the shadows where the slabs are known to be
                     # aligned, over a few hundred microns where they are not.
                     level_cell, level_sigma = (4, 1.0) if slice_id in aligned_joints else (8, 4.0)
@@ -1606,6 +1608,8 @@ def main() -> None:
                         cell=level_cell,
                         tissue_threshold=args.blend_tissue_threshold,
                         sigma_cells=level_sigma,
+                        min_fraction=0.3,
+                        valid=ready,
                     )
                     if level_field is not None and level_field.any():
                         above_z0 = max(0, overlap_z_start - args.joint_level_planes)

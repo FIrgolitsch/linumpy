@@ -1036,6 +1036,49 @@ def blend_cut_face(
     return out
 
 
+def below_own_surface(
+    slab_top: np.ndarray,
+    planes: int,
+    reference: tuple[int, int] = (6, 14),
+    level: float = 0.7,
+    sigma_xy: float = 2.0,
+) -> np.ndarray:
+    """Voxels of the first planes of a slab that lie below its own tissue surface.
+
+    The cut face is not flat, and under it a slab comes up to its tissue level
+    over a few planes. A voxel counts from the first plane on which its
+    A-line reaches ``level`` of the A-line's own brightness further down (the
+    mean of the ``reference`` planes), and on every plane below. Nothing
+    outside the slab is used, so the mask can be made before the slab is
+    compared with the one above.
+
+    Parameters
+    ----------
+    slab_top : np.ndarray
+        The first planes ``(Z, Y, X)`` of the slab, plane 0 at its cut face,
+        at least as deep as ``reference``.
+    planes : int
+        Planes from the top for which the mask is returned.
+    reference : tuple of int
+        Plane range whose mean is the brightness an A-line has to reach.
+    level : float
+        Fraction of that brightness.
+    sigma_xy : float
+        XY smoothing in pixels before the comparison.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask of the first ``planes`` planes.
+    """
+    n = min(max(1, int(planes)), slab_top.shape[0])
+    lo = min(reference[0], max(0, slab_top.shape[0] - 1))
+    hi = max(lo + 1, min(reference[1], slab_top.shape[0]))
+    smooth = gaussian_filter_planes(np.asarray(slab_top[: max(n, hi)], dtype=np.float32), sigma_xy)
+    target = level * smooth[lo:hi].mean(axis=0)
+    return np.logical_or.accumulate(smooth[:n] >= target[None], axis=0)
+
+
 def joint_level_field(
     existing: np.ndarray,
     incoming: np.ndarray,
@@ -1044,6 +1087,7 @@ def joint_level_field(
     sigma_cells: float = 1.0,
     min_fraction: float = 0.5,
     clamp: float = 1.0,
+    valid: np.ndarray | None = None,
 ) -> np.ndarray | None:
     """Log brightness of the incoming slab relative to the slab above, where they overlap.
 
@@ -1079,6 +1123,10 @@ def joint_level_field(
         in both slabs.
     clamp : float
         Largest difference returned, in log units.
+    valid : np.ndarray or None
+        Voxels that may be used, of the shape of the two inputs. With
+        :func:`below_own_surface` the difference can be measured from the top
+        of the incoming slab without its surface ramp entering it.
 
     Returns
     -------
@@ -1095,6 +1143,8 @@ def joint_level_field(
     above = np.asarray(existing[:, : cy * cell, : cx * cell], dtype=np.float32)
     below = np.asarray(incoming[:, : cy * cell, : cx * cell], dtype=np.float32)
     both = (above > tissue_threshold) & (below > tissue_threshold)
+    if valid is not None:
+        both &= np.asarray(valid[:, : cy * cell, : cx * cell], dtype=bool)
     ratio = np.zeros(above.shape, dtype=np.float32)
     np.log(below, out=ratio, where=both)
     ratio -= np.log(above, out=np.zeros_like(ratio), where=both)

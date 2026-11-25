@@ -1157,3 +1157,36 @@ def test_find_z_step_structure_drops_a_shift_that_does_not_help(monkeypatch):
     step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
     assert info["shift"] == (0.0, 0.0)
     assert step == 22, info
+
+
+def test_below_own_surface_waits_for_the_tissue_level():
+    from linumpy.mosaic.stacking import below_own_surface
+
+    block = _textured_block(nz=20)
+    slab = _dipping_slab(block)  # surface up to six planes lower on the right, with a dim ramp under it
+    ready = below_own_surface(slab, 10)
+    assert ready.shape == (10, *block.shape[1:])
+    centre = block.shape[1] // 2
+    left, right = 20, block.shape[2] - 20  # surface at plane 1 and at plane 5
+    assert not ready[1, centre, left]
+    assert ready[4, centre, left]
+    assert not ready[6, centre, right]
+    assert ready[9, centre, right]
+    # Once an A-line is in the tissue it stays in.
+    assert np.all(ready[1:] >= ready[:-1])
+
+
+def test_joint_level_field_ignores_the_surface_ramp_of_the_incoming_slab():
+    from linumpy.mosaic.stacking import below_own_surface, joint_level_field
+
+    block = _textured_block(nz=20)
+    incoming = _dipping_slab(block)
+    inside = (block[0] > 0).reshape(block.shape[1] // 4, 4, block.shape[2] // 4, 4).all(axis=(1, 3))
+    # The two slabs show the same tissue: there is nothing to level.
+    plain = joint_level_field(block[:10], incoming[:10], min_fraction=0.3)
+    masked = joint_level_field(block[:10], incoming[:10], min_fraction=0.3, valid=below_own_surface(incoming, 10))
+    assert plain is not None and masked is not None
+    # With the ramp in, the incoming slab looks darker by up to a factor two.
+    assert np.median(np.abs(plain[inside])) > 0.3
+    assert np.median(np.abs(masked[inside])) < 0.1
+    assert np.abs(masked[inside]).max() < 0.3 * np.abs(plain[inside]).max()
