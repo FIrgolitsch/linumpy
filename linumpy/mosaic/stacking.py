@@ -359,6 +359,11 @@ def find_z_step_structure(
     plane 0, the cut face of the moving slab, which is where the stack hands
     over from one slab to the next.
 
+    The two slabs are only roughly aligned in XY, so a shift between them is
+    estimated first, by phase correlation of the structure of a few planes
+    averaged. It is used only when the slabs match better with it than as
+    they are placed, and is returned as ``shift``.
+
     The measurement is rejected, and the caller keeps the expected step, when
     too few planes can be placed, when the planes do not lie on one line
     (``max_residual``), when the match is weak (``min_score``) or no better
@@ -431,9 +436,18 @@ def find_z_step_structure(
     # The two slabs are only roughly aligned in XY at this point.
     fixed_aip = fixed[lo:hi].mean(axis=0)
     moving_aip = moving[: min(10, moving.shape[0])].mean(axis=0)
-    fixed_s, _ = _structure_image(fixed_aip, tissue_threshold, sigma)
-    moving_s, _ = _structure_image(moving_aip, tissue_threshold, sigma)
+    fixed_s, fixed_mask = _structure_image(fixed_aip, tissue_threshold, sigma)
+    moving_s, moving_mask = _structure_image(moving_aip, tissue_threshold, sigma)
     xy_shift, _, _ = phase_cross_correlation(fixed_s, moving_s, upsample_factor=4)
+    # The phase correlation always returns a shift. On slabs with little
+    # tissue it can be tens of pixels off, and the planes are then matched in
+    # the wrong place. It is used only when the two slabs match better with
+    # it than as they are placed.
+    as_placed = _masked_ncc(fixed_s, moving_s, fixed_mask & moving_mask, min_pixels // (d * d))
+    shifted_s, shifted_mask = _structure_image(nd_shift(moving_aip, xy_shift, order=1), tissue_threshold, sigma)
+    with_shift = _masked_ncc(fixed_s, shifted_s, fixed_mask & shifted_mask, min_pixels // (d * d))
+    if not with_shift >= (as_placed if np.isfinite(as_placed) else -1.0):
+        xy_shift = np.zeros(2)
     info["shift"] = (float(xy_shift[0]) * d, float(xy_shift[1]) * d)
 
     # The search ranges of the moving planes overlap, so every fixed plane is

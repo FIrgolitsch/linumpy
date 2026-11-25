@@ -1141,3 +1141,19 @@ def test_blend_cut_face_leaves_no_dark_line_under_a_dipping_cut_face():
     assert (followed[tissue] / block[tissue]).min() > 0.6
     # Below the surface the incoming slab is what is written, as before.
     np.testing.assert_allclose(followed[12:], plain[12:])
+
+
+def test_find_z_step_structure_drops_a_shift_that_does_not_help(monkeypatch):
+    """The phase correlation always returns a shift; on aligned slabs a wrong one is not used."""
+    import skimage.registration
+
+    from linumpy.mosaic.stacking import find_z_step_structure
+
+    block = _textured_block(seed=6)
+    fixed, moving = _slab(block, 0), _slab(block, 22)
+    monkeypatch.setattr(
+        skimage.registration, "phase_cross_correlation", lambda *_args, **_kwargs: (np.array([6.0, -5.0]), 0.0, 0.0)
+    )
+    step, info = find_z_step_structure(fixed, moving, expected_step=20, search_vox=8, min_pixels=500)
+    assert info["shift"] == (0.0, 0.0)
+    assert step == 22, info

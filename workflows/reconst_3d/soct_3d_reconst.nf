@@ -1451,6 +1451,7 @@ process stack {
     # annotated_panel_vmax 1
     # rim_keeps_own_value 1
     # z_step_at_cut_face 1
+    # z_step_checked_shift 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
     # The chunks are zstd-compressed already: store them, deflating gains nothing.
     echo "[stack] zipping the volume"

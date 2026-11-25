@@ -533,7 +533,11 @@ every slab are the least attenuated and look alike (Lefebvre et al. 2017, who
 correlate the image gradient for this reason). Each plane is divided by its
 own smooth trend, which leaves the outlines of structures, and planes 1 to 10
 of the moving slab are each matched against the fixed slab within
-$\pm$`stack_z_step_search_vox` planes of the interval. The best matches lie on
+$\pm$`stack_z_step_search_vox` planes of the interval. Before the planes are matched, a
+shift between the two slabs is estimated by phase correlation of the structure
+of a few planes averaged; it is used only when the slabs match at least as well
+with it as they do as placed, since on slabs with little tissue the phase
+correlation can be tens of pixels off. The best matches lie on
 a line, moving plane $p$ against fixed plane $s + m\,p$. The slope $m$ is not
 always one (0.8 in sub-19, 1.1 in sub-21): the same tissue does not span the
 same number of planes near the top of a slab and deep in the slab above. The
