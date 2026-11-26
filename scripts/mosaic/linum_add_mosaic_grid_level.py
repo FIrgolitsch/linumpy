@@ -8,6 +8,11 @@ level to a grid that exists already. Every tile of level 0 is resampled the
 way the grid script resamples it and written to a new level with the tile
 grid and the shard layout of level 0. Level 0 is not touched.
 
+With --from_resampled the tiles are copied from a grid that
+linum-resample-mosaic-grid already made of this one at the resolution, for
+instance in the work folder of a 3D reconstruction, and level 0 is not read.
+That is the way to add the level to a grid on slow storage.
+
 A grid that already holds a level at the resolution is left as it is. The
 level is listed in the metadata of the grid once it is complete, so a run that
 is interrupted leaves a grid that reads as before; run the script again.
@@ -50,11 +55,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="Resample on the GPU when one is available. [%(default)s]",
     )
+    p.add_argument(
+        "--from_resampled",
+        default=None,
+        help="Grid that linum-resample-mosaic-grid made of this one at the resolution (.ome.zarr).\n"
+        "Its tiles are copied and level 0 is not read.",
+    )
     return p
 
 
 def _load_shard(level0: Any, tile_shape: tuple, cells: list) -> list:
-    """Read the tiles *cells* of level 0, a few at a time."""
+    """Read the tiles *cells* of an array made of tiles of *tile_shape*, a few at a time."""
 
     def read(cell: tuple) -> tuple:
         ix, iy = cell
@@ -99,6 +110,17 @@ def main() -> None:
             f"{present.chunks}, not {level_shape} and {tuple(level_tile)}."
         )
 
+    # Where the tiles come from: level 0, to be resampled, or a grid that holds them resampled already.
+    source, source_tile = level0, tile_shape
+    if args.from_resampled is not None:
+        source, resampled_res = read_omezarr(Path(args.from_resampled), level=0)
+        if not np.allclose(resampled_res, target_res, rtol=1e-6, atol=0.0) or tuple(source.shape) != level_shape:
+            raise SystemExit(
+                f"{args.from_resampled} has voxels of {list(resampled_res)} and shape {tuple(source.shape)}; a resampling of "
+                f"{grid.name} to {args.resolution} um has voxels of {target_res} and shape {level_shape}."
+            )
+        source_tile = tuple(level_tile)
+
     level_shards = (level_tile[0], factor[0] * level_tile[1], factor[1] * level_tile[2]) if level0.shards else None
     array, name = create_omezarr_level(grid, level_shape, level_tile, shards=level_shards)
     print(f"{grid.name}: level {name} at {args.resolution} um, tile {tuple(level_tile)}, shape {level_shape}", flush=True)
@@ -119,18 +141,18 @@ def main() -> None:
     n_written = 0
     # The tiles of the next shard are read while this one is resampled and written.
     with ThreadPoolExecutor(max_workers=1) as prefetch:
-        pending = prefetch.submit(_load_shard, level0, tile_shape, shards[0][2])
+        pending = prefetch.submit(_load_shard, source, source_tile, shards[0][2])
         for position, (sx, sy, _cells) in enumerate(shards):
             loaded = pending.result()
             if position + 1 < len(shards):
-                pending = prefetch.submit(_load_shard, level0, tile_shape, shards[position + 1][2])
+                pending = prefetch.submit(_load_shard, source, source_tile, shards[position + 1][2])
             tiles = {}
             for (ix, iy), vol in loaded:
                 # A tile that was never acquired is the fill value at level 0 and stays absent here.
                 if not vol.any():
                     continue
-                tiles[0, ix - sx * factor[0], iy - sy * factor[1]] = resize(
-                    vol, level_tile, order=1, anti_aliasing=True, use_gpu=use_gpu
+                tiles[0, ix - sx * factor[0], iy - sy * factor[1]] = (
+                    vol if source is not level0 else resize(vol, level_tile, order=1, anti_aliasing=True, use_gpu=use_gpu)
                 )
             if not tiles:
                 continue
@@ -144,7 +166,7 @@ def main() -> None:
     register_omezarr_level(grid, name, [target_res] * len(level_shape))
     print(
         f"{grid.name}: {n_written} of {n_tiles[0] * n_tiles[1]} tiles written in {time.time() - start:.1f} s"
-        f" ({'GPU' if use_gpu else 'CPU'})",
+        f" ({'copied' if source is not level0 else 'GPU' if use_gpu else 'CPU'})",
         flush=True,
     )
 

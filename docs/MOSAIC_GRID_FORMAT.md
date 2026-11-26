@@ -50,7 +50,9 @@ level 0 (one chunk per tile) and is identical to what
 level when its resolution is the one asked for, and the full-resolution grid
 is never read back. A grid that was made without the level gets it afterwards
 with `linum-add-mosaic-grid-level <grid> -r 10`, which writes the same level
-into the existing grid and leaves level 0 as it is.
+into the existing grid and leaves level 0 as it is. When a resampled copy of the
+grid exists already, `--from_resampled` takes the tiles from it instead of
+reading level 0 again.
 
 #### Traditional Power-of-2 Pyramids (Mosaic Grids)
 

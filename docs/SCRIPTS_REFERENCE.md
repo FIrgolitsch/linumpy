@@ -166,6 +166,11 @@ result is saved as a further level with the chunk and shard layout of level 0.
 Tiles that hold no data are skipped. A grid that already holds a level at the
 requested resolution is left alone.
 
+With `--from_resampled <resampled.ome.zarr>` the tiles are copied from a grid
+that `linum-resample-mosaic-grid` already made of this one at the resolution
+(for instance in the work folder of a 3D reconstruction), and level 0 is not
+read. Use it for a grid on slow storage.
+
 ---
 
 ## Preprocessing

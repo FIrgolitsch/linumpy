@@ -95,3 +95,46 @@ def test_a_level_left_by_an_interrupted_run_is_replaced(script_runner, tmp_path)
     assert not (grid / "1" / "junk").exists()
     assert len(read_omezarr_resolutions(grid)) == 2
     assert np.asarray(read_omezarr(grid, level=1)[0][:]).any()
+
+
+def test_level_copied_from_a_resampled_grid(script_runner, tmp_path):
+    """Tiles taken from the output of linum-resample-mosaic-grid give the level the script resamples itself."""
+    resampled_here = tmp_path / "resampled_here.ome.zarr"
+    copied = tmp_path / "copied.ome.zarr"
+    _make_grid(script_runner, resampled_here)
+    _make_grid(script_runner, copied)
+    resampled = tmp_path / "resampled.ome.zarr"
+    ret = script_runner.run(["linum-resample-mosaic-grid", copied, resampled, "-r", 10, "--n_levels", 0, "--no-use_gpu"])
+    assert ret.success, ret.stderr
+    ret = script_runner.run(["linum-add-mosaic-grid-level", resampled_here, "-r", 10, "--no-use_gpu"])
+    assert ret.success, ret.stderr
+    level0_before = np.asarray(read_omezarr(copied, level=0)[0][:])
+
+    ret = script_runner.run(["linum-add-mosaic-grid-level", copied, "-r", 10, "--from_resampled", resampled])
+
+    assert ret.success, ret.stderr
+    assert "3 of 4 tiles written" in ret.stdout
+    assert "(copied)" in ret.stdout
+    added, _ = read_omezarr(copied, level=1)
+    expected, _ = read_omezarr(resampled_here, level=1)
+    assert added.chunks == expected.chunks
+    assert added.shards == expected.shards
+    np.testing.assert_array_equal(np.asarray(added[:]), np.asarray(expected[:]))
+    np.testing.assert_array_equal(np.asarray(read_omezarr(copied, level=0)[0][:]), level0_before)
+    assert read_omezarr_resolutions(copied) == read_omezarr_resolutions(resampled_here)
+
+
+def test_a_resampled_grid_of_another_size_is_refused(script_runner, tmp_path):
+    grid = tmp_path / "grid.ome.zarr"
+    _make_grid(script_runner, grid)
+    other = tmp_path / "other.ome.zarr"
+    ret = script_runner.run(["linum-resample-mosaic-grid", grid, other, "-r", 20, "--n_levels", 0, "--no-use_gpu"])
+    assert ret.success, ret.stderr
+    before = (grid / "zarr.json").read_text()
+
+    ret = script_runner.run(["linum-add-mosaic-grid-level", grid, "-r", 10, "--from_resampled", other])
+
+    assert not ret.success
+    assert "has voxels of" in ret.stderr
+    assert (grid / "zarr.json").read_text() == before
+    assert len(read_omezarr_resolutions(grid)) == 1
