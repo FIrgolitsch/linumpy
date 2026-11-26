@@ -57,7 +57,14 @@ def match_shape(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndar
     return padded_images[0], padded_images[1]
 
 
-def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: float, dy: float, n_threads: int | None = None) -> np.ndarray:
+def apply_xy_shift(
+    img: np.ndarray,
+    reference: np.ndarray,
+    dx: float,
+    dy: float,
+    n_threads: int | None = None,
+    slant: tuple[float, float] = (0.0, 0.0),
+) -> np.ndarray:
     """Apply a shift to the image in the xy plane.
 
     Parameters
@@ -72,6 +79,11 @@ def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: float, dy: float,
         The shift in y.
     n_threads : int or None
         Threads the resampling may use. ``None`` keeps the SimpleITK default.
+    slant : tuple of float
+        ``(x, y)`` sideways displacement of the content per plane of depth,
+        in pixels: the content of plane ``z`` sits ``slant * z`` away from
+        where it sits in plane 0. The same resampling removes it, so every
+        plane lines up with plane 0. Volumes only.
     """
     moving = sitk.GetImageFromArray(img)
 
@@ -85,8 +97,19 @@ def apply_xy_shift(img: np.ndarray, reference: np.ndarray, dx: float, dy: float,
     translation[0] = dx
     translation[1] = dy
 
-    transform = sitk.TranslationTransform(ndim)
-    transform.SetParameters(translation)
+    if slant[0] or slant[1]:
+        if ndim != 3:
+            msg = "a slant needs a volume"
+            raise ValueError(msg)
+        # The transform takes a point of the output to the point of the
+        # input that is read: the content of plane z is fetched from
+        # slant * z further sideways, where the slant has put it.
+        transform = sitk.AffineTransform(3)
+        transform.SetMatrix([1.0, 0.0, float(slant[0]), 0.0, 1.0, float(slant[1]), 0.0, 0.0, 1.0])
+        transform.SetTranslation(translation)
+    else:
+        transform = sitk.TranslationTransform(ndim)
+        transform.SetParameters(translation)
 
     resampler = sitk.ResampleImageFilter()
     resampler.SetSize([int(n) for n in reversed(shape)])

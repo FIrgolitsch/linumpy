@@ -302,7 +302,25 @@ workflow {
         .map { name, slice_id, mosaic, shift_x, shift_y, height, width ->
             tuple(slice_id, name, mosaic, shift_x, shift_y, height, width)
         }
-    bring_to_common_space(shift_input)
+
+    // The image drifts sideways with depth inside a slab, by the same
+    // amount in every slab. It is measured once per brain from the overlaps
+    // of neighbouring slabs and removed in the resampling that places a
+    // slab, so the stage placement itself stays as it is.
+    if (params.common_space_slab_slant == 'auto') {
+        slant_mosaics = normalize.out.normalized
+            .toSortedList { a, b -> a[0] <=> b[0] }
+            .flatten()
+            .collate(2)
+            .map { _meta, filename -> filename }
+            .collect()
+        estimate_slab_slant(slant_mosaics, plan_common_space.out.plan)
+        slab_slant = estimate_slab_slant.out.slant
+    }
+    else {
+        slab_slant = channel.value(file('NO_SLAB_SLANT'))
+    }
+    bring_to_common_space(shift_input.combine(slab_slant))
 
     slices_common_space = bring_to_common_space.out.aligned
         .toSortedList { a, b -> a.getName() <=> b.getName() }
@@ -1113,19 +1131,41 @@ process plan_common_space {
     """
 }
 
+// Measure the slant inside the slabs from the overlaps of neighbouring slabs.
+process estimate_slab_slant {
+    input:
+    path "inputs/*"
+    path plan
+
+    output:
+    path "slab_slant.json", emit: slant
+
+    script:
+    """
+    linum-estimate-slab-slant inputs ${plan} slab_slant.json \
+        --slicing_interval_mm ${params.registration_slicing_interval_mm}
+    """
+
+    stub:
+    """
+    printf '{"slant_x_px_per_plane": 0.0, "slant_y_px_per_plane": 0.0, "used": false}\n' > slab_slant.json
+    """
+}
+
 // Shift one slice into the planned frame. The output keeps the name of the
 // input, which is staged in a folder of its own for that reason.
 process bring_to_common_space {
     input:
-    tuple val(slice_id), val(name), path(mosaic, stageAs: "input/*"), val(shift_x), val(shift_y), val(height), val(width)
+    tuple val(slice_id), val(name), path(mosaic, stageAs: "input/*"), val(shift_x), val(shift_y), val(height), val(width), path(slab_slant)
 
     output:
     path "${name}", emit: aligned
 
     script:
+    def slant_arg = slab_slant.name != 'NO_SLAB_SLANT' ? " --slant_file ${slab_slant}" : ""
     """
     linum-apply-common-space-shift ${mosaic} ${name} \
-        --shift_x_px=${shift_x} --shift_y_px=${shift_y} --shape ${height} ${width}
+        --shift_x_px=${shift_x} --shift_y_px=${shift_y} --shape ${height} ${width}${slant_arg}
     """
 
     stub:

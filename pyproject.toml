@@ -96,6 +96,7 @@ docs = [
 "linum-analyze-tile-dilation" = "scripts.diagnostics.linum_analyze_tile_dilation:main"
 "linum-apply-beam-profile" = "scripts.attenuation.linum_apply_beam_profile:main"
 "linum-apply-common-space-shift" = "scripts.stitching.linum_apply_common_space_shift:main"
+"linum-estimate-slab-slant" = "scripts.stitching.linum_estimate_slab_slant:main"
 "linum-apply-slices-transforms" = "scripts.stitching.linum_apply_slices_transforms:main"
 "linum-assess-slice-quality" = "scripts.analysis.linum_assess_slice_quality:main"
 "linum-auto-exclude-slices" = "scripts.analysis.linum_auto_exclude_slices:main"

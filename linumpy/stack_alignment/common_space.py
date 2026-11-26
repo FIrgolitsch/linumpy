@@ -70,6 +70,7 @@ def shift_mosaic_to_common_space(
     shift_x: float,
     shift_y: float,
     plane_shape: tuple[int, int],
+    slant: tuple[float, float] = (0.0, 0.0),
 ) -> None:
     """Resample one mosaic into the common frame and write it as OME-Zarr.
 
@@ -83,6 +84,10 @@ def shift_mosaic_to_common_space(
         Position of the mosaic's origin in the common frame, in pixels.
     plane_shape : tuple of int
         ``(height, width)`` of the common frame.
+    slant : tuple of float
+        ``(x, y)`` slant inside the slab in pixels per plane, as
+        `linumpy.stack_alignment.slab_slant.estimate_slab_slant` measures
+        it. It is removed in the same resampling.
     """
     img, res = read_omezarr(Path(mosaic_file))
     img_data = img[:]
@@ -92,5 +97,5 @@ def shift_mosaic_to_common_space(
     # apply_xy_shift moves the sampling grid, not the content: to put the
     # content at (shift_x, shift_y) the grid moves the other way.
     # translation[0] acts on X (columns), translation[1] on Y (rows).
-    aligned = apply_xy_shift(img_data, reference, -shift_x, -shift_y)
+    aligned = apply_xy_shift(img_data, reference, -shift_x, -shift_y, slant=slant)
     save_omezarr(da.from_array(aligned), Path(out_file), res, chunks=img.chunks)
