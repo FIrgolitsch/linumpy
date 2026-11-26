@@ -41,6 +41,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--min_correlation", type=float, default=0.2, help="Plane pairs that match worse than this are left out. [%(default)s]"
     )
     p.add_argument("--min_joints", type=int, default=5, help="With fewer measured joints no slant is reported. [%(default)s]")
+    p.add_argument(
+        "--use_gpu",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Run the matching on the GPU when there is one. [%(default)s]",
+    )
     add_overwrite_arg(p)
     return p
 
@@ -64,7 +70,12 @@ def main() -> None:
     _, resolution = read_omezarr(slabs[0][1])
     step_planes = round(args.slicing_interval_mm / float(resolution[0]))
     result = estimate_slab_slant(
-        slabs, step_planes, planes=args.planes, min_correlation=args.min_correlation, min_joints=args.min_joints
+        slabs,
+        step_planes,
+        planes=args.planes,
+        min_correlation=args.min_correlation,
+        min_joints=args.min_joints,
+        use_gpu=args.use_gpu,
     )
     write_slab_slant(result, args.out_slant)
 

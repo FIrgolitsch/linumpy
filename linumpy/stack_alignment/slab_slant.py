@@ -18,10 +18,13 @@ import json
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy import ndimage as ndi
+from scipy.fft import next_fast_len
 
+from linumpy.gpu import get_array_module, to_cpu
 from linumpy.io.zarr import read_omezarr
 
 SLANT_FILENAME = "slab_slant.json"
@@ -37,31 +40,46 @@ _EDGE_PX = 8
 _CONVERGED_PX = 0.02
 
 
-def _band_pass(plane: np.ndarray) -> np.ndarray:
-    return ndi.gaussian_filter(plane, _FINE_SIGMA) - ndi.gaussian_filter(plane, _COARSE_SIGMA)
+def _modules(use_gpu: bool) -> tuple[Any, Any]:
+    """Array module and its ``ndimage``: CuPy when the GPU is asked for and there, NumPy otherwise."""
+    xp = get_array_module(use_gpu)
+    if xp is np:
+        return np, ndi
+    import cupyx.scipy.ndimage as gpu_ndi
+
+    return xp, gpu_ndi
 
 
-def _correlation_peak(fixed: np.ndarray, moving: np.ndarray, radius: int, min_pixels: int) -> tuple[np.ndarray, float] | None:
+def _band_pass(plane: Any, filters: Any, mode: str) -> Any:
+    return filters.gaussian_filter(plane, _FINE_SIGMA, mode=mode) - filters.gaussian_filter(plane, _COARSE_SIGMA, mode=mode)
+
+
+def _correlation_peak(
+    fixed: Any, fixed_tissue: Any, moving: Any, moving_tissue: Any, radius: int, min_pixels: int, xp: Any, filters: Any
+) -> tuple[np.ndarray, float] | None:
     """Shift (rows, cols) of ``moving`` that matches ``fixed`` best, and the correlation there.
 
-    Both planes are on the same grid, with zeros outside the tissue. The
-    peak is refined to a fraction of a pixel with a parabola through its
-    neighbours. Returns ``None`` when the common tissue is too small or the
-    peak lies on the edge of the search window.
+    Both planes are band-passed and on the same grid, with their tissue as
+    masks. The peak is refined to a fraction of a pixel with a parabola
+    through its neighbours. Returns ``None`` when the common tissue is too
+    small or the peak lies on the edge of the search window.
     """
-    common = ndi.binary_erosion((fixed > 0) & (moving > 0), iterations=_EDGE_PX)
-    if int(common.sum()) < min_pixels:
+    common = filters.binary_erosion(fixed_tissue & moving_tissue, iterations=_EDGE_PX, brute_force=True)
+    n_common = int(common.sum())
+    if n_common < min_pixels:
         return None
-    a = _band_pass(fixed)
-    b = _band_pass(moving)
-    a = (a - a[common].mean()) * common
-    b = (b - b[common].mean()) * common
-    norm = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    a = (fixed - fixed[common].mean()) * common
+    b = (moving - moving[common].mean()) * common
+    norm = float(xp.sqrt((a * a).sum() * (b * b).sum()))
     if norm <= 0:
         return None
-    correlation = np.fft.irfft2(np.fft.rfft2(a) * np.conj(np.fft.rfft2(b)), s=a.shape) / norm
+    # Padded to a size the FFT is fast at, and by the search radius so that
+    # a shift never wraps the far edge of the plane into the match.
+    size = tuple(next_fast_len(n + radius, real=True) for n in a.shape)
+    correlation = xp.fft.irfft2(xp.fft.rfft2(a, s=size) * xp.conj(xp.fft.rfft2(b, s=size)), s=size)
     offsets = np.arange(-radius, radius + 1)
-    window = correlation[np.ix_(offsets % a.shape[0], offsets % a.shape[1])]
+    window = correlation[xp.asarray(offsets % size[0])[:, None], xp.asarray(offsets % size[1])[None, :]]
+    window = np.asarray(to_cpu(window), dtype=np.float64) / norm
     row, col = np.unravel_index(int(window.argmax()), window.shape)
     if not (0 < row < 2 * radius and 0 < col < 2 * radius):
         return None
@@ -87,6 +105,7 @@ def plane_shift(
     radius: int = 8,
     min_pixels: int = 20000,
     max_rounds: int = 4,
+    use_gpu: bool = True,
 ) -> tuple[np.ndarray, float] | None:
     """Sideways shift between two planes that show the same tissue.
 
@@ -95,6 +114,9 @@ def plane_shift(
     measured again until it is zero. The estimate at a remaining shift of
     zero has no pull towards whole pixels, which a single correlation peak
     has.
+
+    Both planes are band-passed once. A band-pass and a shift can be done
+    in either order, so the rounds only resample the filtered moving plane.
 
     Parameters
     ----------
@@ -109,6 +131,8 @@ def plane_shift(
         Smallest common tissue area that is measured.
     max_rounds : int
         Number of refinement rounds at most.
+    use_gpu : bool
+        Run on the GPU when there is one.
 
     Returns
     -------
@@ -117,21 +141,40 @@ def plane_shift(
         the correlation at that shift. ``None`` when no shift could be
         measured.
     """
-    fixed = np.asarray(fixed, dtype=np.float32)
-    moving = np.asarray(moving, dtype=np.float32)
-    total = np.zeros(2)
-    peak = 0.0
-    for _ in range(max_rounds):
-        placed = ndi.affine_transform(
-            moving,
-            np.eye(2),
-            offset=(-(offset[0] + total[0]), -(offset[1] + total[1])),
+    xp, filters = _modules(use_gpu)
+    fixed = xp.asarray(fixed, dtype=xp.float32)
+    moving = xp.asarray(moving, dtype=xp.float32)
+    fixed_tissue = fixed > 0
+    fixed_band = _band_pass(fixed, filters, "reflect")
+    # Outside its own array the moving plane counts as empty, as it is once placed.
+    moving_band = _band_pass(moving, filters, "constant")
+    moving_tissue = (moving > 0).astype(xp.float32)
+    identity = xp.eye(2)
+
+    def placed(plane: Any, total: np.ndarray) -> Any:
+        return filters.affine_transform(
+            plane,
+            identity,
+            offset=(-(offset[0] + float(total[0])), -(offset[1] + float(total[1]))),
             output_shape=fixed.shape,
             order=1,
             mode="constant",
             cval=0.0,
         )
-        found = _correlation_peak(fixed, placed, radius, min_pixels)
+
+    total = np.zeros(2)
+    peak = 0.0
+    for _ in range(max_rounds):
+        found = _correlation_peak(
+            fixed_band,
+            fixed_tissue,
+            placed(moving_band, total),
+            placed(moving_tissue, total) > 0,
+            radius,
+            min_pixels,
+            xp,
+            filters,
+        )
         if found is None:
             return None
         step, peak = found
@@ -148,6 +191,7 @@ def estimate_slab_slant(
     planes: Sequence[int] = (3, 6, 9, 12),
     min_correlation: float = 0.2,
     min_joints: int = 5,
+    use_gpu: bool = True,
 ) -> dict:
     """Measure the slant inside the slabs of one brain from the overlaps of neighbouring slabs.
 
@@ -171,6 +215,8 @@ def estimate_slab_slant(
         Plane pairs that match worse than this are left out.
     min_joints : int
         With fewer measured joints no slant is reported.
+    use_gpu : bool
+        Run on the GPU when there is one.
 
     Returns
     -------
@@ -180,31 +226,38 @@ def estimate_slab_slant(
         measured joint.
     """
     ordered = sorted(slabs, key=lambda slab: slab[0])
+    depth_needed = step_planes + max(planes) + 1
+
+    def top_planes(path: Path) -> np.ndarray:
+        # One read per slab: it is the incoming slab of one joint and the slab above of the next.
+        volume, _ = read_omezarr(Path(path))
+        return np.asarray(volume[:depth_needed])
+
     joints = []
-    for (fixed_id, fixed_path, fixed_x, fixed_y), (moving_id, moving_path, moving_x, moving_y) in pairwise(ordered):
-        if moving_id - fixed_id != 1:
-            continue
-        fixed_vol, _ = read_omezarr(Path(fixed_path))
-        moving_vol, _ = read_omezarr(Path(moving_path))
-        offset = (moving_y - fixed_y, moving_x - fixed_x)
-        shifts = []
-        for k in planes:
-            if step_planes + k >= fixed_vol.shape[0] or k >= moving_vol.shape[0]:
-                continue
-            found = plane_shift(np.asarray(fixed_vol[step_planes + k]), np.asarray(moving_vol[k]), offset)
-            if found is not None and found[1] >= min_correlation:
-                shifts.append(found[0])
-        if shifts:
-            rows, cols = np.median(np.array(shifts), axis=0)
-            joints.append(
-                {
-                    "fixed_id": int(fixed_id),
-                    "moving_id": int(moving_id),
-                    "shift_x_px": float(cols),
-                    "shift_y_px": float(rows),
-                    "n_planes": len(shifts),
-                }
-            )
+    fixed_vol = top_planes(ordered[0][1]) if ordered else None
+    for (fixed_id, _fixed_path, fixed_x, fixed_y), (moving_id, moving_path, moving_x, moving_y) in pairwise(ordered):
+        moving_vol = top_planes(moving_path)
+        if moving_id - fixed_id == 1 and fixed_vol is not None:
+            offset = (moving_y - fixed_y, moving_x - fixed_x)
+            shifts = []
+            for k in planes:
+                if step_planes + k >= fixed_vol.shape[0] or k >= moving_vol.shape[0]:
+                    continue
+                found = plane_shift(fixed_vol[step_planes + k], moving_vol[k], offset, use_gpu=use_gpu)
+                if found is not None and found[1] >= min_correlation:
+                    shifts.append(found[0])
+            if shifts:
+                rows, cols = np.median(np.array(shifts), axis=0)
+                joints.append(
+                    {
+                        "fixed_id": int(fixed_id),
+                        "moving_id": int(moving_id),
+                        "shift_x_px": float(cols),
+                        "shift_y_px": float(rows),
+                        "n_planes": len(shifts),
+                    }
+                )
+        fixed_vol = moving_vol
 
     result: dict = {
         "step_planes": int(step_planes),
