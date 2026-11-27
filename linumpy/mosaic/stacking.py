@@ -320,17 +320,59 @@ def _masked_ncc(a: np.ndarray, b: np.ndarray, mask: np.ndarray, min_pixels: int)
     return float((x * y).sum() / np.sqrt((x * x).sum() * (y * y).sum() + 1e-12))
 
 
+def z_step_match_is_clear(
+    scores: Sequence[float],
+    distinct: Sequence[float],
+    at_expected: Sequence[float],
+    min_score: float = 0.08,
+    min_distinct: float = 0.03,
+    min_gain: float = 0.04,
+) -> bool:
+    """Tell whether the best matches of the planes of a joint are strong enough to be used.
+
+    The median score has to reach ``min_score``. Beyond that the match has
+    to stand out, in one of two ways: against the matches five planes or more
+    away (``min_distinct``), or against the match at the expected step
+    (``min_gain``). The second covers a joint whose correlation falls off
+    slowly with depth: its best match is not much better than its
+    neighbourhood, and still far better than the expected step would be.
+
+    Parameters
+    ----------
+    scores, distinct, at_expected : sequence of float
+        Per moving plane: the best score, its margin over the matches five
+        planes or more away, and the score at the expected step (NaN where
+        that plane lies outside the search or the slab).
+    min_score, min_distinct, min_gain : float
+        The three thresholds, each applied to a median over the planes.
+
+    Returns
+    -------
+    bool
+        True when the measurement can be used.
+    """
+    best = np.asarray(scores, dtype=np.float64)
+    if best.size == 0 or float(np.median(best)) < min_score:
+        return False
+    margin = np.asarray(distinct, dtype=np.float64)
+    if np.isfinite(margin).any() and float(np.nanmedian(margin)) >= min_distinct:
+        return True
+    gain = best - np.asarray(at_expected, dtype=np.float64)
+    return bool(np.isfinite(gain).any() and float(np.nanmedian(gain)) >= min_gain)
+
+
 def find_z_step_structure(
     fixed_vol: np.ndarray,
     moving_vol: np.ndarray,
     expected_step: int,
-    search_vox: int = 10,
+    search_vox: int = 16,
     moving_planes: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
     tissue_threshold: float = 0.01,
     downsample: int = 2,
     min_score: float = 0.08,
     max_residual: float = 1.0,
     min_distinct: float = 0.03,
+    min_gain: float = 0.04,
     min_planes: int = 5,
     min_pixels: int = 5000,
     workers: int | None = None,
@@ -366,9 +408,14 @@ def find_z_step_structure(
 
     The measurement is rejected, and the caller keeps the expected step, when
     too few planes can be placed, when the planes do not lie on one line
-    (``max_residual``), when the match is weak (``min_score``) or no better
-    than a few planes away (``min_distinct``), or when a best match sits at
-    the edge of the search.
+    (``max_residual``), when the match is weak (``min_score``), or when a
+    best match sits at the edge of the search. A match that is no better than
+    a few planes away (``min_distinct``) is rejected too, unless it is clearly
+    better than the match at the expected step (``min_gain``): the expected
+    step is kept only where it is not the worse of the two. In sub-19 the
+    joint z15 to z16 lies 33 planes deep; its ten planes agreed on that and
+    were thrown away for a distinctness of 0.027, and the slab was stacked 13
+    planes too high.
 
     Parameters
     ----------
@@ -391,6 +438,10 @@ def find_z_step_structure(
     min_distinct : float
         How much better the best match has to be than the matches five planes
         or more away, as a median over the moving planes.
+    min_gain : float
+        How much better the best match has to be than the match at the
+        expected step, as a median over the moving planes, for a measurement
+        that fails ``min_distinct`` to be kept.
     min_planes : int
         Fewest moving planes that have to be placed.
     min_pixels : int
@@ -405,7 +456,8 @@ def find_z_step_structure(
         The measured step, or ``None`` when it cannot be told.
     dict
         ``planes`` that were placed, with the ``steps`` (best fixed plane minus
-        moving plane), ``scores`` and ``distinct`` of each; ``slope``,
+        moving plane), ``scores``, ``distinct`` and the score ``at_expected``
+        of each; ``slope``,
         ``step`` (not rounded) and ``residual`` of the line; the XY ``shift``
         used; and ``reason`` when the measurement was rejected.
     """
@@ -421,6 +473,7 @@ def find_z_step_structure(
         "steps": [],
         "scores": [],
         "distinct": [],
+        "at_expected": [],
         "slope": float("nan"),
         "step": float("nan"),
         "residual": float("nan"),
@@ -511,6 +564,8 @@ def find_z_step_structure(
         info["steps"].append(round(candidates[best] + offset - plane, 2))
         info["scores"].append(float(scores[best]))
         info["distinct"].append(float(scores[best] - np.nanmax(away)) if np.isfinite(away).any() else float("nan"))
+        expected_at = plane + expected_step
+        info["at_expected"].append(float(scores[candidates.index(expected_at)]) if expected_at in candidates else float("nan"))
         matched.append(candidates[best] + offset)
 
     if len(matched) < max(2, min_planes):
@@ -531,10 +586,7 @@ def find_z_step_structure(
     if residual > max_residual:
         info["reason"] = "planes disagree"
         return None, info
-    distinct = np.asarray(info["distinct"], dtype=np.float64)
-    if float(np.median(info["scores"])) < min_score or not (
-        np.isfinite(distinct).any() and float(np.nanmedian(distinct)) >= min_distinct
-    ):
+    if not z_step_match_is_clear(info["scores"], info["distinct"], info["at_expected"], min_score, min_distinct, min_gain):
         info["reason"] = "weak match"
         return None, info
     if at_edge:

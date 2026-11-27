@@ -233,7 +233,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--z_step_search_vox",
         type=int,
-        default=10,
+        default=16,
         help="Half-width of the search of --z_step_from_structure around the slicing\ninterval, in planes. [%(default)s]",
     )
     p.add_argument(

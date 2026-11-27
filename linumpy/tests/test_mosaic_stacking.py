@@ -1190,3 +1190,26 @@ def test_joint_level_field_ignores_the_surface_ramp_of_the_incoming_slab():
     assert np.median(np.abs(plain[inside])) > 0.3
     assert np.median(np.abs(masked[inside])) < 0.1
     assert np.abs(masked[inside]).max() < 0.3 * np.abs(plain[inside]).max()
+
+
+# ---------------------------------------------------------------------------
+# z_step_match_is_clear
+# ---------------------------------------------------------------------------
+
+
+def test_z_step_match_needs_a_score_and_one_of_two_margins():
+    from linumpy.mosaic.stacking import z_step_match_is_clear
+
+    scores = [0.09, 0.08, 0.10, 0.08]
+    # Stands out against the matches a few planes away.
+    assert z_step_match_is_clear(scores, [0.04, 0.05, 0.03, 0.04], [0.08, 0.07, 0.09, 0.07])
+    # Does not, but is far better than the match at the expected step: kept.
+    assert z_step_match_is_clear(scores, [0.02, 0.03, 0.02, 0.03], [0.00, 0.01, 0.02, 0.00])
+    # Neither: the expected step is as good, so it is kept by the caller.
+    assert not z_step_match_is_clear(scores, [0.02, 0.03, 0.02, 0.03], [0.07, 0.07, 0.08, 0.07])
+    # A weak match is never used, whatever its margins.
+    assert not z_step_match_is_clear([0.05, 0.06, 0.05], [0.04, 0.04, 0.04], [0.0, 0.0, 0.0])
+    # The expected step outside the search for every plane: only the first margin counts.
+    nan = float("nan")
+    assert not z_step_match_is_clear(scores, [0.02, 0.02, 0.02, 0.02], [nan, nan, nan, nan])
+    assert not z_step_match_is_clear([], [], [])
