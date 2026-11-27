@@ -1490,7 +1490,7 @@ process stack {
     # notch_slice_seams 1
     # annotated_panel_vmax 1
     # rim_keeps_own_value 1
-    # z_step_at_cut_face 1
+    # z_step_at_cut_face 1, z_step_shift_cap 1
     # z_step_checked_shift 1
     # joint_level_at_handover 1
     linum-stack-slices-motor slices ${shifts_file} ${subject_name}.ome.zarr ${options}
