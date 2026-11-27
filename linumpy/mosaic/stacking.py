@@ -330,12 +330,13 @@ def z_step_match_is_clear(
 ) -> bool:
     """Tell whether the best matches of the planes of a joint are strong enough to be used.
 
-    The median score has to reach ``min_score``. Beyond that the match has
-    to stand out, in one of two ways: against the matches five planes or more
-    away (``min_distinct``), or against the match at the expected step
-    (``min_gain``). The second covers a joint whose correlation falls off
-    slowly with depth: its best match is not much better than its
-    neighbourhood, and still far better than the expected step would be.
+    The match has to stand out, in one of two ways. Either its median score
+    reaches ``min_score`` and it is better than the matches five planes or
+    more away by ``min_distinct``. Or it is better than the match at the
+    expected step by ``min_gain``. The second covers a joint that lies far
+    from the expected depth: its correlation can be low and fall off slowly
+    with depth, and it is still far better than the expected step would be.
+    The caller has already checked that the planes agree on one line.
 
     Parameters
     ----------
@@ -352,10 +353,11 @@ def z_step_match_is_clear(
         True when the measurement can be used.
     """
     best = np.asarray(scores, dtype=np.float64)
-    if best.size == 0 or float(np.median(best)) < min_score:
+    if best.size == 0:
         return False
     margin = np.asarray(distinct, dtype=np.float64)
-    if np.isfinite(margin).any() and float(np.nanmedian(margin)) >= min_distinct:
+    stands_out = np.isfinite(margin).any() and float(np.nanmedian(margin)) >= min_distinct
+    if float(np.median(best)) >= min_score and stands_out:
         return True
     gain = best - np.asarray(at_expected, dtype=np.float64)
     return bool(np.isfinite(gain).any() and float(np.nanmedian(gain)) >= min_gain)
@@ -373,6 +375,7 @@ def find_z_step_structure(
     max_residual: float = 1.0,
     min_distinct: float = 0.03,
     min_gain: float = 0.04,
+    max_shift_px: float = 8.0,
     min_planes: int = 5,
     min_pixels: int = 5000,
     workers: int | None = None,
@@ -404,15 +407,21 @@ def find_z_step_structure(
     The two slabs are only roughly aligned in XY, so a shift between them is
     estimated first, by phase correlation of the structure of a few planes
     averaged. It is used only when the slabs match better with it than as
-    they are placed, and is returned as ``shift``.
+    they are placed, and only up to ``max_shift_px``, and is returned as
+    ``shift``. The slabs are placed from the stage positions to within a few
+    pixels. The shift is estimated at the expected depth, so at a joint that
+    lies far from it the planes compared do not show the same tissue, and the
+    phase correlation locks onto structure that repeats (the folia of the
+    cerebellum at sub-19 z16: 40 px, and a depth of 22 planes for a joint
+    that lies 33 deep).
 
     The measurement is rejected, and the caller keeps the expected step, when
     too few planes can be placed, when the planes do not lie on one line
-    (``max_residual``), when the match is weak (``min_score``), or when a
-    best match sits at the edge of the search. A match that is no better than
-    a few planes away (``min_distinct``) is rejected too, unless it is clearly
-    better than the match at the expected step (``min_gain``): the expected
-    step is kept only where it is not the worse of the two. In sub-19 the
+    (``max_residual``), or when a best match sits at the edge of the search.
+    A match that is weak (``min_score``) or no better than a few planes away
+    (``min_distinct``) is rejected too, unless it is clearly better than the
+    match at the expected step (``min_gain``): the expected step is kept only
+    where it is not the worse of the two. In sub-19 the
     joint z15 to z16 lies 33 planes deep; its ten planes agreed on that and
     were thrown away for a distinctness of 0.027, and the slab was stacked 13
     planes too high.
@@ -442,6 +451,10 @@ def find_z_step_structure(
         How much better the best match has to be than the match at the
         expected step, as a median over the moving planes, for a measurement
         that fails ``min_distinct`` to be kept.
+    max_shift_px : float
+        Largest XY shift between the two slabs that is used, in pixels at full
+        resolution. A larger estimate is discarded and the slabs are matched
+        as they are placed.
     min_planes : int
         Fewest moving planes that have to be placed.
     min_pixels : int
@@ -499,7 +512,8 @@ def find_z_step_structure(
     as_placed = _masked_ncc(fixed_s, moving_s, fixed_mask & moving_mask, min_pixels // (d * d))
     shifted_s, shifted_mask = _structure_image(nd_shift(moving_aip, xy_shift, order=1), tissue_threshold, sigma)
     with_shift = _masked_ncc(fixed_s, shifted_s, fixed_mask & shifted_mask, min_pixels // (d * d))
-    if not with_shift >= (as_placed if np.isfinite(as_placed) else -1.0):
+    too_far = float(np.hypot(xy_shift[0], xy_shift[1])) * d > max_shift_px
+    if too_far or not with_shift >= (as_placed if np.isfinite(as_placed) else -1.0):
         xy_shift = np.zeros(2)
     info["shift"] = (float(xy_shift[0]) * d, float(xy_shift[1]) * d)
 

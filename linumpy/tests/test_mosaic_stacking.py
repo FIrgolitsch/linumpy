@@ -1207,8 +1207,9 @@ def test_z_step_match_needs_a_score_and_one_of_two_margins():
     assert z_step_match_is_clear(scores, [0.02, 0.03, 0.02, 0.03], [0.00, 0.01, 0.02, 0.00])
     # Neither: the expected step is as good, so it is kept by the caller.
     assert not z_step_match_is_clear(scores, [0.02, 0.03, 0.02, 0.03], [0.07, 0.07, 0.08, 0.07])
-    # A weak match is never used, whatever its margins.
-    assert not z_step_match_is_clear([0.05, 0.06, 0.05], [0.04, 0.04, 0.04], [0.0, 0.0, 0.0])
+    # A weak match is used only when it beats the expected step.
+    assert not z_step_match_is_clear([0.05, 0.06, 0.05], [0.04, 0.04, 0.04], [0.04, 0.05, 0.03])
+    assert z_step_match_is_clear([0.07, 0.08, 0.07], [0.02, 0.02, 0.02], [0.0, 0.0, 0.0])
     # The expected step outside the search for every plane: only the first margin counts.
     nan = float("nan")
     assert not z_step_match_is_clear(scores, [0.02, 0.02, 0.02, 0.02], [nan, nan, nan, nan])
